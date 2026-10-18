@@ -18,6 +18,10 @@
 - API 专用地址（脚本调用需 ModelScope token）：https://studio-cangyuyi-huawei-pc-marketing-agent.api-inference.modelscope.net
 - 当前知识库：`Alaraby的知识库`（个人库），`competition_ready=false`；拿到赛事共享库权限后切换 `IMA_KB_NAME` 再复验。
 
+![线上工作台](app/static/samples/live-workbench.png)
+
+> 截图来自 Public / Running 的魔搭实例：三分栏工作台、需求选项、热点灵感、证据区和模型/规则切换。完整验收记录见 [`docs/12_线上验证记录.md`](docs/12_线上验证记录.md)。
+
 ## 架构
 
 ```mermaid
@@ -255,6 +259,7 @@ vendor/ima-skill/  官方 ima 只读调用脚本
 - [接口约定与分工](docs/02_接口约定与分工.md)
 - [配置与联调验收](docs/03_配置与联调验收.md)
 - [魔搭创空间部署](docs/10_ModelScope部署.md)
+- [线上验证记录](docs/12_线上验证记录.md)
 - [华为设计语言与工作台规范](docs/11_华为设计语言与工作台规范.md)
 - [进度与限制](docs/04_进度与限制.md)
 - [系统提示词](prompts/agent-system.md)
