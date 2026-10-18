@@ -1,0 +1,306 @@
+{
+  "$defs": {
+    "Fact": {
+      "additionalProperties": false,
+      "properties": {
+        "fact_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "product_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "conditions": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Conditions",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "required": [
+        "fact_id",
+        "product_id",
+        "text",
+        "source"
+      ],
+      "title": "Fact",
+      "type": "object"
+    },
+    "ImageAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "image_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Image Id",
+          "type": "string"
+        },
+        "product_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "access_url": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Access Url",
+          "type": "string"
+        },
+        "caption": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Caption",
+          "type": "string"
+        },
+        "model_verified": {
+          "default": false,
+          "title": "Model Verified",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "required": [
+        "image_id",
+        "product_id",
+        "access_url",
+        "caption",
+        "source"
+      ],
+      "title": "ImageAsset",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "xiaohongshu",
+        "wechat_article",
+        "moments",
+        "poster"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "Product": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "model_name": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "configuration": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Configuration",
+          "type": "string"
+        },
+        "confirmed": {
+          "default": false,
+          "title": "Confirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "product_id",
+        "model_name",
+        "configuration"
+      ],
+      "title": "Product",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "ima",
+            "development"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "locator": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "locator",
+        "excerpt"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "Task": {
+      "additionalProperties": false,
+      "properties": {
+        "product_query": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Product Query",
+          "type": "string"
+        },
+        "audience": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Audience",
+          "type": "string"
+        },
+        "scenario": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Scenario",
+          "type": "string"
+        },
+        "objective": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Objective",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "purchase_stage": {
+          "default": "待确认",
+          "maxLength": 100,
+          "title": "Purchase Stage",
+          "type": "string"
+        },
+        "instructions": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Instructions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_query",
+        "audience",
+        "scenario",
+        "objective",
+        "platform"
+      ],
+      "title": "Task",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "data_mode": {
+      "enum": [
+        "live",
+        "development"
+      ],
+      "title": "Data Mode",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "needs_input",
+        "conflict",
+        "unavailable"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "task": {
+      "$ref": "#/$defs/Task"
+    },
+    "product": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Product"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "facts": {
+      "items": {
+        "$ref": "#/$defs/Fact"
+      },
+      "maxItems": 100,
+      "title": "Facts",
+      "type": "array"
+    },
+    "images": {
+      "items": {
+        "$ref": "#/$defs/ImageAsset"
+      },
+      "maxItems": 30,
+      "title": "Images",
+      "type": "array"
+    },
+    "issues": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Issues",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "data_mode",
+    "status",
+    "task"
+  ],
+  "title": "MaterialBundle",
+  "type": "object"
+}

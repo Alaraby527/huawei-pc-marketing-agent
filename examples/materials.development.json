@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "request_id": "development-example-001",
+  "data_mode": "development",
+  "status": "needs_input",
+  "task": {
+    "product_query": "开发样例：待确认具体型号",
+    "audience": "大学新生",
+    "scenario": "开学购机",
+    "objective": "邀请到店体验",
+    "platform": "xiaohongshu"
+  },
+  "product": null,
+  "facts": [],
+  "images": [],
+  "issues": [
+    "开发结构样例，不含真实产品事实与图片；不得作为真实运行结果提交。"
+  ]
+}

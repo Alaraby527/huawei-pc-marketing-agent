@@ -1,0 +1,685 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "华为PC营销Agent · 前段导购与证据交接",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Index",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/readiness": {
+      "get": {
+        "summary": "Readiness",
+        "operationId": "readiness_api_v1_readiness_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platforms": {
+      "get": {
+        "summary": "Platforms",
+        "operationId": "platforms_api_v1_platforms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/materials": {
+      "get": {
+        "summary": "Materials Schema",
+        "operationId": "materials_schema_api_v1_contracts_materials_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/validate": {
+      "post": {
+        "summary": "Validate Materials",
+        "operationId": "validate_materials_api_v1_materials_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialBundle"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/libraries": {
+      "get": {
+        "summary": "Libraries",
+        "operationId": "libraries_api_v1_knowledge_libraries_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/connection": {
+      "get": {
+        "summary": "Connection",
+        "operationId": "connection_api_v1_knowledge_connection_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/guide": {
+      "post": {
+        "summary": "Guide Task",
+        "operationId": "guide_task_api_v1_guide_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Intake"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assets/{token}": {
+      "get": {
+        "summary": "Asset",
+        "operationId": "asset_api_v1_assets__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks": {
+      "post": {
+        "summary": "Create Task",
+        "operationId": "create_task_api_v1_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Fact": {
+        "properties": {
+          "fact_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Fact Id"
+          },
+          "product_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Product Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "conditions": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Conditions",
+            "default": ""
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "fact_id",
+          "product_id",
+          "text",
+          "source"
+        ],
+        "title": "Fact"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImageAsset": {
+        "properties": {
+          "image_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Image Id"
+          },
+          "product_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Product Id"
+          },
+          "access_url": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Access Url"
+          },
+          "caption": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Caption"
+          },
+          "model_verified": {
+            "type": "boolean",
+            "title": "Model Verified",
+            "default": false
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "image_id",
+          "product_id",
+          "access_url",
+          "caption",
+          "source"
+        ],
+        "title": "ImageAsset"
+      },
+      "Intake": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Message",
+            "default": ""
+          },
+          "product_query": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Product Query",
+            "default": ""
+          },
+          "audience": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Audience",
+            "default": ""
+          },
+          "scenario": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Scenario",
+            "default": ""
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Objective",
+            "default": ""
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Platform"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purchase_stage": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Purchase Stage",
+            "default": "待确认"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instructions",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Intake"
+      },
+      "MaterialBundle": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.0",
+            "title": "Schema Version",
+            "default": "1.0"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "data_mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "development"
+            ],
+            "title": "Data Mode"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs_input",
+              "conflict",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "product": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Product"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/Fact"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Facts"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageAsset"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "title": "Images"
+          },
+          "issues": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Issues"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "data_mode",
+          "status",
+          "task"
+        ],
+        "title": "MaterialBundle"
+      },
+      "Platform": {
+        "type": "string",
+        "enum": [
+          "xiaohongshu",
+          "wechat_article",
+          "moments",
+          "poster"
+        ],
+        "title": "Platform"
+      },
+      "Product": {
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Product Id"
+          },
+          "model_name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Model Name"
+          },
+          "configuration": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Configuration"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_id",
+          "model_name",
+          "configuration"
+        ],
+        "title": "Product"
+      },
+      "Source": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ima",
+              "development"
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "locator": {
+            "type": "string",
+            "maxLength": 1500,
+            "minLength": 1,
+            "title": "Locator"
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Excerpt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "locator",
+          "excerpt"
+        ],
+        "title": "Source"
+      },
+      "Task": {
+        "properties": {
+          "product_query": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Product Query"
+          },
+          "audience": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Audience"
+          },
+          "scenario": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Scenario"
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Objective"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform"
+          },
+          "purchase_stage": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Purchase Stage",
+            "default": "待确认"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instructions",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_query",
+          "audience",
+          "scenario",
+          "objective",
+          "platform"
+        ],
+        "title": "Task"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

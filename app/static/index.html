@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>华为PC营销图文助手</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="mark">PC</span><strong>营销图文助手</strong></div>
+    <span class="badge" id="kb-badge">知识库：检测中…</span>
+  </header>
+
+  <main class="layout">
+    <section class="chat-pane">
+      <div class="chat-log" id="chat-log">
+        <div class="msg assistant">
+          <p>你好，我是华为PC门店营销助手。告诉我客户画像、预算和用途，我来帮你找产品、配图、写小红书图文。</p>
+          <p class="hint">例如：“大学新生，预算6000以内，主要写论文、上网课，偏好轻薄”</p>
+        </div>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="input" rows="2" placeholder="输入客户需求，或回答上面的问题…" required></textarea>
+        <button type="submit" id="send">发送</button>
+      </form>
+      <div class="quick-actions" id="quick-actions" hidden>
+        <button type="button" data-action="跳过">跳过偏好</button>
+        <button type="button" data-action="通过">通过，可以发布</button>
+        <button type="button" data-action="再短一点">再短一点</button>
+        <button type="button" data-action="换一版">换一版</button>
+      </div>
+    </section>
+
+    <section class="result-pane">
+      <div class="result-tabs">
+        <button class="tab active" data-tab="draft">图文预览</button>
+        <button class="tab" data-tab="evidence">资料依据</button>
+        <button class="tab" data-tab="verify">核验结果</button>
+      </div>
+
+      <div class="tab-panel" id="panel-draft">
+        <div class="empty" id="draft-empty">确认产品和发布目标后，这里会显示生成的小红书图文方案。</div>
+        <div id="draft-content" hidden>
+          <div class="draft-card">
+            <h3 id="draft-title"></h3>
+            <div class="draft-images" id="draft-images"></div>
+            <p class="draft-body" id="draft-body"></p>
+            <p class="draft-cta" id="draft-cta"></p>
+            <div class="draft-tags" id="draft-tags"></div>
+          </div>
+          <div class="actions">
+            <button id="copy-draft">复制正文</button>
+            <a id="export-link" href="#" hidden>下载完整报告 ↗</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-evidence" hidden>
+        <div class="empty" id="evidence-empty">这里会显示本次生成引用的产品事实、来源和图片出处。</div>
+        <div id="evidence-content"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-verify" hidden>
+        <div class="empty" id="verify-empty">这里会显示事实、图片和合规核验的结果，不会跳过未通过的问题。</div>
+        <div id="verify-content"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="publish-state">尚未通过核验，不可发布</span>
+    <a href="/api/v1/platforms" target="_blank" rel="noreferrer">查看平台规则 ↗</a>
+  </footer>
+</div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
