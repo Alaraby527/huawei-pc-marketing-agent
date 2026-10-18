@@ -9,6 +9,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -58,13 +59,19 @@ def _fetch_source(platform, limit=50):
 
 
 def _fetch(limit=50):
-    # The Xiaohongshu-specific feed is preferred. Weibo is a clearly labelled
-    # cross-platform fallback when the rednote upstream is unavailable.
-    for platform in ("rednote", "weibo"):
-        topics = _fetch_source(platform, limit)
-        if topics:
-            return topics
-    return []
+    # Query both feeds concurrently; the Xiaohongshu-specific feed is preferred,
+    # and Weibo is a clearly labelled cross-platform fallback. Running them in
+    # parallel keeps the endpoint responsive when the first upstream is down.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {platform: pool.submit(_fetch_source, platform, limit)
+                   for platform in ("rednote", "weibo")}
+        results = {}
+        for platform, future in futures.items():
+            try:
+                results[platform] = future.result(timeout=8)
+            except Exception:
+                results[platform] = []
+    return results.get("rednote") or results.get("weibo") or []
 
 
 def related_hot_topics(scenario, audience, limit=6):

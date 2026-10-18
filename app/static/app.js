@@ -16,6 +16,7 @@
   let selectedModel = null;
   let lastCoverKey = '';
   let lastHotKey = '';
+  let lastQuestions = [];
   let loadingNode = null;
   let quickStartData = null;
   let quickIndex = 0;
@@ -148,7 +149,8 @@
   }
 
   function renderOptions(questions) {
-    const usable = (questions || []).filter(question => question.options && question.options.length);
+    lastQuestions = questions || [];
+    const usable = lastQuestions.filter(question => question.options && question.options.length);
     if (!usable.length) {
       optionsWrap.hidden = true;
       optionsWrap.innerHTML = '';
@@ -169,12 +171,17 @@
       '<span class="hint">' + (usable.length > 1 ? '第 1 / ' + usable.length + ' 问' : '请选择') + '</span></div>' +
       '<div class="wizard-question">' + escapeHtml(question.question) + '</div>' +
       '<div class="wizard-options">' + options + '</div>';
-    if (question.field === 'objective' && currentHotTopics.length) {
-      html += '<div class="wizard-hotspots"><div class="option-label">热点（可选，选中后会结合进推文）</div>' +
-        '<div class="chip-row">' + currentHotTopics.slice(0, 3).map(topic =>
-          '<button type="button" class="chip' + (wizardHotspot === topic.title ? ' active' : '') +
-          '" data-wizard-hotspot="' + escapeHtml(topic.title) + '">' + escapeHtml(topic.title) + '</button>').join('') +
-        '</div></div>';
+    if (question.field === 'objective') {
+      if (currentHotTopics.length) {
+        html += '<div class="wizard-hotspots"><div class="option-label">热点（可选，选中后会结合进推文）</div>' +
+          '<div class="chip-row">' + currentHotTopics.slice(0, 3).map(topic =>
+            '<button type="button" class="chip' + (wizardHotspot === topic.title ? ' active' : '') +
+            '" data-wizard-hotspot="' + escapeHtml(topic.title) + '">' + escapeHtml(topic.title) + '</button>').join('') +
+          '</div></div>';
+      } else {
+        html += '<div class="wizard-hotspots"><div class="option-label">热点（可选）</div>' +
+          '<span class="hint">热点加载中，也可以先直接继续。</span></div>';
+      }
     }
     html += '<div class="wizard-foot">点击一个选项后自动进入下一题；也可以直接在输入框补充。</div></div>';
     optionsWrap.innerHTML = html;
@@ -440,12 +447,16 @@
     $('hotspot-note').textContent = note || '';
     if (!currentHotTopics.length) {
       $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
-      return;
+    } else {
+      $('hotspot-chips').innerHTML = currentHotTopics.map(topic =>
+        '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '"' +
+        (topic.url ? ' title="' + escapeHtml(topic.url) + '"' : '') + '>' +
+        escapeHtml(topic.title) + '</button>').join('');
+      const wizard = optionsWrap.querySelector('.wizard');
+      if (wizard && wizard.dataset.field === 'objective' && lastQuestions.length) {
+        renderOptions(lastQuestions);
+      }
     }
-    $('hotspot-chips').innerHTML = currentHotTopics.map(topic =>
-      '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '"' +
-      (topic.url ? ' title="' + escapeHtml(topic.url) + '"' : '') + '>' +
-      escapeHtml(topic.title) + '</button>').join('');
   }
 
   async function loadHotspots(slots) {
