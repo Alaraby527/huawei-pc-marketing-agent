@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.6.0-6">
+<link rel="stylesheet" href="/static/style.css?v=0.7.0-1">
 </head>
 <body>
 <div class="app-shell">
@@ -19,12 +19,7 @@
     <div class="topbar-right">
       <span class="badge" id="kb-badge">知识库：检测中…</span>
       <button type="button" class="chip xhs-login" id="xhs-login">连接小红书</button>
-      <div class="engine-switch" id="engine-switch" aria-label="生成引擎">
-        <button type="button" data-engine="rule">规则</button>
-        <button type="button" data-engine="llm" class="active">模型</button>
-      </div>
-      <select id="model-select" class="model-select" aria-label="模型选择" hidden></select>
-      <span class="version-tag">v0.6.0</span>
+      <span class="version-tag">v0.7.0</span>
     </div>
   </header>
 
@@ -47,25 +42,44 @@
       </div>
       <div class="chat-log" id="chat-log" aria-live="polite">
         <div class="msg assistant">
-          <p>你好，我是华为 PC 营销助手。告诉我客户是谁、预算和用途，我会从官方知识库选品、核验证据，再生成六页小红书图文。</p>
-          <p class="hint">可以从下面的选项开始，也可以直接描述，例如：“大学新生，预算不限，主要写论文、上网课，偏好轻薄”。</p>
+          <p>你好，我是华为 PC 营销助手。直接说说这次要写给谁、解决什么问题，我会先理解需求，再缺什么问什么。</p>
+          <p class="hint">例如：“给大学新生写一篇小红书，预算不限，主要上课和写论文。”也可以先随便描述，不用一次说全。</p>
         </div>
       </div>
 
-      <div class="hotspot-box" id="hotspot-box">
+      <div class="options-wrap" id="options-wrap" hidden></div>
+
+      <form class="composer" id="composer">
+        <div class="composer-box">
+          <textarea id="input" rows="2" placeholder="今天帮你做些什么？ @添加上下文，/调用技能与指令" required></textarea>
+          <div class="composer-bar">
+            <div class="composer-left">
+              <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
+              <span class="context-pill"><span class="status-dot"></span>官方知识库</span>
+            </div>
+            <div class="composer-right">
+              <label class="model-pick" title="选择生成模型">
+                <span class="model-dot" aria-hidden="true"></span>
+                <select id="model-select" aria-label="模型选择"></select>
+              </label>
+              <button type="submit" id="send" class="send-btn" aria-label="发送" disabled>
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </form>
+      <div class="ctx-menu" id="ctx-menu" hidden>
+        <button type="button" data-ctx="kb"><strong>官方知识库</strong><span>已连接 · 只读检索产品事实</span></button>
+        <button type="button" data-ctx="hot"><strong>小红书热点</strong><span>连接后可读取实时笔记</span></button>
+      </div>
+      <div class="hotspot-box" id="hotspot-box" hidden>
         <div class="hotspot-head">
           <span>热点灵感</span>
           <span id="hotspot-note" class="hint">加载中…</span>
         </div>
         <div class="chip-row" id="hotspot-chips"></div>
       </div>
-
-      <div class="options-wrap" id="options-wrap" hidden></div>
-
-      <form class="composer" id="composer">
-        <textarea id="input" rows="2" placeholder="输入客户需求，或点上面的选项…" required></textarea>
-        <button type="submit" id="send" class="btn-primary">发送</button>
-      </form>
       <div class="quick-actions" id="quick-actions" hidden>
         <button type="button" data-action="通过">通过，可以发布</button>
         <button type="button" data-action="再短一点">再短一点</button>
@@ -118,6 +132,7 @@
           <div class="draft-actions">
             <button id="copy-draft" class="btn-secondary">复制正文</button>
             <button id="generate-cover" class="btn-secondary">生成 AI 封面氛围图</button>
+            <a id="posters-link" class="btn-secondary" href="#" hidden download>下载六页图片 ZIP</a>
             <a id="export-link" class="btn-secondary" href="#" hidden>下载完整报告 ↗</a>
           </div>
           <div class="cover-result" id="cover-result" hidden>
@@ -133,6 +148,10 @@
           <div class="empty-icon">▤</div>
           <h3>还没有六页方案</h3>
           <p>确认产品并生成图文后，这里会按封面、场景、事实、细节、决策、收尾六页展开。</p>
+        </div>
+        <div class="pages-tools" id="pages-tools" hidden>
+          <span>1080 × 1440 PNG · 六页</span>
+          <a id="posters-link-pages" class="btn-secondary" href="#" download>下载六页图片 ZIP</a>
         </div>
         <div class="pages-grid" id="pages-grid" hidden></div>
       </div>
@@ -214,6 +233,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.6.0-6" defer></script>
+<script src="/static/app.js?v=0.7.0-1" defer></script>
 </body>
 </html>

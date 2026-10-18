@@ -214,12 +214,22 @@ def test_hotspot_uses_weibo_fallback_when_rednote_is_down(monkeypatch):
     def fake_fetch_source(platform, limit=50):
         if platform != 'weibo':
             return []
-        return [{'title': '微博测试话题', 'heat': 100, 'rank': 1, 'url': '',
+        return [{'title': '课堂学习笔记本怎么选', 'heat': 100, 'rank': 1, 'url': '',
                  'source': '60s-weibo', 'platform': 'weibo', 'observed_at': '2026-10-18T22:00:00+08:00'}]
     monkeypatch.setattr('app.hotspot._fetch_source', fake_fetch_source)
     topics = related_hot_topics('课堂学习', '大学新生')
     assert topics[0]['data_mode'] == 'live_fallback'
     assert topics[0]['source'] == '60s-weibo'
+
+
+def test_unrelated_public_trends_fall_back_to_editorial(monkeypatch):
+    from app.hotspot import related_hot_topics
+    monkeypatch.setattr('app.hotspot._fetch', lambda: [
+        {'title': '日本出现取消吃饭现象', 'heat': 2024269, 'rank': 1, 'url': '',
+         'source': '60s-weibo', 'platform': 'weibo', 'observed_at': '2026-10-18T22:00:00+08:00'}])
+    topics = related_hot_topics('课堂学习', '大学新生')
+    assert topics[0]['data_mode'] == 'editorial_fallback'
+    assert '开学季' in topics[0]['title']
 
 
 def test_ima_image_signature_and_url():

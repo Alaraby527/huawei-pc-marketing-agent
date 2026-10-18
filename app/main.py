@@ -18,6 +18,7 @@ from .conversation import Turn, service, DialogueError, ask
 from .hotspot import related_hot_terms, related_hot_topics
 from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
 from .model import image_configured, generate_cover_image, ModelError, allowed_models
+from .posters import pages_for, zip_bytes
 
 service.client_factory=default_client
 
@@ -210,6 +211,28 @@ async def export_result(session_id: str, format: str = "text"):
                          headers={"Content-Disposition": 'attachment; filename="xiaohongshu-draft.md"'})
     return Response(body, media_type="text/plain; charset=utf-8",
                      headers={"Content-Disposition": 'attachment; filename="xiaohongshu-draft.txt"'})
+
+
+@app.get("/api/v1/conversations/{session_id}/posters/{page}.png")
+def poster_page(session_id: str, page: int):
+    s = service.sessions.get(session_id)
+    if not s or not s.draft or not s.handoff_cache:
+        return JSONResponse(status_code=409, content={"message": "当前会话还没有可渲染的六页方案"})
+    if page < 1 or page > 6:
+        return JSONResponse(status_code=404, content={"message": "页码必须是 1-6"})
+    pages = pages_for(session_id, s.revision, s.draft, s.handoff_cache)
+    return Response(pages[page - 1], media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.get("/api/v1/conversations/{session_id}/posters.zip")
+def poster_zip(session_id: str):
+    s = service.sessions.get(session_id)
+    if not s or not s.draft or not s.handoff_cache:
+        return JSONResponse(status_code=409, content={"message": "当前会话还没有可渲染的六页方案"})
+    pages = pages_for(session_id, s.revision, s.draft, s.handoff_cache)
+    return Response(zip_bytes(pages), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="huawei-pc-posters.zip"'})
 
 
 def export_markdown(draft, handoff, compliance):

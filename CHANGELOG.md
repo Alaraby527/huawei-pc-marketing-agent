@@ -1,15 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-18
 
 ### Added
 
+- **Free-form first**: the workspace opens with a normal chat composer instead of a mandatory three-step card; the agent understands the message first and only asks for genuinely missing information, one question at a time.
+- **Compact composer**: rounded input, model picker with a server-backed allowlist, default-model label, context menu (`官方知识库` / `小红书热点`), and a circular send button.
+- **Publish actions below the composer**: approve / shorten / regenerate / refresh live in the compact action row under the input instead of a long-lived card above it.
+- **Six-page PNG renderer**: `GET /api/v1/conversations/{id}/posters.zip` and `/posters/{n}.png` render 1080×1440 posters from the plan, verified product images and fact callouts with Pillow; no Playwright/Chromium runtime required.
 - **Xiaohongshu QR login**: the main workbench can show a QR from an internal Xiaohongshu MCP, let the user scan/authorize, and then load real note titles/links/metrics as hotspot leads.
-- **Cross-platform fallback**: rednote → Weibo → editorial angles; every source is labelled and never presented as Xiaohongshu real-time data unless it is.
+- **Cross-platform fallback**: rednote → Weibo → editorial angles; every source is labelled and never presented as Xiaohongshu real-time data unless it is. Unrelated public trends are dropped in favour of product-relevant editorial angles.
 - **Single user entry**: the MCP is an internal service; the main app remains the only platform users open.
-- **WorkBuddy-style requirement wizard**: one question at a time, click an option to advance, progress indicator, optional hotspot selection in the objective step.
 - **Tool/skill trace**: assistant messages and the running state show `skill · 需求解析`, `tool · 官方知识库`, `skill · 候选核验`, `skill · 六页方案`, `skill · 合规扫描`, `gate · 人工确认`.
-- **Model selector**: topbar model dropdown backed by a server-side allowlist (`LLM_ALLOWED_MODELS`); no API keys are exposed to the browser.
+
+### Changed
+
+- Option cards now appear only while a question is open and disappear after the answer; the objective step reloads hotspot chips if the public feed finishes late.
+- The old mandatory quick-start panel and topbar engine switch were removed; model choice moved into the composer.
+- Docker installs `fonts-noto-cjk` and Pillow for poster rendering.
 
 ## 0.6.0 — 2026-10-18
 

@@ -18,13 +18,13 @@
   let lastHotKey = '';
   let lastQuestions = [];
   let loadingNode = null;
-  let quickStartData = null;
-  let quickIndex = 0;
-  let quickSelections = {};
   let currentHotTopics = [];
   let wizardHotspot = null;
+  let optionsRenderedAt = 0;
   let xhsPollTimer = null;
   let xhsTopicsActive = false;
+  let turnInFlight = false;
+  const SEND_ICON = sendBtn.innerHTML;
 
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
   const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
@@ -55,7 +55,8 @@
 
   function setBusy(busy) {
     sendBtn.disabled = busy;
-    sendBtn.textContent = busy ? '生成中…' : '发送';
+    sendBtn.innerHTML = busy ? '<span class="send-spinner" aria-hidden="true"></span>' : SEND_ICON;
+    sendBtn.setAttribute('aria-label', busy ? '生成中' : '发送');
     if (busy) {
       loadingNode = addMessage('assistant', '<p class="loading">Agent 正在调用工具与技能…</p>' +
         '<div class="agent-running">' +
@@ -70,6 +71,8 @@
   }
 
   async function requestTurn(payload) {
+    if (turnInFlight) return;
+    turnInFlight = true;
     setBusy(true);
     try {
       const response = await fetch('/api/v1/conversations/turn', {
@@ -88,11 +91,14 @@
     } catch (error) {
       addMessage('assistant', '<p>网络错误，请检查连接后重试。</p>');
     } finally {
+      turnInFlight = false;
       setBusy(false);
+      sendBtn.disabled = !input.value.trim();
     }
   }
 
   function send(message, slotUpdates) {
+    if (turnInFlight) return;
     const payload = { session_id: sessionId, message: message || '', engine: selectedEngine };
     if (selectedEngine === 'llm' && selectedModel) payload.model = selectedModel;
     if (slotUpdates) payload.slot_updates = slotUpdates;
@@ -154,14 +160,20 @@
     if (!usable.length) {
       optionsWrap.hidden = true;
       optionsWrap.innerHTML = '';
-      $('hotspot-box').hidden = false;
+      return;
+    }
+    const question = usable[0];
+    if (question.field === 'draft_decision') {
+      // Publish decisions belong in the compact action row under the composer,
+      // not in a long-lived card above it.
+      optionsWrap.hidden = true;
+      optionsWrap.innerHTML = '';
       return;
     }
     optionsWrap.hidden = false;
     $('hotspot-box').hidden = true;
-    const question = usable[0];
-    const title = question.field === 'candidate_id' ? '产品确认'
-      : question.field === 'draft_decision' ? '发布确认' : '需求确认';
+    $('ctx-menu').hidden = true;
+    const title = question.field === 'candidate_id' ? '产品确认' : '需求确认';
     const options = question.options.map(option => {
       const slot = option.slot_updates ? ' data-slot="' + escapeHtml(JSON.stringify(option.slot_updates)) + '"' : '';
       return '<button type="button" class="wizard-option" data-message="' +
@@ -172,6 +184,9 @@
       '<div class="wizard-question">' + escapeHtml(question.question) + '</div>' +
       '<div class="wizard-options">' + options + '</div>';
     if (question.field === 'objective') {
+      if (!currentHotTopics.length && lastResult && lastResult.slots) {
+        loadHotspots(lastResult.slots);
+      }
       if (currentHotTopics.length) {
         html += '<div class="wizard-hotspots"><div class="option-label">热点（可选，选中后会结合进推文）</div>' +
           '<div class="chip-row">' + currentHotTopics.slice(0, 3).map(topic =>
@@ -185,6 +200,7 @@
     }
     html += '<div class="wizard-foot">点击一个选项后自动进入下一题；也可以直接在输入框补充。</div></div>';
     optionsWrap.innerHTML = html;
+    optionsRenderedAt = Date.now();
   }
 
   function renderCandidates(result) {
@@ -255,6 +271,13 @@
     } else {
       exportLink.hidden = true;
     }
+    const postersLink = $('posters-link');
+    if (sessionId && draft.pages && draft.pages.length) {
+      postersLink.href = '/api/v1/conversations/' + sessionId + '/posters.zip';
+      postersLink.hidden = false;
+    } else {
+      postersLink.hidden = true;
+    }
     const key = (draft.title || '') + '|' + (draft.body || '').slice(0, 20);
     if (key !== lastCoverKey) {
       lastCoverKey = key;
@@ -267,13 +290,20 @@
     const draft = result.draft;
     const grid = $('pages-grid');
     const empty = $('pages-empty');
+    const tools = $('pages-tools');
     if (!draft || !draft.pages || !draft.pages.length) {
       grid.hidden = true;
       empty.hidden = false;
+      if (tools) tools.hidden = true;
       return;
     }
     empty.hidden = true;
     grid.hidden = false;
+    if (tools) {
+      tools.hidden = false;
+      const link = $('posters-link-pages');
+      if (sessionId) link.href = '/api/v1/conversations/' + sessionId + '/posters.zip';
+    }
     const handoff = result.handoff || {};
     const images = {};
     (handoff.images || []).forEach(image => { images[image.image_id] = image; });
@@ -407,11 +437,9 @@
 
   function syncEngineControls() {
     const select = $('model-select');
-    select.hidden = selectedEngine !== 'llm' || !select.options.length;
+    if (!select) return;
     if (selectedEngine === 'llm' && selectedModel) select.value = 'llm:' + selectedModel;
-    $('engine-switch').querySelectorAll('button').forEach(button => {
-      button.classList.toggle('active', button.dataset.engine === selectedEngine);
-    });
+    else select.value = 'rule';
     if (!lastResult || !lastResult.draft) {
       $('engine-badge').textContent = selectedEngine === 'llm'
         ? '模型 · ' + (selectedModel || '默认')
@@ -424,12 +452,16 @@
       const response = await fetch('/api/v1/models');
       const data = await response.json();
       const select = $('model-select');
-      select.innerHTML = '<option value="rule">规则引擎</option>' +
-        (data.text || []).map(model =>
-          '<option value="llm:' + escapeHtml(model) + '">模型 · ' + escapeHtml(model) + '</option>').join('');
-      if (data.default) {
+      const textModels = data.text || [];
+      const defaultModel = data.default || textModels[0] || null;
+      select.innerHTML = textModels.map(model =>
+        '<option value="llm:' + escapeHtml(model) + '">' +
+        (model === defaultModel ? '默认模型 · ' : '') + escapeHtml(model) + '</option>').join('') +
+        '<option value="rule">规则引擎</option>' +
+        '<option value="custom" disabled>更多模型（待配置）</option>';
+      if (defaultModel) {
         selectedEngine = 'llm';
-        selectedModel = data.default;
+        selectedModel = defaultModel;
       } else {
         selectedEngine = 'rule';
         selectedModel = null;
@@ -648,52 +680,6 @@
     if (panel) panel.hidden = false;
   }
 
-  async function loadQuickStart() {
-    if (sessionId || lastResult) return;
-    try {
-      const response = await fetch('/api/v1/questions');
-      if (!response.ok) return;
-      const data = await response.json();
-      quickStartData = data.core;
-      quickIndex = 0;
-      quickSelections = {};
-      renderQuickStart();
-    } catch (error) {
-      // The normal typed flow still works when this optional panel fails.
-    }
-  }
-
-  function renderQuickStart() {
-    if (sessionId || lastResult || !quickStartData) return;
-    const fields = ['audience', 'budget', 'scenario'];
-    if (quickIndex >= fields.length) return sendQuickStart();
-    const field = fields[quickIndex];
-    const question = quickStartData[field] || {};
-    const labels = { audience: '客户画像', budget: '预算', scenario: '使用场景' };
-    const options = (question.options || []).map(option =>
-      '<button type="button" class="wizard-option" data-quick-field="' + field + '" data-quick-message="' +
-      escapeHtml(option.message) + '">' + escapeHtml(option.label) + '</button>').join('');
-    optionsWrap.innerHTML = '<div class="wizard"><div class="wizard-head"><span>需求确认</span>' +
-      '<span class="hint">' + (quickIndex + 1) + ' / ' + fields.length + '</span></div>' +
-      '<div class="wizard-question">' + escapeHtml(labels[field] || field) + '：' +
-      escapeHtml(question.question || '请选择一个方向') + '</div>' +
-      '<div class="wizard-options">' + options + '</div>' +
-      '<div class="wizard-foot">点击一个方向后自动进入下一题；也可以直接在输入框描述。</div></div>';
-    optionsWrap.hidden = false;
-    $('hotspot-box').hidden = true;
-  }
-
-  function sendQuickStart() {
-    const fields = ['audience', 'budget', 'scenario'];
-    const message = fields.map(field => quickSelections[field]).filter(Boolean).join('，');
-    if (!message) return;
-    addMessage('operator', '<p>' + escapeHtml(message) + '</p>');
-    quickIndex = 0;
-    quickSelections = {};
-    optionsWrap.hidden = true;
-    send(message);
-  }
-
   function populateSamplePages() {
     const wrap = $('sample-pages');
     if (!wrap) return;
@@ -710,7 +696,12 @@
     if (!text) return;
     addMessage('operator', '<p>' + escapeHtml(text) + '</p>');
     input.value = '';
+    sendBtn.disabled = true;
     send(text);
+  });
+
+  input.addEventListener('input', () => {
+    sendBtn.disabled = !input.value.trim();
   });
 
   input.addEventListener('keydown', (event) => {
@@ -728,18 +719,7 @@
   });
 
   optionsWrap.addEventListener('click', (event) => {
-    const quick = event.target.closest('button[data-quick-field]');
-    if (quick) {
-      const field = quick.dataset.quickField;
-      quickSelections[field] = quick.dataset.quickMessage;
-      quickIndex += 1;
-      if (quickIndex < 3) {
-        renderQuickStart();
-      } else {
-        sendQuickStart();
-      }
-      return;
-    }
+    if (turnInFlight || Date.now() - optionsRenderedAt < 350) return;
     const hotspot = event.target.closest('button[data-wizard-hotspot]');
     if (hotspot) {
       wizardHotspot = wizardHotspot === hotspot.dataset.wizardHotspot ? null : hotspot.dataset.wizardHotspot;
@@ -755,6 +735,7 @@
     const wizard = optionsWrap.querySelector('.wizard');
     const field = wizard && wizard.dataset.field;
     optionsWrap.hidden = true;
+    optionsWrap.innerHTML = '';
     if (field === 'objective' && wizardHotspot) {
       send(button.dataset.message, { hotspot: wizardHotspot });
       wizardHotspot = null;
@@ -800,16 +781,22 @@
     send('', { platform: selectedPlatform });
   });
 
-  $('engine-switch').addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-engine]');
+  $('context-toggle').addEventListener('click', () => {
+    $('ctx-menu').hidden = !$('ctx-menu').hidden;
+    $('hotspot-box').hidden = true;
+  });
+
+  $('ctx-menu').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-ctx]');
     if (!button) return;
-    selectedEngine = button.dataset.engine;
-    if (selectedEngine === 'llm' && !selectedModel) {
-      const select = $('model-select');
-      const option = Array.from(select.options).find(item => item.value.startsWith('llm:'));
-      selectedModel = option ? option.value.slice(4) : null;
+    $('ctx-menu').hidden = true;
+    if (button.dataset.ctx === 'hot') {
+      $('hotspot-box').hidden = false;
+      loadHotspots(lastResult && lastResult.slots);
+      if (!currentHotTopics.length) loadXhsTopics();
+      return;
     }
-    syncEngineControls();
+    toast('官方知识库已连接，生成时会自动检索产品事实');
   });
 
   $('model-select').addEventListener('change', (event) => {
@@ -843,9 +830,8 @@
   $('generate-cover').addEventListener('click', generateCover);
 
   loadKnowledgeBase();
-  loadHotspots(null);
-  loadQuickStart();
   loadXhsStatus();
   loadModels();
   populateSamplePages();
+  input.focus();
 })();

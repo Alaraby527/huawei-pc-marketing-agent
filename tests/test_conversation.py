@@ -90,7 +90,7 @@ def mocked(monkeypatch):
 
 @pytest.mark.parametrize('message,missing',[
     ('大学生',{'budget','scenario'}),('预算6000以内',{'audience','scenario'}),('想买电脑',{'audience','budget'}),
-    ('大学生，预算6000以内',{'scenario'})])
+    ('大学生，预算6000以内',{'scenario'}),('给大学生写一篇小红书',{'budget','scenario'})])
 def test_single_information_questions_and_no_network(message,missing):
     service=ConversationService(Fake)
     r=asyncio.run(service.turn(Turn(message=message)))

@@ -74,6 +74,12 @@ def _fetch(limit=50):
     return results.get("rednote") or results.get("weibo") or []
 
 
+def _domain_match(title, term):
+    if term.isascii():
+        return re.search(r"(?<![a-z])" + re.escape(term.lower()) + r"(?![a-z])", title.lower()) is not None
+    return term in title
+
+
 def related_hot_topics(scenario, audience, limit=6):
     """Return loosely related topics; curated angles when public feeds are down."""
     topics = _fetch()
@@ -84,14 +90,25 @@ def related_hot_topics(scenario, audience, limit=6):
                 for topic in CURATED_ANGLES[:limit]]
     live_mode = "live" if any(topic.get("platform") == "rednote" for topic in topics) else "live_fallback"
     terms = [w for w in re.split(r"[，、\s]+", (scenario or "") + " " + (audience or "")) if len(w) >= 2]
+    domain_terms = ["笔记本", "电脑", "PC", "数码", "科技", "开学", "学生", "课堂", "学习",
+                    "办公", "职场", "创作", "剪辑", "屏幕", "续航", "轻薄", "性能", "AI",
+                    "鸿蒙", "华为", "家庭", "教育", "游戏", "设计"]
     scored = []
     for topic in topics:
         hits = sum(1 for term in terms if term in topic["title"])
-        scored.append((hits, topic))
-    scored.sort(key=lambda item: (-item[0], item[1].get("rank") or 999))
+        domain_hits = sum(1 for term in domain_terms if _domain_match(topic["title"], term))
+        scored.append((hits, domain_hits, topic))
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2].get("rank") or 999))
+    scored = [item for item in scored if item[0] > 0 or item[1] > 0]
+    if not scored:
+        return [{**topic, "source": "editorial-fallback", "data_mode": "editorial_fallback",
+                 "observed_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
+                 "relation": "editorial", "heat": None, "url": ""}
+                for topic in CURATED_ANGLES[:limit]]
     result = []
-    for hits, topic in scored[:limit]:
-        result.append({**topic, "data_mode": live_mode, "relation": "matched" if hits else "weak"})
+    for hits, domain_hits, topic in scored[:limit]:
+        result.append({**topic, "data_mode": live_mode,
+                       "relation": "matched" if hits or domain_hits else "weak"})
     return result
 
 
