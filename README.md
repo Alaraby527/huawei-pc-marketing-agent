@@ -5,11 +5,18 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.5.0（已完成真实 ima + DashScope 联调，尚未部署公网实例）**
+> **当前版本：v0.5.0（已在魔搭公开部署，个人库联调）**
 >
 > 已实现：多轮需求澄清与可点选项、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、**六页小红书图文方案**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感面板、HarmonyOS 风格 PC 工作台。
 >
-> 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、公网鉴权与限流、公开线上实例。个人库联调始终标记 `competition_ready=false`。
+> 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、公网鉴权与限流。个人库联调始终标记 `competition_ready=false`。
+
+## 线上实例
+
+- 魔搭创空间（Public / Running）：https://www.modelscope.cn/studios/cangyuyi/huawei-pc-marketing-agent
+- 直接应用：https://cangyuyi-huawei-pc-marketing-agent.ms.show/
+- API 专用地址（脚本调用需 ModelScope token）：https://studio-cangyuyi-huawei-pc-marketing-agent.api-inference.modelscope.net
+- 当前知识库：`Alaraby的知识库`（个人库），`competition_ready=false`；拿到赛事共享库权限后切换 `IMA_KB_NAME` 再复验。
 
 ## 架构
 
@@ -205,7 +212,7 @@ docker run --rm -p 7860:7860 \
   ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.5.0
 ```
 
-要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。ModelScope 创空间使用 Docker SDK，监听 `7860`；部署步骤见 [`docs/01_队友部署指南.md`](docs/01_队友部署指南.md)。
+要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。当前实例已按 ModelScope Docker SDK 部署在 7860 端口；重建步骤见 [`docs/10_ModelScope部署.md`](docs/10_ModelScope部署.md)。
 
 完整形态还缺三件事：赛事共享知识库权限、逐条语义核验、以及面向公网的鉴权/限流与多 worker 会话存储。
 
