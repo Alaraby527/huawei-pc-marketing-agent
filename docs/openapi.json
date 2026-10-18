@@ -362,6 +362,102 @@
         }
       }
     },
+    "/api/v1/xhs/status": {
+      "get": {
+        "summary": "Xhs Status",
+        "operationId": "xhs_status_api_v1_xhs_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/xhs/login/qrcode": {
+      "get": {
+        "summary": "Xhs Qrcode",
+        "operationId": "xhs_qrcode_api_v1_xhs_login_qrcode_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/xhs/login/status": {
+      "get": {
+        "summary": "Xhs Login Status",
+        "operationId": "xhs_login_status_api_v1_xhs_login_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/xhs/hot": {
+      "get": {
+        "summary": "Xhs Hot",
+        "operationId": "xhs_hot_api_v1_xhs_hot_get",
+        "parameters": [
+          {
+            "name": "scenario",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Scenario"
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Audience"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/conversations/{session_id}/export": {
       "get": {
         "summary": "Export Result",

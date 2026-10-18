@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Xiaohongshu QR login**: the main workbench can show a QR from an internal Xiaohongshu MCP, let the user scan/authorize, and then load real note titles/links/metrics as hotspot leads.
+- **Cross-platform fallback**: rednote → Weibo → editorial angles; every source is labelled and never presented as Xiaohongshu real-time data unless it is.
+- **Single user entry**: the MCP is an internal service; the main app remains the only platform users open.
+
 ## 0.6.0 — 2026-10-18
 
 ### Added

@@ -43,6 +43,15 @@ LOCAL_KB_ZIP=/app/data/official-kb-v7.zip
 
 把官方 ZIP 以 `data/official-kb-v7.zip` 放入部署源码；Dockerfile 会复制到镜像。ZIP 已被 `.gitignore` 排除，不会进入 GitHub。该模式不调用实时 ima，`competition_ready` 仍为 false。
 
+可选的小红书扫码热点需要一个内部 MCP 服务：
+
+```text
+XHS_MCP_BASE=https://studio-cangyuyi-huawei-xhs-mcp.api-inference.modelscope.net
+XHS_MCP_TOKEN=<ModelScope access token>
+```
+
+主应用只把 MCP 当内部授权服务：用户在顶栏点“连接小红书”，扫描弹窗二维码并授权，主应用再读取实时笔记。MCP 地址和 token 只放服务端 Secrets，不暴露在页面上；登录会话为实例共享，重启后失效。未配置或未登录时自动回退公开热榜/微博/编辑方向。
+
 可选：
 
 ```text

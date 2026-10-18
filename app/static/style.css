@@ -87,7 +87,15 @@ h1,h2,h3,p{margin:0}
 
 .hotspot-box{flex:0 0 auto;max-height:142px;overflow-y:auto;padding:10px 16px 8px;border-top:1px solid var(--divider);background:var(--surface)}
 .hotspot-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:12px;font-weight:600}
-.hotspot-head .hint{font-weight:400;text-align:right}
+.hotspot-head .hint{font-weight:400;text-align:right;flex:1}
+.xhs-login{padding:4px 9px;font-size:11px;color:var(--brand);border-color:var(--brand);height:28px;white-space:nowrap}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}
+.modal-card{position:relative;width:min(420px,100%);background:var(--surface);border:1px solid var(--divider);border-radius:var(--radius-l);box-shadow:var(--shadow-float);padding:22px;text-align:center}
+.modal-card h3{font-size:18px;margin-bottom:8px}
+.modal-card p{font-size:13px;color:var(--text-2);line-height:1.7;margin-bottom:12px}
+#xhs-qr{width:220px;height:220px;object-fit:contain;border:1px solid var(--divider);border-radius:12px;background:#fff;margin:0 auto 10px;display:block}
+.modal-close{position:absolute;right:10px;top:8px;border:none;background:none;font-size:24px;line-height:1;color:var(--text-3);cursor:pointer}
+.modal-card .btn-secondary{margin-top:4px}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px}
 .chip{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);border-radius:999px;padding:6px 12px;font-size:12px;transition:border-color .15s var(--ease),color .15s var(--ease),background .15s var(--ease)}
 .chip:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-softer)}

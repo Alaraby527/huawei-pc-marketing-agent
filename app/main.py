@@ -16,6 +16,7 @@ from .ima import ImaClient, ImaError, configured
 from .local_kb import default_client, kb_source, local_kb_ready
 from .conversation import Turn, service, DialogueError, ask
 from .hotspot import related_hot_terms, related_hot_topics
+from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
 from .model import image_configured, generate_cover_image, ModelError
 
 service.client_factory=default_client
@@ -82,6 +83,7 @@ async def readiness():
         "configured": {
             "ima_credentials": configured(),
             "local_kb_ready": local_kb_ready(),
+            "xhs_mcp": xhs_configured(),
             "llm_credentials": bool(os.getenv("LLM_API_KEY")),
             "llm_endpoint_and_model": bool(os.getenv("LLM_BASE_URL") and os.getenv("LLM_MODEL")),
         },
@@ -157,6 +159,36 @@ def hotspots(scenario: str = "", audience: str = ""):
     else:
         note = "公开热榜暂不可用；以下为编辑内容方向，不是实时热点，也不代表传播效果"
     return {"topics": topics, "terms": [topic["title"] for topic in topics], "data_mode": mode, "note": note}
+
+@app.get("/api/v1/xhs/status")
+async def xhs_status():
+    try:
+        return {"status": "ok", **await login_status()}
+    except XhsError as error:
+        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
+
+@app.get("/api/v1/xhs/login/qrcode")
+async def xhs_qrcode():
+    try:
+        return {"status": "ok", **await login_qrcode()}
+    except XhsError as error:
+        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
+
+@app.get("/api/v1/xhs/login/status")
+async def xhs_login_status():
+    try:
+        return {"status": "ok", **await login_status()}
+    except XhsError as error:
+        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
+
+@app.get("/api/v1/xhs/hot")
+async def xhs_hot(scenario: str = "", audience: str = ""):
+    try:
+        topics = await xhs_hot_topics(scenario, audience)
+        return {"status": "ok", "topics": topics, "data_mode": "live_xhs",
+                "note": "来自当前实例已授权小红书账号的实时搜索；笔记标题和互动数仅作话题线索，不替代产品事实"}
+    except XhsError as error:
+        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
 
 @app.get("/api/v1/conversations/{session_id}/export")
 async def export_result(session_id: str, format: str = "text"):

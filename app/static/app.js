@@ -18,6 +18,8 @@
   let loadingNode = null;
   let quickStartData = null;
   let quickSelection = {};
+  let xhsPollTimer = null;
+  let xhsTopicsActive = false;
 
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
   const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
@@ -355,7 +357,20 @@
     else badge.textContent = '规则引擎';
   }
 
+  function renderHotTopics(topics, note) {
+    $('hotspot-note').textContent = note || '';
+    if (!topics || !topics.length) {
+      $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
+      return;
+    }
+    $('hotspot-chips').innerHTML = topics.slice(0, 3).map(topic =>
+      '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '"' +
+      (topic.url ? ' title="' + escapeHtml(topic.url) + '"' : '') + '>' +
+      escapeHtml(topic.title) + '</button>').join('');
+  }
+
   async function loadHotspots(slots) {
+    if (xhsTopicsActive) return;
     const scenario = (slots && slots.scenario) || '';
     const audience = (slots && slots.audience) || '';
     const key = scenario + '|' + audience;
@@ -364,20 +379,127 @@
     try {
       const response = await fetch('/api/v1/hotspots?scenario=' + encodeURIComponent(scenario) + '&audience=' + encodeURIComponent(audience));
       const data = await response.json();
-      const topics = data.topics || [];
-      $('hotspot-note').textContent = data.data_mode === 'live' ? '小红书热榜'
+      const note = data.data_mode === 'live' ? '小红书热榜'
         : data.data_mode === 'live_fallback' ? '微博热榜（跨平台参考）'
         : '编辑方向（热榜暂不可用）';
-      if (!topics.length) {
-        $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
+      renderHotTopics(data.topics || [], note);
+    } catch (error) {
+      renderHotTopics([], '热点暂不可用');
+    }
+  }
+
+  function openXhsModal(message) {
+    $('xhs-modal').hidden = false;
+    if (message) $('xhs-status').textContent = message;
+  }
+
+  function closeXhsModal() {
+    $('xhs-modal').hidden = true;
+    if (xhsPollTimer) {
+      clearInterval(xhsPollTimer);
+      xhsPollTimer = null;
+    }
+  }
+
+  async function loadXhsTopics() {
+    const slots = (lastResult && lastResult.slots) || {};
+    try {
+      const response = await fetch('/api/v1/xhs/hot?scenario=' +
+        encodeURIComponent(slots.scenario || '') + '&audience=' + encodeURIComponent(slots.audience || ''));
+      const data = await response.json();
+      if (response.status === 401) {
+        xhsTopicsActive = false;
+        openXhsModal(data.message || '请先扫码登录小红书');
+        return xhsLogin();
+      }
+      if (!response.ok) {
+        xhsTopicsActive = false;
+        renderHotTopics([], data.message || '小红书暂不可用');
         return;
       }
-      $('hotspot-chips').innerHTML = topics.slice(0, 3).map(topic =>
-        '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '">' +
-        escapeHtml(topic.title) + '</button>').join('');
+      const topics = data.topics || [];
+      if (!topics.length) {
+        xhsTopicsActive = false;
+        renderHotTopics([], '小红书未返回相关笔记');
+        return;
+      }
+      xhsTopicsActive = true;
+      $('xhs-login').textContent = '小红书已连接';
+      renderHotTopics(topics, '小红书实时笔记');
     } catch (error) {
-      $('hotspot-note').textContent = '热点暂不可用';
-      $('hotspot-chips').innerHTML = '<span class="chip muted">不影响主流程</span>';
+      xhsTopicsActive = false;
+      renderHotTopics([], '小红书连接失败');
+    }
+  }
+
+  function startXhsPoll() {
+    if (xhsPollTimer) clearInterval(xhsPollTimer);
+    const started = Date.now();
+    xhsPollTimer = setInterval(async () => {
+      try {
+        const response = await fetch('/api/v1/xhs/login/status');
+        const data = await response.json();
+        if (data.logged_in) {
+          closeXhsModal();
+          toast('小红书已连接');
+          loadXhsTopics();
+          return;
+        }
+        if (Date.now() - started > 120000) {
+          closeXhsModal();
+          toast('二维码已过期，请重新连接');
+        }
+      } catch (error) {
+        // Keep polling; a transient network error should not close the dialog.
+      }
+    }, 2000);
+  }
+
+  async function xhsLogin() {
+    try {
+      const response = await fetch('/api/v1/xhs/login/qrcode');
+      const data = await response.json();
+      if (!response.ok) {
+        toast(data.message || '小红书未配置');
+        openXhsModal(data.message || '小红书未配置');
+        return;
+      }
+      if (data.is_logged_in) {
+        closeXhsModal();
+        return loadXhsTopics();
+      }
+      if (!data.qr_image) {
+        openXhsModal('未获取到二维码，请稍后重试');
+        return;
+      }
+      $('xhs-qr').src = data.qr_image;
+      $('xhs-status').textContent = '请用小红书 App 扫码登录并完成授权';
+      openXhsModal();
+      startXhsPoll();
+    } catch (error) {
+      toast('小红书连接失败');
+      openXhsModal('小红书连接失败，请检查 MCP 服务');
+    }
+  }
+
+  async function loadXhsStatus() {
+    const button = $('xhs-login');
+    try {
+      const response = await fetch('/api/v1/xhs/status');
+      const data = await response.json();
+      if (!response.ok || !data.configured) {
+        button.textContent = '小红书未配置';
+        button.title = '部署时设置 XHS_MCP_BASE 与 XHS_MCP_TOKEN';
+        return;
+      }
+      if (data.logged_in) {
+        button.textContent = '小红书已连接';
+        loadXhsTopics();
+      } else {
+        button.textContent = '连接小红书';
+      }
+    } catch (error) {
+      button.textContent = '连接小红书';
     }
   }
 
@@ -559,6 +681,12 @@
     send(text);
   });
 
+  $('xhs-login').addEventListener('click', xhsLogin);
+  $('xhs-close').addEventListener('click', closeXhsModal);
+  $('xhs-modal').addEventListener('click', (event) => {
+    if (event.target.id === 'xhs-modal') closeXhsModal();
+  });
+
   platformSwitch.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-platform]');
     if (!button) return;
@@ -598,6 +726,7 @@
   loadKnowledgeBase();
   loadHotspots(null);
   loadQuickStart();
+  loadXhsStatus();
   populateSamplePages();
   $('engine-badge').textContent = selectedEngine === 'llm' ? '模型引擎' : '规则引擎';
 })();
