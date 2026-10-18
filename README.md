@@ -137,8 +137,16 @@ python -m pytest -q
 **GitHub 适合放源码、CI 和镜像，不适合直接托管这个后端。** GitHub Pages 只能托管静态文件，不能运行 FastAPI、ima 调用和 LLM 调用。仓库提供：
 
 - `ci.yml`：每次 push/PR 跑编译检查与全量测试。
-- `container.yml`：在 `main` 上构建并推送 GHCR 镜像，作为可部署产物。
+- `container.yml`：在 `main`/版本 tag 上构建并推送 GHCR 镜像，并启动容器请求 `/healthz` 做冒烟测试。
 - `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
+
+当前镜像标签包括 `latest`、`0.4.0`、`v0.4.0` 和 `sha-<commit>`：
+
+```bash
+docker run --rm -p 7860:7860 \
+  -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.4.0
+```
 
 要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。ModelScope 创空间使用 Docker SDK，监听 `7860`；部署步骤见 [`docs/01_队友部署指南.md`](docs/01_队友部署指南.md)。
 
