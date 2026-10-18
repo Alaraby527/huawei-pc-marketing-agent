@@ -248,6 +248,7 @@ vendor/ima-skill/  官方 ima 只读调用脚本
 - [接口约定与分工](docs/02_接口约定与分工.md)
 - [配置与联调验收](docs/03_配置与联调验收.md)
 - [魔搭创空间部署](docs/10_ModelScope部署.md)
+- [华为设计语言与工作台规范](docs/11_华为设计语言与工作台规范.md)
 - [进度与限制](docs/04_进度与限制.md)
 - [系统提示词](prompts/agent-system.md)
 
