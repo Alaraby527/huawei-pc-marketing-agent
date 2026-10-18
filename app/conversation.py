@@ -128,8 +128,13 @@ def parse_message(message,slots,last_questions):
     audience=re.search(r'(?:画像|客户|顾客|面向|人群|对象)[是为：:]*\s*([^，。；\n]{1,60})',text)
     if audience: patch['audience']=audience.group(1)
     else:
-        for word in ['大学新生','大学生','研究生','高中生','学生','设计师','摄影师','创作者','上班族','商务人士','程序员','企业采购','家庭用户','父母']:
-            if word in text: patch['audience']=word; break
+        audience_labels={'职场办公':'职场办公者','职场':'职场办公者','上班族':'职场办公者','商务人士':'职场办公者',
+                         '企业采购':'企业采购者','家庭用户':'家庭用户','父母':'家庭用户'}
+        for word in ['大学新生','大学生','研究生','高中生','学生','设计师','摄影师','创作者',
+                     '职场办公','职场','上班族','商务人士','程序员','企业采购','家庭用户','父母']:
+            if word in text:
+                patch['audience']=audience_labels.get(word,word)
+                break
     # Occupation alone does not establish what the PC will be used for.
     clauses=re.split(r'[，。；\n]',text)
     scene=[c.strip() for c in clauses if any(w in c for w in ['用途','场景','用来','用于','主要用','写论文','写作业','上网课','做表格','视频剪辑','编程','差旅','出差','文档办公','日常办公','课堂学习','校园携带','家庭娱乐'])]

@@ -98,6 +98,13 @@ def test_single_information_questions_and_no_network(message,missing):
     assert len(r['questions'])<=2 and not r['candidates'] and not r['can_generate']
 
 
+def test_office_free_text_fills_audience_instead_of_asking_again():
+    service=ConversationService(Fake)
+    r=asyncio.run(service.turn(Turn(message='职场办公，预算6000到8000，主要用途是差旅移动办公、会议和文档处理')))
+    assert r['slots']['audience']=='职场办公者'
+    assert {q['field'] for q in r['questions']}=={'preferences','required_software'}
+
+
 def test_missing_core_never_filled_after_many_turns():
     async def run():
         service=ConversationService(Fake); r=await service.turn(Turn(message='大学生'))
