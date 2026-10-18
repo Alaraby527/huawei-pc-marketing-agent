@@ -5,9 +5,11 @@ ever produces atmosphere/background art, never the product itself. Product
 photography always comes from ima (see app/evidence.py, app/retrieval.py).
 Credentials are read from environment variables only and never logged.
 """
+import base64
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -40,10 +42,15 @@ def _settings():
 
 def _image_settings():
     base = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    native = os.getenv("LLM_IMAGE_NATIVE_BASE", "").rstrip("/")
+    if not native and "dashscope.aliyuncs.com" in base:
+        native = "https://dashscope.aliyuncs.com/api/v1"
     return {
         "base_url": base,
         "api_key": os.getenv("LLM_API_KEY", ""),
-        "model": os.getenv("LLM_IMAGE_MODEL", "gpt-image-2"),
+        "model": os.getenv("LLM_IMAGE_MODEL", "wanx2.1-t2i-turbo"),
+        "size": os.getenv("LLM_IMAGE_SIZE", "768*1024"),
+        "native_base": native,
         "timeout": _env_int("LLM_IMAGE_TIMEOUT", 150, 30, 170),
         "enabled": os.getenv("ENABLE_AI_COVER", "0") == "1",
     }
@@ -107,6 +114,92 @@ def image_configured():
     return settings["enabled"] and all([settings["base_url"], settings["api_key"], settings["model"]])
 
 
+def _post_json(url, body, settings, extra_headers=None):
+    request = urllib.request.Request(
+        url, data=json.dumps(body, ensure_ascii=False).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
+                 "User-Agent": "huawei-pc-marketing-agent/" + __version__, **(extra_headers or {})},
+        method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
+            return json.loads(response.read(2 * 1024 * 1024))
+    except urllib.error.HTTPError as exc:
+        raise ModelError("生图服务 HTTP " + str(exc.code)) from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        raise ModelError("生图服务连接、读取或 JSON 解析失败") from None
+
+
+def _image_mime(data):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return None
+
+
+def _download_generated(url, allow_any_https=False):
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except (TypeError, ValueError):
+        raise ModelError("生图结果地址无效") from None
+    if parts.scheme != "https" or parts.username or parts.password:
+        raise ModelError("生图结果必须使用 HTTPS 地址")
+    if not allow_any_https and not (host == "dashscope.aliyuncs.com" or host.endswith(".aliyuncs.com")):
+        raise ModelError("生图结果域名不在允许范围内")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "huawei-pc-marketing-agent/" + __version__}),
+                                    timeout=60) as response:
+            data = response.read(12 * 1024 * 1024 + 1)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ModelError("生图结果下载失败") from None
+    if len(data) > 12 * 1024 * 1024:
+        raise ModelError("生图结果超过单次读取上限")
+    mime = _image_mime(data)
+    if not mime:
+        raise ModelError("生图结果不是受支持的图片格式")
+    return data, mime
+
+
+def _dashscope_native(prompt, settings):
+    """DashScope text-to-image is asynchronous: submit, poll, then download."""
+    base = settings["native_base"].rstrip("/")
+    submit = _post_json(
+        base + "/services/aigc/text2image/image-synthesis",
+        {"model": settings["model"], "input": {"prompt": prompt[:1800]},
+         "parameters": {"size": settings["size"], "n": 1}},
+        settings, {"X-DashScope-Async": "enable"})
+    output = submit.get("output") or {}
+    task_id = output.get("task_id")
+    if not task_id:
+        raise ModelError("生图服务没有返回任务 ID")
+    deadline = time.monotonic() + settings["timeout"]
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        request = urllib.request.Request(
+            base + "/tasks/" + task_id,
+            headers={"Authorization": "Bearer " + settings["api_key"],
+                     "User-Agent": "huawei-pc-marketing-agent/" + __version__})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read(2 * 1024 * 1024))
+        except urllib.error.HTTPError as exc:
+            raise ModelError("生图任务查询 HTTP " + str(exc.code)) from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            raise ModelError("生图任务查询失败或超时") from None
+        output = result.get("output") or {}
+        status = output.get("task_status")
+        if status == "SUCCEEDED":
+            results = output.get("results") or []
+            url = results[0].get("url") if results and isinstance(results[0], dict) else None
+            if not url:
+                raise ModelError("生图任务成功但没有图片地址")
+            return _download_generated(url)
+        if status in ("FAILED", "CANCELED", "UNKNOWN"):
+            raise ModelError("生图任务失败：" + str(status))
+    raise ModelError("生图任务超时，请稍后重试")
+
+
 def generate_cover_image(prompt):
     """Generate an atmosphere/background illustration only. Never the product itself.
 
@@ -121,33 +214,26 @@ def generate_cover_image(prompt):
     _check_https(settings["base_url"])
     guarded_prompt = (prompt + "。严格要求：不出现任何笔记本电脑、平板、手机或其他数码产品实体；"
                        "只画抽象背景、光影、桌面场景道具（杯子、绿植、灯具等），不画产品主体；无文字。")
-    body = json.dumps({"model": settings["model"], "prompt": guarded_prompt[:1800], "size": "1024x1024", "n": 1}).encode()
-    req = urllib.request.Request(
-        settings["base_url"] + "/images/generations", data=body,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
-                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
+    if settings["native_base"]:
+        return _dashscope_native(guarded_prompt, settings)
+    result = _post_json(
+        settings["base_url"] + "/images/generations",
+        {"model": settings["model"], "prompt": guarded_prompt[:1800],
+         "size": settings["size"].replace("*", "x"), "n": 1},
+        settings)
     try:
-        with urllib.request.urlopen(req, timeout=settings["timeout"]) as response:
-            raw = response.read(12 * 1024 * 1024)
-    except urllib.error.HTTPError as exc:
-        raise ModelError("生图服务 HTTP " + str(exc.code)) from None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        raise ModelError("生图连接或读取超时") from None
-    try:
-        result = json.loads(raw)
         item = result["data"][0]
-    except (ValueError, KeyError, IndexError, TypeError):
+    except (KeyError, IndexError, TypeError):
         raise ModelError("生图服务没有返回有效结果") from None
-    import base64
-    b64 = item.get("b64_json")
-    if not b64:
-        raise ModelError("生图服务未返回图片数据")
-    try:
-        data = base64.b64decode(b64, validate=True)
-    except (ValueError, TypeError):
-        raise ModelError("生图返回的数据无法解码") from None
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return data, "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return data, "image/jpeg"
-    raise ModelError("生图返回的数据不是受支持的图片格式")
+    if item.get("b64_json"):
+        try:
+            data = base64.b64decode(item["b64_json"], validate=True)
+        except (ValueError, TypeError):
+            raise ModelError("生图返回的数据无法解码") from None
+        mime = _image_mime(data)
+        if not mime:
+            raise ModelError("生图返回的数据不是受支持的图片格式")
+        return data, mime
+    if item.get("url"):
+        return _download_generated(item["url"], allow_any_https=True)
+    raise ModelError("生图服务未返回图片数据")

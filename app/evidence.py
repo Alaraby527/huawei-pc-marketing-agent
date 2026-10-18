@@ -151,8 +151,19 @@ async def load_catalog(profile,scenario,client=None):
     if len(originals)>48: raise ImaError('完整产品原文超过48份读取上限，请按PC产品目录整理后缩小范围')
     # Only fact originals enter the product index. Discovery cards may offer names, not fabricated specs.
     groups={}; issues=[]
-    for entry in sorted(originals,key=lambda x: ranked_ids.index(x['media_id']) if x['media_id'] in ranked_ids else 999):
-        text=await client.read_text(entry)
+    ordered=sorted(originals,key=lambda x: ranked_ids.index(x['media_id']) if x['media_id'] in ranked_ids else 999)
+    semaphore=asyncio.Semaphore(4)
+    async def read_original(entry):
+        async with semaphore:
+            try:
+                return entry, await client.read_text(entry), None
+            except ImaError as error:
+                return entry, None, str(error)
+    results=await asyncio.gather(*(read_original(entry) for entry in ordered))
+    for entry,text,error in results:
+        if error:
+            issues.append('跳过无法读取的原文：'+entry.get('title','未命名')+'（'+error+'）')
+            continue
         model=model_from_document(text)
         if not model: continue
         if '发现卡' in text and '## 官方规格摘录' not in text and '产品事实' not in entry.get('title',''): continue

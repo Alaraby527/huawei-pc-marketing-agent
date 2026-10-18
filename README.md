@@ -5,11 +5,11 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.4.0（开发中，尚未线上部署）**
+> **当前版本：v0.5.0（已完成真实 ima + DashScope 联调，尚未部署公网实例）**
 >
-> 已实现：多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎文案、合规规则扫描、两道人工确认、四段式报告导出。
+> 已实现：多轮需求澄清与可点选项、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、**六页小红书图文方案**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感面板、HarmonyOS 风格 PC 工作台。
 >
-> 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、鉴权与限流、公开线上实例。个人库联调始终标记 `competition_ready=false`，不能当作已满足赛事来源要求。
+> 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、公网鉴权与限流、公开线上实例。个人库联调始终标记 `competition_ready=false`。
 
 ## 架构
 
@@ -21,12 +21,15 @@ flowchart LR
   R --> E[事实与图片核验]
   E --> P[型号确认]
   P --> C[图文生成<br/>rule / llm]
-  C --> A[合规规则扫描]
+  C --> P6[六页小红书方案]
+  C --> IMG[DashScope 氛围封面]
+  P6 --> A[合规规则扫描]
   A --> H{人工确认}
   H -->|通过| X[导出四段式报告]
   H -->|修改| C
   R <--> KB[(ima 知识库)]
   C -.可选.-> LLM[OpenAI 兼容模型]
+  IMG -.可选.-> IMGAPI[DashScope 原生生图]
 ```
 
 核心原则：**产品事实只来自知识库；搜索相关性不等于产品身份；没有证据就停下来问，不用模型记忆补齐。**
@@ -44,6 +47,13 @@ export IMA_OPENAPI_CLIENTID='...'
 export IMA_OPENAPI_APIKEY='...'
 export IMA_KB_NAME='你的知识库名称'
 
+# 可选：启用模型文案与 DashScope 生图
+export LLM_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1'
+export LLM_MODEL='qwen-plus'
+export LLM_API_KEY='...'
+export LLM_IMAGE_MODEL='wanx2.1-t2i-turbo'
+export ENABLE_AI_COVER=1
+
 python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ```
 
@@ -54,10 +64,11 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ### Docker
 
 ```bash
-docker build -t huawei-pc-marketing-agent:0.4.0 .
+docker build -t huawei-pc-marketing-agent:0.5.0 .
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
-  huawei-pc-marketing-agent:0.4.0
+  -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
+  huawei-pc-marketing-agent:0.5.0
 ```
 
 镜像以非 root 用户运行，包含 Node 运行时、健康检查和 `vendor/ima-skill` 只读调用脚本。推送到 `main` 后，GitHub Actions 会自动构建并发布 `ghcr.io/cangyuyi/huawei-pc-marketing-agent:latest`。
@@ -75,7 +86,9 @@ docker run --rm -p 7860:7860 \
 | `LLM_MODEL` | 否 | 文本模型名称 |
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` | 否 | 超时与输出上限，自动限制在安全范围 |
 | `ENABLE_AI_COVER` | 否 | `1` 才启用 AI 氛围封面；只生成背景，不生成产品外观 |
-| `LLM_IMAGE_MODEL` | 否 | 生图模型名称 |
+| `LLM_IMAGE_MODEL` | 否 | 生图模型；DashScope 默认 `wanx2.1-t2i-turbo` |
+| `LLM_IMAGE_SIZE` | 否 | 生图尺寸，默认 `768*1024`（3:4） |
+| `LLM_IMAGE_NATIVE_BASE` | 否 | DashScope 原生 API 基址；Base URL 含 dashscope 时自动推导 |
 
 应用不会自动读取 `.env`；请由启动环境或平台 Secrets 注入。`.env.example` 只有占位符。
 
@@ -115,6 +128,49 @@ curl -s http://127.0.0.1:7860/api/v1/conversations/turn \
 
 合规核验目前是**确定性规则扫描**（绝对化用语、无依据体验、未核实价格/促销、数字可追溯性），不是逐条语义事实核验；导出报告会明确标注这一点。
 
+## 六页样稿
+
+下面是使用真实产品资料和原图渲染的六页样稿，用于展示图文结构与版式，**不代表当前会话的生成结果**。
+
+[![六页样稿总览](app/static/samples/preview.png)](app/static/samples/preview.png)
+
+<table>
+<tr>
+<td><a href="app/static/samples/sketch/page-01.png"><img src="app/static/samples/sketch/page-01.png" width="180" alt="封面"></a></td>
+<td><a href="app/static/samples/sketch/page-02.png"><img src="app/static/samples/sketch/page-02.png" width="180" alt="场景"></a></td>
+<td><a href="app/static/samples/sketch/page-03.png"><img src="app/static/samples/sketch/page-03.png" width="180" alt="事实"></a></td>
+</tr>
+<tr>
+<td><a href="app/static/samples/sketch/page-04.png"><img src="app/static/samples/sketch/page-04.png" width="180" alt="细节"></a></td>
+<td><a href="app/static/samples/sketch/page-05.png"><img src="app/static/samples/sketch/page-05.png" width="180" alt="决策"></a></td>
+<td><a href="app/static/samples/sketch/page-06.png"><img src="app/static/samples/sketch/page-06.png" width="180" alt="收尾"></a></td>
+</tr>
+</table>
+
+三种风格总览：
+
+<table>
+<tr>
+<td><a href="app/static/samples/sketch/contact-sheet.png"><img src="app/static/samples/sketch/contact-sheet.png" width="240" alt="数码手账"></a><br>数码手账</td>
+<td><a href="app/static/samples/fresh/contact-sheet.png"><img src="app/static/samples/fresh/contact-sheet.png" width="240" alt="清爽桌搭"></a><br>清爽桌搭</td>
+<td><a href="app/static/samples/pop/contact-sheet.png"><img src="app/static/samples/pop/contact-sheet.png" width="240" alt="轻漫画"></a><br>轻漫画</td>
+</tr>
+</table>
+
+AI 封面氛围图示例（只做背景，不是产品实拍）：
+
+<img src="app/static/samples/ai-cover-demo.png" width="240" alt="AI 封面氛围图示例">
+
+> 样稿中的产品图片来自项目联调知识库，版权归原权利人；仅用于项目展示与效果评估，不构成产品官方素材。
+
+## 真实联调记录（2026-10-18）
+
+- ima：`Alaraby的知识库`（个人库）真实读取 **13 组规格事实、6 张同型号图片**；`competition_ready=false`。
+- 文本：DashScope `qwen-plus` 生成六页方案，引用事实 ID，规则扫描通过。
+- 人工确认：产品选择 + 成稿确认两道门；确认后导出四段式 Markdown（含六页方案）返回 200。
+- 生图：DashScope `wanx2.1-t2i-turbo` 原生异步接口返回 768×1024 PNG，用于封面氛围背景。
+- 测试：104 个用例通过；CI 在 GitHub Actions 上通过；容器镜像启动后 `/healthz` 冒烟测试通过。
+
 ## 团队分工
 
 | 职责 | 负责人 |
@@ -130,7 +186,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-当前 100 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
+当前 104 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、六页事实引用、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
 
 ## 部署说明
 
@@ -140,12 +196,13 @@ python -m pytest -q
 - `container.yml`：在 `main`/版本 tag 上构建并推送 GHCR 镜像，并启动容器请求 `/healthz` 做冒烟测试。
 - `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
 
-当前镜像标签包括 `latest`、`0.4.0`、`v0.4.0` 和 `sha-<commit>`：
+当前镜像标签包括 `latest`、`0.5.0`、`v0.5.0` 和 `sha-<commit>`：
 
 ```bash
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
-  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.4.0
+  -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.5.0
 ```
 
 要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。ModelScope 创空间使用 Docker SDK，监听 `7860`；部署步骤见 [`docs/01_队友部署指南.md`](docs/01_队友部署指南.md)。
@@ -165,8 +222,9 @@ app/
   compliance.py    合规规则扫描
   contracts.py     材料包与任务契约
   intake.py        单轮任务解析与场景策略
-  model.py         OpenAI 兼容文本/生图适配
-  static/          联调工作台
+  model.py         OpenAI 兼容文本 / DashScope 原生异步生图
+  static/          HarmonyOS 风格工作台
+  static/samples/  六页样稿与 AI 封面示例
 scripts/           CLI、预检、真实联调记录
 tests/             合成 fixture 与回归测试
 docs/              交接、配置、进度与设计文档
@@ -189,6 +247,7 @@ vendor/ima-skill/  官方 ima 只读调用脚本
 - [前段交接与使用说明](docs/07_前段交接与使用说明.md)
 - [接口约定与分工](docs/02_接口约定与分工.md)
 - [配置与联调验收](docs/03_配置与联调验收.md)
+- [魔搭创空间部署](docs/10_ModelScope部署.md)
 - [进度与限制](docs/04_进度与限制.md)
 - [系统提示词](prompts/agent-system.md)
 

@@ -201,6 +201,14 @@ def test_arbitrary_resource_urls_rejected(url):
     assert not safe_resource_url(url)
 
 
+def test_hotspot_falls_back_to_editorial_when_public_feed_is_down(monkeypatch):
+    from app.hotspot import related_hot_topics
+    monkeypatch.setattr('app.hotspot._fetch', lambda: [])
+    topics = related_hot_topics('课堂学习', '大学新生')
+    assert topics and topics[0]['data_mode'] == 'editorial_fallback'
+    assert topics[0]['source'] == 'editorial-fallback'
+
+
 def test_ima_image_signature_and_url():
     assert safe_resource_url('https://pkb.ima.myqcloud.com/test.png')
     assert image_type(PNG)=='image/png'

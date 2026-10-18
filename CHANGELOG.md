@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 — 2026-10-18
+
+### Added
+
+- **Six-page Xiaohongshu plan**: hook / scene / proof / detail / decision / close, with per-page fact IDs and image assignments; LLM output is schema-validated and rule fallback produces the same structure.
+- **Guided requirement options**: audience, budget, scenario, preferences, required software and objective can be chosen as chips; candidate cards have one-click selection.
+- **HarmonyOS-style PC workbench**: three-pane layout, five-step progress, candidate board, six-page canvas, evidence panel, draft verification, toast/loading states, dark mode and responsive fallbacks.
+- **DashScope native image generation**: `wanx2.1-t2i-turbo` asynchronous submit/poll/download, `768*1024` cover atmosphere; compatible `/images/generations` remains as a fallback.
+- **Hot-topic inspiration**: structured 60s feed with an explicit editorial fallback when the public feed is unavailable.
+- **Six-page samples on GitHub**: three style contact sheets, six full pages, and an AI cover sample under `app/static/samples/`.
+- **Real integration record**: personal ima KB (13 facts, 6 images), qwen-plus six-page generation, approval/export, and DashScope cover verified.
+
+### Changed
+
+- Catalog originals are read concurrently with per-file fault isolation; a single unreadable document no longer aborts the whole catalog.
+- LLM drafts that fail the deterministic scan automatically fall back to the rule draft, with the reason surfaced to the operator.
+- Rule fallback copy truncates at punctuation instead of cutting numbers, and scene tags are normalized.
+- Version bumped to `0.5.0`; README, OpenAPI snapshot and static asset cache keys updated.
+
 ## 0.4.0 — 2026-10-18
 
 ### Fixed

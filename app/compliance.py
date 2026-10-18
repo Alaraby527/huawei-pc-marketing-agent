@@ -6,13 +6,14 @@ draft text must trace back to a number that actually appears in the cited
 facts' source excerpts, otherwise it is treated as fabricated.
 """
 import re
+from .contracts import PAGE_ROLES
 
 ABSOLUTE_CLAIMS = [
     "全网最低", "全网第一", "最好", "最强", "天花板", "吊打", "闭眼冲", "闭眼入",
     "秒杀所有", "绝对", "永久免费", "买它就对了", "无脑冲", "碾压", "完美无缺",
 ]
 FAKE_EXPERIENCE = [
-    r"亲测", r"实测(?:续航|成绩|性能|跑分)", r"用了\s*[一二三四五六七八九十\d]+\s*[天周月]",
+    r"亲测", r"实测(?:续航|成绩|性能|跑分|数据|结果)", r"用了\s*[一二三四五六七八九十\d]+\s*[天周月]",
     r"我连续用了", r"我已经用了", r"体验了一个月", r"实际使用\d+天",
 ]
 UNVERIFIED_COMMERCIAL = [
@@ -26,10 +27,34 @@ def _numbers_in(text):
     return set(re.findall(r"\d+(?:\.\d+)?", text))
 
 
-def audit_copy(title, body, tags, cta, facts, risks):
+def audit_copy(title, body, tags, cta, facts, risks, pages=None, allowed_text=''):
     """facts: list of {fact_id, text, conditions, source:{excerpt}}; risks from input_risks()."""
     errors, warnings = [], []
-    full_text = "\n".join([title, body, cta, " ".join(tags)])
+    page_text = []
+    allowed_fact_ids = set()
+    for fact in facts:
+        if isinstance(fact, dict):
+            allowed_fact_ids.add(fact.get('fact_id', ''))
+        else:
+            allowed_fact_ids.add(fact.fact_id)
+    if pages is not None:
+        roles = [page.get('role') for page in pages]
+        if roles != list(PAGE_ROLES):
+            errors.append('六页角色和顺序必须为 hook/scene/proof/detail/decision/close')
+        grounded = 0
+        for index, page in enumerate(pages, 1):
+            refs = page.get('fact_ids') or []
+            for fid in refs:
+                if fid not in allowed_fact_ids:
+                    errors.append(f'第{index}页引用了其他型号或不存在的事实：{fid}')
+            if refs:
+                grounded += 1
+            page_text.extend([str(page.get('title', '')), str(page.get('text', ''))])
+        if grounded < 2:
+            errors.append('至少两页需要引用当前型号的事实')
+        if len({str(page.get('title', '')) for page in pages}) < len(pages):
+            warnings.append('六页标题有重复，建议让节奏更清楚')
+    full_text = "\n".join([title, body, cta, " ".join(tags), " ".join(page_text)])
 
     for phrase in ABSOLUTE_CLAIMS:
         if phrase in full_text:
@@ -46,12 +71,12 @@ def audit_copy(title, body, tags, cta, facts, risks):
             errors.append("出现无依据的竞品贬低表述")
 
     # Any digit sequence in the copy must be traceable to the cited facts' evidence.
-    allowed_numbers = set()
+    allowed_numbers = _numbers_in(allowed_text)
     for fact in facts:
         excerpt = (fact.get("source") or {}).get("excerpt", "") if isinstance(fact, dict) else fact.source.excerpt
         text = fact.get("text", "") if isinstance(fact, dict) else fact.text
         allowed_numbers |= _numbers_in(excerpt) | _numbers_in(text)
-    body_numbers = _numbers_in(title + " " + body)
+    body_numbers = _numbers_in(title + " " + body + " " + " ".join(page_text))
     unknown_numbers = body_numbers - allowed_numbers
     if unknown_numbers:
         errors.append("文案包含知识库事实未支持的数字：" + "、".join(sorted(unknown_numbers)))

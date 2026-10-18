@@ -211,6 +211,12 @@
           "maxLength": 2000,
           "title": "Instructions",
           "type": "string"
+        },
+        "hotspot": {
+          "default": "",
+          "maxLength": 300,
+          "title": "Hotspot",
+          "type": "string"
         }
       },
       "required": [

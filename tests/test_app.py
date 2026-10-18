@@ -34,7 +34,7 @@ def test_secrets_are_not_exposed_by_readiness(monkeypatch):
 def test_home_and_platforms_available():
     response = client.get('/')
     assert response.status_code == 200
-    assert '营销图文助手' in response.text
+    assert '营销工作台' in response.text
     assert len(client.get('/api/v1/platforms').json()) == 4
 
 def test_schema_available_for_teammate():

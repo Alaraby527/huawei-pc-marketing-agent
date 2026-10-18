@@ -125,6 +125,14 @@ def test_negated_os_is_not_a_requirement(text):
     assert parse_message('必须用Windows',Slots(),[])['required_os']=='Windows'
 
 
+def test_guided_questions_expose_options():
+    from app.conversation import ask, DRAFT_OPTIONS
+    for field in ['audience', 'budget', 'scenario', 'preferences', 'required_software']:
+        question = ask(field)
+        assert question['options'] and all(option.get('label') and option.get('message') for option in question['options'])
+    assert len(DRAFT_OPTIONS) == 3
+
+
 async def approve_current_draft(service):
     r=await service.turn(Turn(message='大学生'))
     sid=r['session_id']

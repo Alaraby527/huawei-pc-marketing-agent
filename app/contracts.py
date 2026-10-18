@@ -12,6 +12,8 @@ class Platform(str, Enum):
     MOMENTS = "moments"
     POSTER = "poster"
 
+PAGE_ROLES = ("hook", "scene", "proof", "detail", "decision", "close")
+
 class Task(StrictModel):
     product_query: str = Field(min_length=1, max_length=300)
     audience: str = Field(min_length=1, max_length=300)
@@ -20,6 +22,7 @@ class Task(StrictModel):
     platform: Platform
     purchase_stage: str = Field(default="待确认", max_length=100)
     instructions: str = Field(default="", max_length=2000)
+    hotspot: str = Field(default="", max_length=300)
 
 class Source(StrictModel):
     kind: Literal["ima", "development"]

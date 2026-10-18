@@ -81,6 +81,7 @@ def strategy(task):
     rules = PLATFORM_RULES[task.platform.value]
     return {'audience':task.audience,'scenario':task.scenario,'purchase_stage':task.purchase_stage,
             'content_objective':task.objective,'user_problem':question,'angle':angle,
+            'hotspot':task.hotspot,
             'fact_priority_sections':priorities,'platform':task.platform.value,'platform_rules':rules,
             'cta':rules['cta'],
             'explanation':'按人群与任务选择事实优先级；只有材料包中有证据的卖点才能使用。',

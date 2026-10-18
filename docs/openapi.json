@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "华为PC营销Agent · 门店导购与图文生成",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "paths": {
     "/": {
@@ -884,6 +884,12 @@
             "maxLength": 2000,
             "title": "Instructions",
             "default": ""
+          },
+          "hotspot": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Hotspot",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -968,6 +974,12 @@
             "type": "string",
             "maxLength": 2000,
             "title": "Instructions",
+            "default": ""
+          },
+          "hotspot": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Hotspot",
             "default": ""
           }
         },

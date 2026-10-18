@@ -11,5 +11,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
-      ENABLE_AI_COVER: ${ENABLE_AI_COVER:-0}
+      LLM_IMAGE_MODEL: ${LLM_IMAGE_MODEL:-wanx2.1-t2i-turbo}
+      LLM_IMAGE_SIZE: ${LLM_IMAGE_SIZE:-768*1024}
+      ENABLE_AI_COVER: ${ENABLE_AI_COVER:-1}
     restart: unless-stopped

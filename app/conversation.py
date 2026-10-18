@@ -32,6 +32,7 @@ class Slots(StrictModel):
     objective: str = Field(default='',max_length=300)
     purchase_stage: str = Field(default='待确认',max_length=100)
     instructions: str = Field(default='',max_length=2000)
+    hotspot: str = Field(default='',max_length=300)
 
 
 class Turn(StrictModel):
@@ -174,6 +175,8 @@ def parse_message(message,slots,last_questions):
     for name,pattern in [('region',r'地区[：:是为 ]+([^，。；\n]{1,60})'),('channel',r'渠道[：:是为 ]+([^，。；\n]{1,60})')]:
         match=re.search(pattern,text)
         if match: patch[name]=match.group(1)
+    hotspot=re.search(r'(?:参考热点|热点|话题)[：:]\s*([^，。；\n]{1,100})',text)
+    if hotspot: patch['hotspot']=hotspot.group(1).strip()
     # If a single narrative field remains, a plain answer is unambiguous.
     if len(last_questions)==1 and not patch and text and text not in ['跳过','继续','确认','刷新','导出']:
         key=last_questions[0]['field']
@@ -183,10 +186,67 @@ def parse_message(message,slots,last_questions):
 
 
 CORE_QUESTIONS={
-    'audience':'这位客户或目标客群是什么画像？例如大学新生、出差较多的上班族。',
-    'budget':'客户预算上限是多少？也可以明确说“预算不限”。',
-    'scenario':'客户主要用电脑完成什么任务？请说明实际用途；有必用软件/版本或系统要求也请一起说。',
+    'audience':{
+        'question':'这位客户或目标客群是什么画像？可以直接选一个方向，也可以自己描述。',
+        'options':[
+            {'label':'大学新生','message':'客户画像是大学新生'},
+            {'label':'职场办公','message':'客户画像是职场办公者'},
+            {'label':'内容创作者','message':'客户画像是内容创作者'},
+            {'label':'家庭用户','message':'客户画像是家庭用户'},
+            {'label':'企业采购','message':'客户画像是企业采购者'}]},
+    'budget':{
+        'question':'客户预算上限是多少？可以选区间、说不限，或直接输入金额。',
+        'options':[
+            {'label':'4000–5000','message':'预算4000到5000'},
+            {'label':'5000–6000','message':'预算5000到6000'},
+            {'label':'6000–8000','message':'预算6000到8000'},
+            {'label':'8000以上','message':'预算8000到10000'},
+            {'label':'预算不限','message':'预算不限'}]},
+    'scenario':{
+        'question':'客户主要用电脑完成什么任务？可选一个方向，或补充具体软件/课程。',
+        'options':[
+            {'label':'课堂学习','message':'主要用途是课堂学习、写论文、上网课'},
+            {'label':'移动办公','message':'主要用途是差旅移动办公、会议和文档处理'},
+            {'label':'内容创作','message':'主要用途是视频剪辑、设计和摄影素材处理'},
+            {'label':'家庭换新','message':'主要用途是家庭日常使用和旧机换新'},
+            {'label':'企业部署','message':'主要用途是企业办公、团队部署和外设连接'}]},
 }
+PREFERENCE_QUESTIONS={
+    'preferences':{
+        'question':'客户对便携、屏幕大小或续航有哪些偏好？没有可回复“跳过”。',
+        'options':[
+            {'label':'轻薄便携','message':'偏好轻薄便携'},
+            {'label':'大屏高刷','message':'偏好大屏'},
+            {'label':'长续航','message':'偏好长续航'},
+            {'label':'接口丰富','message':'偏好接口丰富'},
+            {'label':'没有特别偏好','message':'跳过'}]},
+    'required_software':{
+        'question':'还有必须使用的软件/版本、操作系统或外设吗？没有可说“无硬性要求”。',
+        'options':[
+            {'label':'无硬性要求','message':'无硬性要求'},
+            {'label':'办公三件套','message':'必须用Office办公软件'},
+            {'label':'设计/剪辑软件','message':'必须用Adobe设计或视频剪辑软件'},
+            {'label':'编程/开发环境','message':'必须用编程开发环境'},
+            {'label':'必须 Windows','message':'必须用Windows'},
+            {'label':'必须鸿蒙/国产系统','message':'必须用HarmonyOS'}]},
+}
+OBJECTIVE_OPTIONS={
+    'question':'希望内容促成什么行动？可以选一个方向。',
+    'options':[
+        {'label':'到店体验','message':'希望邀请到店体验'},
+        {'label':'私信咨询','message':'希望引导私信咨询'},
+        {'label':'比较选型','message':'希望帮助比较选型'},
+        {'label':'了解产品','message':'希望让读者了解产品'}]}
+DRAFT_OPTIONS=[
+    {'label':'通过，可以发布','message':'通过'},
+    {'label':'再短一点','message':'再短一点'},
+    {'label':'换一版','message':'换一版'}]
+
+def ask(field, **extra):
+    data={**CORE_QUESTIONS,**PREFERENCE_QUESTIONS}.get(field, {'question':'','options':[]})
+    item={'field':field,'question':data.get('question',''),'options':data.get('options',[])}
+    item.update(extra)
+    return item
 
 
 class ConversationService:
@@ -288,7 +348,7 @@ class ConversationService:
         selection_text=bool(re.fullmatch(r'(?:选择?|确认)?\s*第?\s*([123])\s*(?:款|个)?(?:型号级)?',text))
         patch=parse_message(request.message,s.slots,s.last_questions)
         if request.slot_updates: patch.update(request.slot_updates.model_dump(mode='json',exclude_unset=True))
-        requirement_fields=['audience','budget','scenario','preferences','required_software','other_constraints','required_os','max_weight_kg','region','channel','platform','objective']
+        requirement_fields=['audience','budget','scenario','preferences','required_software','other_constraints','required_os','max_weight_kg','region','channel','platform','objective','hotspot']
         patch_touches_requirements=any(key in patch for key in requirement_fields)
         # Once a draft exists and this turn carries no requirement change, route
         # straight to the draft gate. Refresh and explicit selection must always
@@ -304,7 +364,7 @@ class ConversationService:
         if text: s.history.append({'revision':s.revision,'role':'operator','text':text})
         # Any structured change other than free-form instructions invalidates the draft.
         draft_fields=['audience','budget','scenario','preferences','required_software','other_constraints',
-                      'required_os','max_weight_kg','region','channel','platform','objective','purchase_stage']
+                      'required_os','max_weight_kg','region','channel','platform','objective','purchase_stage','hotspot']
         if any(old.get(key)!=new_slots.get(key) for key in draft_fields):
             self.invalidate_draft(s)
         selection_fields=['audience','budget','scenario','preferences','required_software','other_constraints','required_os','max_weight_kg','region','channel']
@@ -313,7 +373,7 @@ class ConversationService:
         if changed:
             s.selected=None; s.candidates=[]
             if old['audience']!=s.slots.audience or old['scenario']!=s.slots.scenario: s.catalog=None
-        missing=[{'field':key,'question':q} for key,q in CORE_QUESTIONS.items() if not getattr(s.slots,key)]
+        missing=[ask(key) for key in CORE_QUESTIONS if not getattr(s.slots,key)]
         if missing:
             self.invalidate_draft(s)
             return self.response(s,'needs_input',missing[:2],'先确认客户需求；已提供的信息会保留。')
@@ -324,9 +384,7 @@ class ConversationService:
         if not s.preferences_done:
             s.asked_preferences=True
             self.invalidate_draft(s)
-            return self.response(s,'needs_input',[
-                {'field':'preferences','question':'客户对便携、屏幕大小或续航有哪些偏好？没有可回复“跳过”。'},
-                {'field':'required_software','question':'还有必须使用的软件/版本、操作系统或外设吗？没有可说“无硬性要求”。'}],
+            return self.response(s,'needs_input',[ask('preferences'),ask('required_software')],
                 '画像、预算和用途已记录，再确认两点；偏好可以跳过，必用软件属于硬性条件。')
         catalog=await self.catalog(s,request.action=='refresh' or text=='刷新')
         candidates,rejected=rank_products(catalog,s.slots.model_dump(mode='json'))
@@ -362,7 +420,9 @@ class ConversationService:
             self.invalidate_draft(s)
         if not s.selected:
             self.invalidate_draft(s)
-            return self.response(s,'candidates',[{'field':'candidate_id','question':'请确认候选编号，如“选1”。未核实价格或软件适配的候选会明确标为待核实，不能承诺适合购买。'}],
+            candidate_options=[{'label':f'{i}. {c["model_name"]}','message':f'选{i}'}
+                               for i,c in enumerate(candidates,1)]
+            return self.response(s,'candidates',[{'field':'candidate_id','question':'请确认候选编号，如“选1”。未核实价格或软件适配的候选会明确标为待核实，不能承诺适合购买。','options':candidate_options}],
                 '以下按场景相关规格与偏好排序。仅展示本库有完整规格原文的型号，可能不足三款；未确认销售SKU时，只能制作附条件的型号介绍。',issues=catalog.issues,rejected=rejected)
         if s.selected['unknowns']:
             questions=[]
@@ -375,7 +435,7 @@ class ConversationService:
                 '已记录意向型号，但以下硬性条件尚未证实，不能交给下游当作推荐成立。请补充同库核验资料后刷新。',issues=s.selected['unknowns'],rejected=rejected)
         missing=[]
         if not s.slots.platform: s.slots.platform=Platform.XIAOHONGSHU  # single-platform MVP: never ask
-        if not s.slots.objective: missing.append({'field':'objective','question':'希望内容促成什么行动？例如到店体验、私信咨询或比较选型。'})
+        if not s.slots.objective: missing.append(ask('objective',**OBJECTIVE_OPTIONS))
         if missing:
             self.invalidate_draft(s)
             return self.response(s,'needs_input',missing,'产品已确认，接下来补齐给内容生成环节的发布任务。')
@@ -415,8 +475,13 @@ class ConversationService:
                 for i in handoff['images']]
         task=Task.model_validate(handoff['materials']['task'])
         strategy=handoff['strategy']; risks=handoff['risks_and_gaps']['input_risks']
+        product=handoff['materials'].get('product') or {}
+        allowed_text=f"{product.get('model_name','')} {product.get('configuration','')}"
         text=request.message.strip()
         action=request.action
+        def audit_current(draft):
+            return audit_copy(draft['title'],draft['body'],draft.get('tags',[]),draft.get('cta',''),
+                              handoff['facts'],risks,draft.get('pages'),allowed_text)
         if s.draft and action=='continue':
             # Natural-language confirmation/edit requests are accepted at the draft gate too.
             if text in ['通过','确认','可以','没问题','可以发布','发布']: action='approve_draft'
@@ -424,7 +489,7 @@ class ConversationService:
             elif text: action='revise_draft'
 
         if action=='approve_draft' and s.draft:
-            report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
+            report=audit_current(s.draft)
             s.compliance_report=report
             s.draft_approved=bool(report['passed'])
             s.draft_binding=binding
@@ -436,21 +501,32 @@ class ConversationService:
                                             facts,images,strategy,risks,task,engine=request.engine)
             s.draft_binding=binding
             s.draft_approved=False; s.compliance_report=None
-            report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
+            report=audit_current(s.draft)
             s.compliance_report=report
             return self.response(s,'draft_ready',message='已按要求修改，请核对后再确认是否可发布。',issues=report['errors']+report['warnings'],handoff=handoff)
 
         if action=='regenerate_draft' or s.draft is None:
             s.draft=await asyncio.to_thread(compose_draft,task,facts,images,strategy,risks,engine=request.engine)
+            report=audit_current(s.draft)
+            fallback_note=''
+            if request.engine=='llm' and not report['passed']:
+                model_errors=report['errors'][:2]
+                fallback=await asyncio.to_thread(compose_draft,task,facts,images,strategy,risks,engine='rule')
+                fallback_report=audit_current(fallback)
+                if fallback_report['passed']:
+                    reason='；'.join(model_errors)[:120]
+                    fallback['engine_meta']={**fallback.get('engine_meta',{}),
+                                             'provider':'rule-fallback-compliance',
+                                             'fallback_reason':reason}
+                    s.draft=fallback; report=fallback_report
+                    fallback_note=f'模型稿未通过规则扫描（{reason}），已切换规则版；请核对后确认。'
             s.draft_binding=binding
-            s.draft_approved=False; s.compliance_report=None
-            report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
-            s.compliance_report=report
-            return self.response(s,'draft_ready',[{'field':'draft_decision','question':'图文方案已生成，是否满足发布要求？可回复“通过”，或说明要怎么改（例如“再短一点”“换个人群”）。'}],
-                '已基于本次核验材料生成图文方案，发布前需要你确认。',issues=report['errors']+report['warnings'],handoff=handoff)
+            s.draft_approved=False; s.compliance_report=report
+            return self.response(s,'draft_ready',[{'field':'draft_decision','question':'图文方案已生成，是否满足发布要求？可回复“通过”，或说明要怎么改（例如“再短一点”“换个人群”）。','options':DRAFT_OPTIONS}],
+                fallback_note or '已基于本次核验材料生成图文方案，发布前需要你确认。',issues=report['errors']+report['warnings'],handoff=handoff)
 
         # draft already exists and no explicit action — surface it for confirmation again.
-        return self.response(s,'draft_ready',[{'field':'draft_decision','question':'当前图文方案是否可以发布？可回复“通过”或说明修改要求。'}],
+        return self.response(s,'draft_ready',[{'field':'draft_decision','question':'当前图文方案是否可以发布？可回复“通过”或说明修改要求。','options':DRAFT_OPTIONS}],
             '上一版图文方案仍待确认。',issues=(s.compliance_report or {}).get('errors',[])+(s.compliance_report or {}).get('warnings',[]),handoff=handoff)
 
     @staticmethod
@@ -462,7 +538,8 @@ class ConversationService:
         product=next(p for p in catalog.products if p.product_id==candidate['candidate_id'])
         task=Task(product_query=product.model,audience=s.slots.audience,scenario=s.slots.scenario,
                   objective=s.slots.objective,platform=s.slots.platform,
-                  purchase_stage=s.slots.purchase_stage,instructions=s.slots.instructions)
+                  purchase_stage=s.slots.purchase_stage,instructions=s.slots.instructions,
+                  hotspot=s.slots.hotspot)
         context=strategy(task)
         images,image_issues=await verified_images(catalog,product,task.platform.value,context['fact_priority_sections'])
         blocking=list(product.issues)+image_issues

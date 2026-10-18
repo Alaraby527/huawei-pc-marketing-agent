@@ -14,7 +14,7 @@ from .retrieval import guide, get_asset
 from .intake import Intake
 from .ima import ImaClient, ImaError, configured
 from .conversation import Turn, service, DialogueError
-from .hotspot import related_hot_terms
+from .hotspot import related_hot_terms, related_hot_topics
 from .model import image_configured, generate_cover_image, ModelError
 
 app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None)
@@ -139,8 +139,11 @@ async def create_task(task: Task):
 
 @app.get("/api/v1/hotspots")
 def hotspots(scenario: str = "", audience: str = ""):
-    return {"terms": related_hot_terms(scenario, audience),
-            "note": "来自60s公开热榜的轻关联参考；不是实时验证结果，不替代产品事实或平台实时数据"}
+    topics = related_hot_topics(scenario, audience)
+    live = any(topic.get("data_mode") == "live" for topic in topics)
+    return {"topics": topics, "terms": [topic["title"] for topic in topics], "data_mode": "live" if live else "editorial_fallback",
+            "note": ("来自60s公开热榜的轻关联参考；不是实时验证结果，不替代产品事实或平台实时数据" if live
+                     else "公开热榜暂不可用；以下为编辑内容方向，不是实时热点，也不代表传播效果")}
 
 @app.get("/api/v1/conversations/{session_id}/export")
 async def export_result(session_id: str, format: str = "text"):
@@ -169,6 +172,15 @@ def export_markdown(draft, handoff, compliance):
             lines.append(f"- [{fid}] {fact['text'][:120]} —— 来源：{fact['source']['title']}")
     lines += ["", "# 三、图文软文", f"**{draft['title']}**", "", draft["body"], "",
               "行动引导：" + draft.get("cta", ""), "话题：" + " ".join("#" + t for t in draft.get("tags", []))]
+    pages = draft.get("pages") or []
+    if pages:
+        lines += ["", "## 六页图文方案"]
+        role_names = {"hook": "封面", "scene": "场景", "proof": "事实", "detail": "细节",
+                      "decision": "决策", "close": "收尾"}
+        for index, page in enumerate(pages, 1):
+            refs = "、".join(page.get("fact_ids") or []) or "无"
+            lines += ["", f"### 第{index}页 · {role_names.get(page.get('role'), page.get('role'))}",
+                      f"**{page.get('title', '')}**", page.get("text", ""), f"事实依据：{refs}"]
     for item in draft.get("image_plan", []):
         image = next((i for i in handoff["images"] if i["image_id"] == item["image_id"]), None)
         caption = image["caption"] if image else item["image_id"]
