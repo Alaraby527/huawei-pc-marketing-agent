@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    image: huawei-pc-marketing-agent:local
+    ports:
+      - "7860:7860"
+    environment:
+      IMA_OPENAPI_CLIENTID: ${IMA_OPENAPI_CLIENTID:-}
+      IMA_OPENAPI_APIKEY: ${IMA_OPENAPI_APIKEY:-}
+      IMA_KB_NAME: ${IMA_KB_NAME:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      ENABLE_AI_COVER: ${ENABLE_AI_COVER:-0}
+    restart: unless-stopped

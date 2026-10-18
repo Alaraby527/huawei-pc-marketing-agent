@@ -60,6 +60,17 @@ body{margin:0;background:var(--bg-base);color:var(--text-primary);font-size:14px
 .actions button,.actions a{border:1px solid var(--divider);background:#fff;border-radius:var(--radius-sm);padding:8px 16px;font-size:13px;cursor:pointer;text-decoration:none;color:var(--text-primary)}
 .actions a{color:var(--brand);border-color:var(--brand)}
 
+.candidate-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.candidate{border:1px solid var(--divider);border-radius:var(--radius-sm);padding:10px;background:#fff}
+.candidate-head{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.candidate-head span{color:var(--text-secondary);font-size:12px;white-space:nowrap}
+.candidate-meta{color:var(--text-secondary);font-size:12px;margin-top:2px}
+.candidate-unknowns{margin:6px 0 0;padding-left:18px;color:var(--warning);font-size:12px}
+
+.docs-page{max-width:720px;margin:40px auto;padding:0 20px}
+.docs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.docs-page a{color:var(--brand)}
+
 .evidence-item,.verify-item{border-bottom:1px solid var(--divider);padding:10px 0;font-size:13px}
 .evidence-item .label,.verify-item .label{font-weight:600;margin-bottom:2px}
 .evidence-item .source,.verify-item .meta{color:var(--text-tertiary);font-size:12px}

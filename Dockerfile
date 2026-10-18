@@ -1,5 +1,8 @@
 FROM node:22-bookworm-slim AS node_runtime
 FROM python:3.12-slim-bookworm
+LABEL org.opencontainers.image.title="huawei-pc-marketing-agent" \
+      org.opencontainers.image.source="https://github.com/cangyuyi/huawei-pc-marketing-agent" \
+      org.opencontainers.image.description="Evidence-first Huawei PC marketing agent"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node

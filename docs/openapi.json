@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "华为PC营销Agent · 前段导购与证据交接",
-    "version": "0.2.0"
+    "title": "华为PC营销Agent · 门店导购与图文生成",
+    "version": "0.4.0"
   },
   "paths": {
     "/": {
@@ -31,6 +31,42 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/turn": {
+      "post": {
+        "summary": "Conversation Turn",
+        "operationId": "conversation_turn_api_v1_conversations_turn_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Turn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -261,10 +297,185 @@
           }
         }
       }
+    },
+    "/api/v1/hotspots": {
+      "get": {
+        "summary": "Hotspots",
+        "operationId": "hotspots_api_v1_hotspots_get",
+        "parameters": [
+          {
+            "name": "scenario",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Scenario"
+            }
+          },
+          {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Audience"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{session_id}/export": {
+      "get": {
+        "summary": "Export Result",
+        "operationId": "export_result_api_v1_conversations__session_id__export_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "text",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/covers/generate": {
+      "post": {
+        "summary": "Generate Cover",
+        "operationId": "generate_cover_api_v1_covers_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Budget": {
+        "properties": {
+          "minimum": {
+            "type": "number",
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Minimum",
+            "default": 0
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10000000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "unlimited": {
+            "type": "boolean",
+            "title": "Unlimited",
+            "default": false
+          },
+          "approximate": {
+            "type": "boolean",
+            "title": "Approximate",
+            "default": false
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "CNY"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Budget"
+      },
       "Fact": {
         "properties": {
           "fact_id": {
@@ -548,6 +759,137 @@
         ],
         "title": "Product"
       },
+      "Slots": {
+        "properties": {
+          "audience": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Audience",
+            "default": ""
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "type": "string",
+            "maxLength": 600,
+            "title": "Scenario",
+            "default": ""
+          },
+          "preferences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Preferences"
+          },
+          "required_software": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Required Software"
+          },
+          "other_constraints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Other Constraints"
+          },
+          "required_os": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Os"
+          },
+          "max_weight_kg": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Weight Kg"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Platform"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "xiaohongshu"
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Objective",
+            "default": ""
+          },
+          "purchase_stage": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Purchase Stage",
+            "default": "待确认"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instructions",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Slots"
+      },
       "Source": {
         "properties": {
           "kind": {
@@ -639,6 +981,95 @@
           "platform"
         ],
         "title": "Task"
+      },
+      "Turn": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Message",
+            "default": ""
+          },
+          "slot_updates": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Slots"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "continue",
+              "skip_preferences",
+              "select",
+              "refresh",
+              "export",
+              "approve_draft",
+              "revise_draft",
+              "regenerate_draft"
+            ],
+            "title": "Action",
+            "default": "continue"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "rule",
+              "llm"
+            ],
+            "title": "Engine",
+            "default": "rule"
+          },
+          "revise_instruction": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Revise Instruction",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Turn"
       },
       "ValidationError": {
         "properties": {

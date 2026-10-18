@@ -1,71 +1,127 @@
-# 华为PC营销Agent：前段导购与证据交接
+# 华为 PC 营销图文工作台
 
-**当前版本：0.2.0。前段已实现并用个人ima知识库真实验证。** 包含需求澄清、规则式自然语言槽位提取、场景与平台策略、精确型号确认、ima搜索与目录回退、完整规格章节提取、同型号图片读取、输入风险识别和材料包导出。后段营销文案、图片排版/合成与最终成稿核验由队友接入，尚不能声称完成全部赛题闭环。
+[![CI](https://github.com/cangyuyi/huawei-pc-marketing-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/cangyuyi/huawei-pc-marketing-agent/actions/workflows/ci.yml)
+[![Container](https://github.com/cangyuyi/huawei-pc-marketing-agent/actions/workflows/container.yml/badge.svg)](https://github.com/cangyuyi/huawei-pc-marketing-agent/actions/workflows/container.yml)
 
-本项目参考自己的[电视选购Copilot](https://github.com/Alaraby527/tv-buying-copilot)的需求槽位、澄清、RAG、约束复核与trace思路；资料改为ima实时调用，不使用旧电视数据。
+面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-## 立即测试前段
+> **当前版本：v0.4.0（开发中，尚未线上部署）**
+>
+> 已实现：多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎文案、合规规则扫描、两道人工确认、四段式报告导出。
+>
+> 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、鉴权与限流、公开线上实例。个人库联调始终标记 `competition_ready=false`，不能当作已满足赛事来源要求。
 
-本机双击`测试前段导购.command`即可逐项输入并导出材料；结果在`.runtime/last-handoff.json`，图片在`.runtime/assets/`。脚本默认个人库`Alaraby的知识库`，使用本机既有ima凭证文件，不要求大模型密钥。
+## 架构
 
-```bash
-# 在本项目目录执行；凭证支持环境变量或 ~/.config/ima/client_id 和 api_key。
-.venv/bin/python scripts/guide.py libraries
-.venv/bin/python scripts/guide.py connection --kb 'Alaraby的知识库'
-.venv/bin/python scripts/guide.py run --kb 'Alaraby的知识库' --task examples/task.personal.json
-.venv/bin/python scripts/guide.py interactive --kb 'Alaraby的知识库'
+```mermaid
+flowchart LR
+  U[导购 / 内容运营] --> API[FastAPI<br/>/api/v1/conversations/turn]
+  API --> S[需求澄清与槽位]
+  S --> R[ima 只读检索]
+  R --> E[事实与图片核验]
+  E --> P[型号确认]
+  P --> C[图文生成<br/>rule / llm]
+  C --> A[合规规则扫描]
+  A --> H{人工确认}
+  H -->|通过| X[导出四段式报告]
+  H -->|修改| C
+  R <--> KB[(ima 知识库)]
+  C -.可选.-> LLM[OpenAI 兼容模型]
 ```
 
-真实验证：`HUAWEI MateBook 14（鸿蒙版）`，13组规格章节、3张实际读取的同型号图片。个人库联调始终标记`competition_ready=false`，不能作为已经满足主办方指定库要求的证明。库权限允许后仅需修改`IMA_KB_NAME`切换到指定库，再重新验证。
+核心原则：**产品事实只来自知识库；搜索相关性不等于产品身份；没有证据就停下来问，不用模型记忆补齐。**
 
-完整赛事提取：[初赛要求与分工](docs/06_初赛要求与两小时执行方案.md)。前段接口、限制与队友用法：[前段交接与使用说明](docs/07_前段交接与使用说明.md)。系统提示词：[agent-system.md](prompts/agent-system.md)。
+## 快速开始
 
-## 从这里开始
-
-- 部署负责人：[队友部署指南](docs/01_队友部署指南.md)
-- 两人联调：[接口约定与分工](docs/02_接口约定与分工.md)
-- 配置与验收：[配置与联调验收](docs/03_配置与联调验收.md)
-- 当前状态：[进度与限制](docs/04_进度与限制.md)
-- 可直接转发的文字：[发给队友的说明](发给队友的说明.md)
-
-## 本地启动
-
-要求Python 3.12。macOS/Linux：
+要求：Python 3.12、Node.js 18+（调用官方 ima Skill）、可访问 ima 与华为资源域名。
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.lock
+
+export IMA_OPENAPI_CLIENTID='...'
+export IMA_OPENAPI_APIKEY='...'
+export IMA_KB_NAME='你的知识库名称'
+
 python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ```
 
-Windows PowerShell：
+打开 `http://127.0.0.1:7860`。健康检查：`GET /healthz`；接口说明：`GET /docs`；OpenAPI：`GET /openapi.json`。
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 7860
-```
+也可以使用凭证文件 `~/.config/ima/client_id` 和 `~/.config/ima/api_key`，不必把密钥写进环境变量。
 
-打开本机7860端口。个人库使用`export IMA_KB_NAME='Alaraby的知识库'`后启动；不设置时默认赛事指定库。应用不会自动读取`.env`，本地需要由启动环境设置变量；魔搭环境变量/Secrets由平台注入。
-
-API：`POST /api/v1/guide`接收完整或部分任务，返回前段交接信封。缺项时返回`needs_input`及`questions`；原有`POST /api/v1/tasks`保留后段待接入状态，不能用它冒充完整生成。
+### Docker
 
 ```bash
-curl -X POST http://127.0.0.1:7861/api/v1/guide -H 'Content-Type: application/json' --data-binary @examples/task.personal.json
-curl -X POST http://127.0.0.1:7861/api/v1/guide -H 'Content-Type: application/json' -d '{"message":"想买轻薄本"}'
+docker build -t huawei-pc-marketing-agent:0.4.0 .
+docker run --rm -p 7860:7860 \
+  -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
+  huawei-pc-marketing-agent:0.4.0
 ```
 
-上方7861为本次已启动的测试服务；新启动服务若用默认7860，替换命令里的端口即可。HTTP图片地址相对当前服务，30分钟后或重启后失效，需重新检索。CLI则导出本地图片，连同JSON交接，接收方映射路径。
+镜像以非 root 用户运行，包含 Node 运行时、健康检查和 `vendor/ima-skill` 只读调用脚本。推送到 `main` 后，GitHub Actions 会自动构建并发布 `ghcr.io/cangyuyi/huawei-pc-marketing-agent:latest`。
 
-## Docker启动
+## 配置
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `IMA_OPENAPI_CLIENTID` / `IMA_CLIENT_ID` | 是 | ima 开放平台凭证；也可用 `~/.config/ima/client_id` |
+| `IMA_OPENAPI_APIKEY` / `IMA_API_KEY` | 是 | ima 开放平台凭证；也可用 `~/.config/ima/api_key` |
+| `IMA_KB_NAME` | 是 | 知识库精确名称；默认值为赛事指定库占位 |
+| `IMA_NODE_BIN` | 否 | Node 绝对路径；PATH 中已有 `node` 时不需要 |
+| `LLM_BASE_URL` | 否 | OpenAI 兼容服务地址，必须 HTTPS（本机地址可用 HTTP） |
+| `LLM_API_KEY` | 否 | 模型密钥；规则引擎不需要 |
+| `LLM_MODEL` | 否 | 文本模型名称 |
+| `LLM_TIMEOUT` / `LLM_MAX_TOKENS` | 否 | 超时与输出上限，自动限制在安全范围 |
+| `ENABLE_AI_COVER` | 否 | `1` 才启用 AI 氛围封面；只生成背景，不生成产品外观 |
+| `LLM_IMAGE_MODEL` | 否 | 生图模型名称 |
+
+应用不会自动读取 `.env`；请由启动环境或平台 Secrets 注入。`.env.example` 只有占位符。
+
+## 主要接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/healthz` | 进程健康检查与版本 |
+| `GET` | `/api/v1/readiness` | 配置/接入状态，不返回密钥 |
+| `POST` | `/api/v1/conversations/turn` | 主入口：多轮澄清、选品、生成、修改、确认 |
+| `GET` | `/api/v1/conversations/{session_id}/export` | 导出已审批的四段式报告（text/markdown） |
+| `POST` | `/api/v1/guide` | 单轮前段检索，返回材料包；图片核验强度低于对话链路 |
+| `POST` | `/api/v1/materials/validate` | 材料包结构与完整度预检查，不代表事实真实 |
+| `GET` | `/api/v1/platforms` | 四个平台的规则 |
+| `GET` | `/api/v1/knowledge/connection` | ima 连接状态 |
+| `GET` | `/api/v1/hotspots` | 可选的公开热榜轻关联参考 |
+| `POST` | `/api/v1/covers/generate` | 可选 AI 氛围封面（仅背景，需显式开启） |
+
+主流程示例：
 
 ```bash
-docker build -t huawei-pc-marketing-agent:0.1.0 .
-docker run --rm -p 7860:7860 huawei-pc-marketing-agent:0.1.0
+curl -s http://127.0.0.1:7860/api/v1/conversations/turn \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"大学新生，预算6000以内，主要写论文、上网课，偏好轻薄"}'
 ```
 
-镜像监听`0.0.0.0:7860`，包含Python、Node运行时和官方ima只读调用脚本。仍需在部署环境配置凭证与知识库名；本地通过不代表云端权限/网络已验证。Docker未在本机实际构建。
+响应中的 `session_id` 用于后续轮次。只有 `can_publish=true` 才能导出；它要求草稿与当前交接材料绑定、合规规则扫描通过、且运营人员明确确认。
+
+## 证据与安全约束
+
+- **型号身份**：知识库标题/正文型号归一化后必须精确匹配；搜索命中相近型号不会替代。
+- **价格**：只接受当日、同 SKU、同地区/渠道、来源为官方页面的维护记录；历史价格、补贴、赠品和库存不自动补写。
+- **图片**：对话链路要求图片索引、官方商品页/型号 slug、以及 ima 下载字节与官方原图 SHA256 一致；只证明型号级来源，不证明颜色/键盘/屏幕/SKU。
+- **材料包**：`MaterialBundle v1.0` 禁止重复 ID、跨产品事实/图片、live 模式出现 development 来源。
+- **网络**：只允许 ima/华为资源域名，禁止重定向，认证头不跨域转发。
+- **输出**：错误响应不回显原始输入或凭证；发布状态由 `draft_binding` 与当前 handoff 共同决定，需求变更、读库失败或证据变化会立即作废旧草稿。
+
+合规核验目前是**确定性规则扫描**（绝对化用语、无依据体验、未核实价格/促销、数字可追溯性），不是逐条语义事实核验；导出报告会明确标注这一点。
+
+## 团队分工
+
+| 职责 | 负责人 |
+|---|---|
+| 部署与运维 | 王泽栋 |
+| 知识库与证据 | 杨惠雯 |
+| 热点与生图 | 王泽栋 |
 
 ## 测试
 
@@ -74,18 +130,60 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-测试中的产品、来源及图片标识均为合成测试对象，不代表真实知识库资料。示例材料包明确标识为开发模式，不能用于发布。
+当前 100 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
 
-## 目录职责
+## 部署说明
 
-- `app/contracts.py`：双方共同遵守的数据约定。
-- `app/intake.py`：槽位提取、缺项追问、场景策略。
-- `app/ima.py`：官方只读接口、分页、原文与素材读取。
-- `app/retrieval.py`：前段检索、事实提取、型号复核、图片交接。
-- `app/content.py`：第二部分业务接入位置，当前明确返回待开发状态。
-- `app/verification.py`：现有材料预检查，不等于成稿语义核验。
-- `app/platforms.py`：赛题四个平台的基础规则。
-- `app/static/`：部署联调页面。
-- `Dockerfile`、`requirements.lock`：部署基础。
+**GitHub 适合放源码、CI 和镜像，不适合直接托管这个后端。** GitHub Pages 只能托管静态文件，不能运行 FastAPI、ima 调用和 LLM 调用。仓库提供：
 
-提交前仍需接通赛事指定库、队友后段、最终语义核验，并准备完整图文运行样例；前段材料包不等于最终软文。不要将`.runtime/`原文/图片、凭证或完整知识库上传公共仓库。
+- `ci.yml`：每次 push/PR 跑编译检查与全量测试。
+- `container.yml`：在 `main` 上构建并推送 GHCR 镜像，作为可部署产物。
+- `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
+
+要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。ModelScope 创空间使用 Docker SDK，监听 `7860`；部署步骤见 [`docs/01_队友部署指南.md`](docs/01_队友部署指南.md)。
+
+完整形态还缺三件事：赛事共享知识库权限、逐条语义核验、以及面向公网的鉴权/限流与多 worker 会话存储。
+
+## 目录
+
+```text
+app/
+  main.py          FastAPI 路由、静态页、导出
+  conversation.py  多轮状态机、槽位解析、两道确认门
+  evidence.py      目录/事实/价格/图片核验与排序
+  retrieval.py     单轮前段检索与材料包
+  ima.py           官方 ima 只读适配器
+  compose.py       规则/LLM 文案生成
+  compliance.py    合规规则扫描
+  contracts.py     材料包与任务契约
+  intake.py        单轮任务解析与场景策略
+  model.py         OpenAI 兼容文本/生图适配
+  static/          联调工作台
+scripts/           CLI、预检、真实联调记录
+tests/             合成 fixture 与回归测试
+docs/              交接、配置、进度与设计文档
+prompts/           下游 Agent 系统提示词
+vendor/ima-skill/  官方 ima 只读调用脚本
+```
+
+## 已知限制
+
+- 个人知识库联调，`competition_ready=false`；尚未接入赛事指定共享库。
+- 会话与图片临时地址保存在进程内，只适合单 worker；多实例部署需要 Redis/对象存储。
+- 公开接口没有鉴权与限流，必须放在网关或访问控制之后。
+- `/api/v1/guide` 的图片核验只到“文件名与型号 slug 一致”，弱于对话链路的字节级核验；新接入请优先使用对话接口。
+- 规则引擎按平台规则生成有限模板；LLM 输出虽经结构校验与数字复核，仍不等同于语义事实核验。
+- 外部依赖（ima、模型服务、华为图片域名）不可用时，系统会停在 `unavailable`，不会用旧结果冒充当前材料。
+
+## 文档
+
+- [初赛要求与分工](docs/06_初赛要求与两小时执行方案.md)
+- [前段交接与使用说明](docs/07_前段交接与使用说明.md)
+- [接口约定与分工](docs/02_接口约定与分工.md)
+- [配置与联调验收](docs/03_配置与联调验收.md)
+- [进度与限制](docs/04_进度与限制.md)
+- [系统提示词](prompts/agent-system.md)
+
+## License
+
+尚未添加开源许可证。若要以开源方式复用，请由仓库所有者选择 MIT / Apache-2.0 等许可证后再添加 `LICENSE`。

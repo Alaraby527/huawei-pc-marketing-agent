@@ -1,5 +1,6 @@
 """Store/operator dialogue. Customer statements are needs, never sales evidence."""
 import asyncio
+import json
 import re
 import secrets
 import time
@@ -67,21 +68,53 @@ class Session:
     history: list = field(default_factory=list)
     handoff_cache: dict | None = None
     draft: dict | None = None
+    draft_binding: str | None = None
     draft_approved: bool = False
     compliance_report: dict | None = None
 
 
+DIGITS={'零':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9}
+UNITS={'十':10,'百':100,'千':1000}
+
+
+def _chinese_number(value):
+    # Colloquial trailing digit: 一万二=12000, 两千五=2500, 一百二=120.
+    if len(value)>=2 and value[-1] in DIGITS and value[-2] in '万千百':
+        return _chinese_number(value[:-1])+DIGITS[value[-1]]*{'万':1000,'千':100,'百':10}[value[-2]]
+    total=section=number=0
+    for ch in value:
+        if ch in DIGITS:
+            number=DIGITS[ch]
+        elif ch in UNITS:
+            section+=(number or 1)*UNITS[ch]; number=0
+        elif ch=='万':
+            section=(section+number)*10000; total+=section; section=0; number=0
+        else:
+            raise ValueError('预算表达无法识别')
+    return total+section+number
+
+
+def _arabic_number(value):
+    match=re.fullmatch(r'(\d+(?:\.\d+)?)\s*([万千])?\s*(\d*)',value)
+    if not match: raise ValueError('预算表达无法识别')
+    main=float(match.group(1)); unit=match.group(2); rest=match.group(3)
+    if not unit:
+        if rest: raise ValueError('预算表达无法识别')
+        return main
+    scale={'万':10000,'千':1000}[unit]
+    if rest:
+        # 1万2=12000, 2千5=2500; multi-digit suffix is already an absolute amount.
+        return main*scale+(int(rest)*(scale//10) if len(rest)==1 else int(rest))
+    return main*scale
+
+
 def money(value):
     value=value.strip().replace(',','').replace('，','')
-    digits={'零':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9}
-    if re.fullmatch(r'\d+(?:\.\d+)?[千万]?',value):
-        return float(value[:-1])*{'千':1000,'万':10000}[value[-1]] if value[-1] in '千万' else float(value)
-    total=part=0
-    for ch in value:
-        if ch in digits: part=digits[ch]
-        elif ch in '十百千万': total+=(part or 1)*{'十':10,'百':100,'千':1000,'万':10000}[ch]; part=0
-        else: raise ValueError('预算表达无法识别')
-    return total+part
+    if re.fullmatch(r'[零一二两三四五六七八九十百千万]+',value):
+        return float(_chinese_number(value))
+    if re.fullmatch(r'\d+(?:\.\d+)?\s*[万千]?\s*\d*',value):
+        return _arabic_number(value)
+    raise ValueError('预算表达无法识别')
 
 
 def parse_message(message,slots,last_questions):
@@ -90,7 +123,6 @@ def parse_message(message,slots,last_questions):
     # Single-platform MVP: 小红书 is the only supported destination. Mentions of
     # other platforms are kept in `instructions` as context, not acted on, so the
     # pipeline never silently re-targets or re-triggers a full re-selection cycle.
-    pass
     audience=re.search(r'(?:画像|客户|顾客|面向|人群|对象)[是为：:]*\s*([^，。；\n]{1,60})',text)
     if audience: patch['audience']=audience.group(1)
     else:
@@ -100,13 +132,13 @@ def parse_message(message,slots,last_questions):
     clauses=re.split(r'[，。；\n]',text)
     scene=[c.strip() for c in clauses if any(w in c for w in ['用途','场景','用来','用于','主要用','写论文','写作业','上网课','做表格','视频剪辑','编程','差旅','出差','文档办公','日常办公','课堂学习','校园携带','家庭娱乐'])]
     if scene: patch['scenario']='；'.join(scene)[:600]
-    if re.search(r'(?:预算|价格)(?:不设上限|不限|无限制)|不限预算',text):
+    if re.search(r'(?:预算|价格)(?:不设上限|不限|无限制|没有上限|没有限制)|不限预算|没有预算限制|无预算限制',text):
         patch['budget']=Budget(unlimited=True).model_dump()
     else:
-        number=r'(?:[0-9]+(?:\.[0-9]+)?[千万]?|[零一二两三四五六七八九十百千万]+)'
+        number=r'(?:[0-9]+(?:\.[0-9]+)?[万千][0-9]*|[0-9]+(?:\.[0-9]+)?|[零一二两三四五六七八九十百千万]+)'
         span=re.search(r'预算\s*[是为：:]?\s*('+number+r')\s*(?:元)?\s*[-~到至]\s*('+number+r')\s*(?:元)?',text)
         if not span: span=re.fullmatch(r'('+number+r')\s*(?:元)?\s*[-~到至]\s*('+number+r')\s*元?',text)
-        amount=re.search(r'(?:预算\s*[是为：:]?\s*)('+number+r')\s*(?:元)?',text)
+        amount=re.search(r'预算\s*(?:不超过|最多|最高|至多|上限为?|在)?\s*[是为：:]?\s*('+number+r')\s*(?:元)?',text)
         if not amount: amount=re.search(r'('+number+r')\s*(?:元)?\s*(?:以内|以下|封顶)',text)
         if not amount and re.fullmatch(number+r'\s*元?',text): amount=re.match('('+number+')',text)
         if span:
@@ -119,12 +151,17 @@ def parse_message(message,slots,last_questions):
     # Explicit dependencies must never be downgraded to soft preferences.
     software=[]
     for c in clauses:
-        if re.search(r'不(?:需要|用)|无需',c): continue
+        if re.search(r'不(?:需要|用|要)|无需|不要|不用',c): continue
         if re.search(r'必用|必须用|需要运行|需要用|要用(?!来)|常用软件|软件要求|必须连接|外设要求',c):
             software.append(c.strip()[:150])
     if software: patch['required_software']=list(dict.fromkeys(slots.required_software+software))[:12]
-    for name in ['Windows','HarmonyOS','Linux','macOS']:
-        if re.search(r'(?:必须|只要|系统要求|需要|要用)[^，。；]{0,12}'+name,text,re.I): patch['required_os']=name
+    for c in clauses:
+        # A negated OS mention ("不需要Windows") is not an OS requirement.
+        if re.search(r'不(?:需要|用|要)|无需|不要|不用|不是',c): continue
+        for name in ['Windows','HarmonyOS','Linux','macOS']:
+            if re.search(r'(?:必须|只要|系统要求|需要|要用)[^，。；]{0,12}'+name,c,re.I):
+                patch['required_os']=name
+                break
     weight=re.search(r'(?:不超过|最多|上限|低于)\s*(\d+(?:\.\d+)?)\s*(?:kg|公斤|千克)',text,re.I)
     if weight: patch['max_weight_kg']=float(weight.group(1))
     others=[c.strip()[:150] for c in clauses if re.search(r'必须|不接受|硬性要求',c)
@@ -156,6 +193,43 @@ class ConversationService:
     def __init__(self,client_factory=ImaClient,ttl=1800):
         self.sessions={}; self.client_factory=client_factory; self.ttl=ttl
 
+    @staticmethod
+    def handoff_binding(handoff):
+        """Stable digest of everything a draft is allowed to be based on."""
+        materials=handoff.get('materials') or {}
+        product=materials.get('product') or {}
+        data_state=handoff.get('data_state') or {}
+        task=materials.get('task') or {}
+        recommendation=handoff.get('recommendation') or {}
+        payload={
+            'product_id':product.get('product_id'),
+            'configuration':product.get('configuration'),
+            'scope':data_state.get('scope_sha256'),
+            'evidence':data_state.get('evidence_sha256'),
+            'task':{key:task.get(key) for key in ('platform','audience','scenario','objective','purchase_stage')},
+            'fact_ids':sorted(f.get('fact_id','') for f in materials.get('facts') or []),
+            'image_ids':sorted(i.get('image_id','') for i in materials.get('images') or []),
+            'price':recommendation.get('current_price'),
+        }
+        return digest(json.dumps(payload,ensure_ascii=False,sort_keys=True,default=str))
+
+    @staticmethod
+    def invalidate_draft(session,clear_handoff=True):
+        session.draft=None
+        session.draft_binding=None
+        session.draft_approved=False
+        session.compliance_report=None
+        if clear_handoff: session.handoff_cache=None
+
+    def publishable(self,session,handoff=None):
+        """Publication needs an approved draft bound to the current handoff."""
+        current=handoff if handoff is not None else session.handoff_cache
+        report=session.compliance_report or {}
+        return bool(session.draft and session.draft_binding and session.draft_approved
+                    and report.get('passed') and current
+                    and current.get('data_state',{}).get('can_generate')
+                    and session.draft_binding==self.handoff_binding(current))
+
     def session(self,request):
         now=time.monotonic()
         for key,s in list(self.sessions.items()):
@@ -177,13 +251,15 @@ class ConversationService:
             try:
                 return await asyncio.wait_for(self.advance(s,request),180)
             except (ImaError,asyncio.TimeoutError) as error:
+                # A failed read must not leave a previously approved draft publishable.
+                self.invalidate_draft(s)
                 return self.response(s,'unavailable',message=str(error) if isinstance(error,ImaError) else '知识库读取超时，请输入“刷新”重试',issues=['此次读取失败，禁止沿用上次结果作为当前有效材料'])
 
     def response(self,s,status,questions=None,message='',issues=None,handoff=None,rejected=None):
         questions=questions or []; s.last_questions=questions
         if message: s.history.append({'revision':s.revision,'role':'assistant','text':message,'questions':questions})
         s.history=s.history[-80:]
-        can_publish=bool(s.draft_approved and s.compliance_report and s.compliance_report.get('passed'))
+        can_publish=self.publishable(s,handoff)
         return {'schema_version':'2.0','session_id':s.sid,'revision':s.revision,'status':status,
             'message':message,'questions':questions,'slots':s.slots.model_dump(mode='json'),
             'candidates':s.candidates,'selected':s.selected,'rejected':rejected or [],
@@ -203,34 +279,51 @@ class ConversationService:
 
     async def advance(self,s,request):
         old=s.slots.model_dump(mode='json')
+        # A draft is only valid for the exact handoff it was generated from.
+        if s.draft and (not s.handoff_cache or s.draft_binding!=self.handoff_binding(s.handoff_cache)):
+            self.invalidate_draft(s)
+        text=request.message.strip()
+        if request.action=='continue' and text=='刷新':
+            request.action='refresh'
+        selection_text=bool(re.fullmatch(r'(?:选择?|确认)?\s*第?\s*([123])\s*(?:款|个)?(?:型号级)?',text))
         patch=parse_message(request.message,s.slots,s.last_questions)
         if request.slot_updates: patch.update(request.slot_updates.model_dump(mode='json',exclude_unset=True))
         requirement_fields=['audience','budget','scenario','preferences','required_software','other_constraints','required_os','max_weight_kg','region','channel','platform','objective']
         patch_touches_requirements=any(key in patch for key in requirement_fields)
-        # Once a draft exists and this turn carries no parsed requirement change
-        # (e.g. "再短一点", "通过", explicit draft actions), route straight to the
-        # draft confirmation gate instead of silently re-running full re-selection.
-        if s.handoff_cache and (s.draft is not None or request.action in
-                ('approve_draft','revise_draft','regenerate_draft')) and not patch_touches_requirements:
-            text=request.message.strip()
+        # Once a draft exists and this turn carries no requirement change, route
+        # straight to the draft gate. Refresh and explicit selection must always
+        # re-enter the selection pipeline so they cannot be silently swallowed.
+        if (s.handoff_cache and (s.draft is not None or request.action in
+                ('approve_draft','revise_draft','regenerate_draft'))
+                and request.action not in ('refresh','select')
+                and not patch_touches_requirements and not selection_text):
             if text: s.history.append({'revision':s.revision,'role':'operator','text':text})
             return await self.draft_turn(s,request,s.handoff_cache)
         s.slots=Slots.model_validate({**old,**patch})
-        text=request.message.strip()
+        new_slots=s.slots.model_dump(mode='json')
         if text: s.history.append({'revision':s.revision,'role':'operator','text':text})
+        # Any structured change other than free-form instructions invalidates the draft.
+        draft_fields=['audience','budget','scenario','preferences','required_software','other_constraints',
+                      'required_os','max_weight_kg','region','channel','platform','objective','purchase_stage']
+        if any(old.get(key)!=new_slots.get(key) for key in draft_fields):
+            self.invalidate_draft(s)
         selection_fields=['audience','budget','scenario','preferences','required_software','other_constraints','required_os','max_weight_kg','region','channel']
-        changed=any(old[key]!=s.slots.model_dump(mode='json')[key] for key in selection_fields)
+        changed=any(old[key]!=new_slots[key] for key in selection_fields)
+        old_selected=s.selected
         if changed:
             s.selected=None; s.candidates=[]
             if old['audience']!=s.slots.audience or old['scenario']!=s.slots.scenario: s.catalog=None
         missing=[{'field':key,'question':q} for key,q in CORE_QUESTIONS.items() if not getattr(s.slots,key)]
-        if missing: return self.response(s,'needs_input',missing[:2],'先确认客户需求；已提供的信息会保留。')
+        if missing:
+            self.invalidate_draft(s)
+            return self.response(s,'needs_input',missing[:2],'先确认客户需求；已提供的信息会保留。')
         if request.action=='skip_preferences' or text in ['跳过','跳过偏好','没有偏好','无偏好','直接推荐']:
             s.preferences_done=True
         if s.slots.preferences: s.preferences_done=True
         if s.asked_preferences and text and not missing: s.preferences_done=True
         if not s.preferences_done:
             s.asked_preferences=True
+            self.invalidate_draft(s)
             return self.response(s,'needs_input',[
                 {'field':'preferences','question':'客户对便携、屏幕大小或续航有哪些偏好？没有可回复“跳过”。'},
                 {'field':'required_software','question':'还有必须使用的软件/版本、操作系统或外设吗？没有可说“无硬性要求”。'}],
@@ -241,6 +334,7 @@ class ConversationService:
         s.candidates=candidates
         if not candidates:
             s.selected=None
+            self.invalidate_draft(s)
             return self.response(s,'needs_input',message='当前库没有能通过约束核验的候选，请检查下方原因或补充对应产品证据。',issues=catalog.issues,rejected=rejected)
         candidate_id=request.candidate_id
         match=re.fullmatch(r'(?:选择?|确认)?\s*第?\s*([123])\s*(?:款|个)?(?:型号级)?',text)
@@ -250,17 +344,24 @@ class ConversationService:
         if candidate_id:
             if changed and previous==[]:
                 # Updated hard constraints must be reviewed before confirming a new ranking.
+                self.invalidate_draft(s)
                 return self.response(s,'candidates',message='需求已更新，请先查看新候选，再确认产品。',issues=catalog.issues,rejected=rejected)
             selected=next((c for c in candidates if c['candidate_id']==candidate_id),None)
-            if not selected: return self.response(s,'needs_input',message='该候选不在本轮有效范围，请重新选择。',rejected=rejected)
+            if not selected:
+                self.invalidate_draft(s)
+                return self.response(s,'needs_input',message='该候选不在本轮有效范围，请重新选择。',rejected=rejected)
             s.selected=selected.copy()
         if s.selected:
             current=next((c for c in candidates if c['candidate_id']==s.selected['candidate_id']),None)
             if not current or current['configuration']!=s.selected['configuration']:
                 s.selected=None
+                self.invalidate_draft(s)
                 return self.response(s,'candidates',message='产品或销售配置证据已变化，请重新确认。',rejected=rejected)
             s.selected=current.copy()
+        if s.selected!=old_selected:
+            self.invalidate_draft(s)
         if not s.selected:
+            self.invalidate_draft(s)
             return self.response(s,'candidates',[{'field':'candidate_id','question':'请确认候选编号，如“选1”。未核实价格或软件适配的候选会明确标为待核实，不能承诺适合购买。'}],
                 '以下按场景相关规格与偏好排序。仅展示本库有完整规格原文的型号，可能不足三款；未确认销售SKU时，只能制作附条件的型号介绍。',issues=catalog.issues,rejected=rejected)
         if s.selected['unknowns']:
@@ -269,38 +370,45 @@ class ConversationService:
             if s.selected['current_price'] is None and not s.slots.budget.unlimited:
                 for key,q in [('region','客户购买地区是什么？'),('channel','实际购买渠道是什么？')]:
                     if not getattr(s.slots,key): questions.append({'field':key,'question':q})
+            self.invalidate_draft(s)
             return self.response(s,'pending_verification',questions[:2],
                 '已记录意向型号，但以下硬性条件尚未证实，不能交给下游当作推荐成立。请补充同库核验资料后刷新。',issues=s.selected['unknowns'],rejected=rejected)
         missing=[]
         if not s.slots.platform: s.slots.platform=Platform.XIAOHONGSHU  # single-platform MVP: never ask
         if not s.slots.objective: missing.append({'field':'objective','question':'希望内容促成什么行动？例如到店体验、私信咨询或比较选型。'})
-        if missing: return self.response(s,'needs_input',missing,'产品已确认，接下来补齐给内容生成环节的发布任务。')
+        if missing:
+            self.invalidate_draft(s)
+            return self.response(s,'needs_input',missing,'产品已确认，接下来补齐给内容生成环节的发布任务。')
         # Fresh read on every export: old candidate evidence is not automatically current.
         before=self.fingerprint(catalog,s.selected['candidate_id'])
         fresh=await self.catalog(s,True)
         if before!=self.fingerprint(fresh,s.selected['candidate_id']):
             s.selected=None; s.candidates=[]
+            self.invalidate_draft(s)
             return self.response(s,'needs_input',message='交接前检测到产品证据变化，请重新查看候选并确认。')
         current,_=rank_products(fresh,s.slots.model_dump(mode='json'))
         chosen=next((c for c in current if c['candidate_id']==s.selected['candidate_id']),None)
         if not chosen or chosen['unknowns'] or chosen['configuration']!=s.selected['configuration']:
             s.selected=None
+            self.invalidate_draft(s)
             return self.response(s,'pending_verification',message='交接前价格或硬约束核验已变化，请重新确认。')
         s.selected=chosen
         handoff=await self.handoff(s,fresh)
         s.handoff_cache=handoff
         if not handoff['data_state']['can_generate']:
-            # Stale draft/approval from a previous platform or product must not survive
-            # a handoff that is no longer ready (e.g. switching platform drops below the
-            # image minimum). Otherwise the UI could show an approved draft for evidence
-            # that no longer qualifies.
-            s.draft=None; s.draft_approved=False; s.compliance_report=None
+            # An approved draft must never survive a handoff that no longer qualifies.
+            self.invalidate_draft(s)
             return self.response(s,handoff['data_state']['status'],message='交接证据不足，请查看风险与缺口。',issues=handoff['data_state']['reasons'],handoff=handoff)
         return await self.draft_turn(s,request,handoff)
 
     async def draft_turn(self,s,request,handoff):
         """Second confirmation gate: generate/revise platform copy, then require
         explicit operator approval before can_publish is ever set true."""
+        binding=self.handoff_binding(handoff)
+        if s.draft and s.draft_binding!=binding:
+            # Evidence, product or task changed under an existing draft.
+            self.invalidate_draft(s,clear_handoff=False)
+        s.handoff_cache=handoff
         facts=[Fact.model_validate(f) for f in handoff['facts']]
         images=[ImageAsset.model_validate(
                     {k:v for k,v in i.items() if k not in ('verification','expires_in_seconds')})
@@ -319,18 +427,22 @@ class ConversationService:
             report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
             s.compliance_report=report
             s.draft_approved=bool(report['passed'])
+            s.draft_binding=binding
             msg='已通过合规核验，可以复制或导出。' if report['passed'] else '合规核验未通过，请先按下方问题修改后再确认。'
             return self.response(s,'ready' if report['passed'] else 'needs_revision',message=msg,issues=report['errors']+report['warnings'],handoff=handoff)
 
         if action=='revise_draft' and s.draft:
-            s.draft=revise_draft(s.draft,request.revise_instruction or request.message,facts,images,strategy,risks,task,engine=request.engine)
+            s.draft=await asyncio.to_thread(revise_draft,s.draft,request.revise_instruction or request.message,
+                                            facts,images,strategy,risks,task,engine=request.engine)
+            s.draft_binding=binding
             s.draft_approved=False; s.compliance_report=None
             report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
             s.compliance_report=report
             return self.response(s,'draft_ready',message='已按要求修改，请核对后再确认是否可发布。',issues=report['errors']+report['warnings'],handoff=handoff)
 
         if action=='regenerate_draft' or s.draft is None:
-            s.draft=compose_draft(task,facts,images,strategy,risks,engine=request.engine)
+            s.draft=await asyncio.to_thread(compose_draft,task,facts,images,strategy,risks,engine=request.engine)
+            s.draft_binding=binding
             s.draft_approved=False; s.compliance_report=None
             report=audit_copy(s.draft['title'],s.draft['body'],s.draft.get('tags',[]),s.draft.get('cta',''),handoff['facts'],risks)
             s.compliance_report=report

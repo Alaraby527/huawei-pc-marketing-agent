@@ -71,7 +71,7 @@ def audit_copy(title, body, tags, cta, facts, risks):
         "passed": not errors,
         "errors": errors,
         "warnings": warnings,
-        "review_state": "needs_review" if not errors else "blocked",
+        "review_state": "passed_pending_manual_approval" if not errors else "blocked",
         "publish_ready": False,
         "note": "本检查为规则扫描，不是完整语义核验；发布前仍需人工复核。",
     }

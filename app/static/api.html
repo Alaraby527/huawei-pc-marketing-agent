@@ -1,13 +1,31 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>接口说明 · 华为PC营销图文助手</title><link rel="stylesheet" href="/static/style.css"></head><body><main style="max-width:720px;margin:40px auto;padding:0 20px"><header style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px"><strong>接口说明 · v0.4</strong><a href="/">返回工作台</a></header>
-<section><h2>核心接口</h2><ul>
-<li><a href="/healthz">GET /healthz</a>：进程健康检查。</li>
-<li><a href="/api/v1/readiness">GET /api/v1/readiness</a>：配置与接入状态，不返回密钥。</li>
-<li><a href="/api/v1/platforms">GET /api/v1/platforms</a>：平台规则（当前仅启用小红书）。</li>
-<li><strong>POST /api/v1/conversations/turn</strong>：主入口。多轮对话完成需求澄清、选品确认、小红书图文生成、修改和发布前确认。</li>
-<li><strong>GET /api/v1/conversations/{session_id}/export?format=markdown</strong>：导出已通过核验的完整四部分报告。</li>
-<li><a href="/api/v1/knowledge/connection">GET /api/v1/knowledge/connection</a>：当前ima知识库连接状态。</li>
-<li><a href="/api/v1/hotspots">GET /api/v1/hotspots</a>：可选的公开热榜轻关联参考。</li>
-</ul>
-<p><a href="/openapi.json">下载 OpenAPI 规范 ↗</a></p>
-<p class="hint">请求体 application/json，大小上限256KB。密钥仅通过服务端环境变量读取，错误响应不回显原始输入或凭证。</p>
-</section></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>接口说明 · 华为PC营销图文助手</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="docs-page">
+  <header class="docs-header">
+    <strong>接口说明 · v0.4.0</strong>
+    <a href="/">返回工作台</a>
+  </header>
+  <section>
+    <h2>核心接口</h2>
+    <ul>
+      <li><a href="/healthz">GET /healthz</a>：进程健康检查与版本。</li>
+      <li><a href="/api/v1/readiness">GET /api/v1/readiness</a>：配置与接入状态，不返回密钥。</li>
+      <li><a href="/api/v1/platforms">GET /api/v1/platforms</a>：四套平台规则；对话工作台默认小红书。</li>
+      <li><strong>POST /api/v1/conversations/turn</strong>：主入口。多轮对话完成需求澄清、选品确认、图文生成、修改和发布前确认。</li>
+      <li><strong>GET /api/v1/conversations/{session_id}/export?format=markdown</strong>：导出已审批且仍绑定当前材料的四部分报告。</li>
+      <li><a href="/api/v1/knowledge/connection">GET /api/v1/knowledge/connection</a>：当前 ima 知识库连接状态。</li>
+      <li><a href="/api/v1/hotspots">GET /api/v1/hotspots</a>：可选的公开热榜轻关联参考。</li>
+    </ul>
+    <p><a href="/openapi.json">下载 OpenAPI 规范 ↗</a></p>
+    <p class="hint">请求体 application/json，大小上限 256KB。密钥仅通过服务端环境变量读取，错误响应不回显原始输入或凭证。合规核验是规则扫描，不是逐条语义核验。</p>
+  </section>
+</main>
+</body>
+</html>

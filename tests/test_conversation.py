@@ -4,9 +4,12 @@ import base64
 import json
 from datetime import timedelta
 import pytest
+from fastapi.testclient import TestClient
+import app.conversation as conversation
 from app.conversation import ConversationService, Turn, DialogueError, Slots, parse_message
 from app.evidence import (Budget, PriceRecord, ProductEvidence, EvidenceCatalog, load_catalog,
                           rank_products, verified_images, now_local, digest)
+from app.main import app as fastapi_app, service as global_service
 from app.retrieval import Document, extract_facts
 from app.ima import ImaError
 
@@ -106,9 +109,82 @@ def test_missing_core_never_filled_after_many_turns():
 def test_budget_parse_is_not_parameter_or_activity():
     for text in ['内存32GB，存储512GB','国补2000元','价格5899元']:
         assert 'budget' not in parse_message(text,Slots(),[])
-    for text,amount in [('预算六千以内',6000),('预算1.2万',12000),('6000',6000)]:
+    for text,amount in [('预算六千以内',6000),('预算1.2万',12000),('6000',6000),
+                        ('预算不超过6000',6000),('预算最多6000',6000),
+                        ('预算一万二',12000),('预算1万2',12000),('预算1万2000',12000),
+                        ('预算两千五',2500)]:
         assert parse_message(text,Slots(),[])['budget']['maximum']==amount
     assert parse_message('预算5000到6000',Slots(),[])['budget']['minimum']==5000
+    for text in ['预算不限','没有预算限制','预算没有上限']:
+        assert parse_message(text,Slots(),[])['budget']['unlimited'] is True
+
+
+@pytest.mark.parametrize('text',['不需要Windows','不用Windows','不要Windows','无需Windows'])
+def test_negated_os_is_not_a_requirement(text):
+    assert 'required_os' not in parse_message(text,Slots(),[])
+    assert parse_message('必须用Windows',Slots(),[])['required_os']=='Windows'
+
+
+async def approve_current_draft(service):
+    r=await service.turn(Turn(message='大学生'))
+    sid=r['session_id']
+    for message in ['预算不限，主要用来写论文','跳过','选1','到店体验','通过']:
+        r=await service.turn(Turn(session_id=sid,message=message))
+    return sid,r
+
+
+def test_approval_is_invalidated_when_a_requirement_is_removed(mocked):
+    async def run():
+        service=ConversationService(Fake)
+        sid,r=await approve_current_draft(service)
+        assert r['can_publish'] is True
+        r=await service.turn(Turn(session_id=sid,slot_updates=Slots(budget=None)))
+        assert r['status']=='needs_input'
+        assert r['can_publish'] is False and r['draft_approved'] is False
+        assert r['draft'] is None and r['handoff'] is None
+    asyncio.run(run())
+
+
+def test_export_rejects_after_requirements_invalidate_approval(mocked):
+    global_service.client_factory=Fake
+    client=TestClient(fastapi_app)
+    r=client.post('/api/v1/conversations/turn',json={'message':'大学生'}).json()
+    sid=r['session_id']
+    for message in ['预算不限，主要用来写论文','跳过','选1','到店体验','通过']:
+        r=client.post('/api/v1/conversations/turn',json={'session_id':sid,'message':message}).json()
+    assert r['can_publish'] is True
+    r=client.post('/api/v1/conversations/turn',json={'session_id':sid,'slot_updates':{'budget':None}}).json()
+    assert r['status']=='needs_input' and r['can_publish'] is False
+    response=client.get(f'/api/v1/conversations/{sid}/export?format=markdown')
+    assert response.status_code==409
+
+
+def test_export_allowed_when_approval_matches_current_handoff(mocked):
+    global_service.client_factory=Fake
+    client=TestClient(fastapi_app)
+    r=client.post('/api/v1/conversations/turn',json={'message':'大学生'}).json()
+    sid=r['session_id']
+    for message in ['预算不限，主要用来写论文','跳过','选1','到店体验','通过']:
+        r=client.post('/api/v1/conversations/turn',json={'session_id':sid,'message':message}).json()
+    assert r['can_publish'] is True
+    response=client.get(f'/api/v1/conversations/{sid}/export?format=markdown')
+    assert response.status_code==200
+    assert '# 一、场景判断' in response.text
+
+
+def test_refresh_after_draft_reloads_catalog(mocked, monkeypatch):
+    async def run():
+        service=ConversationService(Fake)
+        sid,r=await approve_current_draft(service)
+        calls=[]
+        original=conversation.load_catalog
+        async def counted(*args):
+            calls.append(1); return await original(*args)
+        monkeypatch.setattr('app.conversation.load_catalog',counted)
+        r=await service.turn(Turn(session_id=sid,action='refresh'))
+        assert calls, 'refresh must actually re-read the catalog'
+        assert r['status']=='draft_ready'
+    asyncio.run(run())
 
 
 def test_scope_and_scene_originals_checked():

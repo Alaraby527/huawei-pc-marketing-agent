@@ -9,6 +9,7 @@ Two engines:
             app.compliance before the draft is shown to the operator.
 """
 import re
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .model import complete_json, ModelError
 from .platforms import PLATFORM_RULES
 
@@ -21,9 +22,24 @@ SYSTEM_PROMPT = """你是华为PC门店营销内容协作者。只能使用用�
 不要输出 Markdown 代码围栏，不要输出除 JSON 以外的任何文字。"""
 
 
+class _LLMDraft(BaseModel):
+    """The model is untrusted; never index into its JSON until it passes this."""
+    model_config = ConfigDict(extra='ignore')
+    title: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    cta: str = Field(default='', max_length=300)
+    fact_ids: list[str] = Field(default_factory=list, max_length=50)
+    image_plan: list[dict] = Field(default_factory=list, max_length=20)
+
+
+def _rule_fallback(task, facts, images, strategy, risks, reason=''):
+    return _rule_based(task, facts, images, strategy, risks), {
+        "provider": "rule-fallback", "model": None, "reason": reason}
+
+
 def _rule_based(task, facts, images, strategy, risks):
     rule = PLATFORM_RULES[task.platform.value]
-    model_name = (facts[0].product_id if facts else "") and None
     priority_ids = [f.fact_id for f in facts[:3]]
     highlight = "、".join(f.text.partition("：")[0] for f in facts[:3]) or "核心配置"
     scene_label = re.sub(r"[，。；、\s]+", "", task.scenario)[:8] or "日常使用"
@@ -60,15 +76,24 @@ def _llm_based(task, facts, images, strategy, risks):
     try:
         result, meta = complete_json(SYSTEM_PROMPT, payload, schema_hint=schema_hint)
     except ModelError:
-        return _rule_based(task, facts, images, strategy, risks), {"provider": "rule-fallback", "model": None}
+        return _rule_fallback(task, facts, images, strategy, risks, 'model_error')
+    if not isinstance(result, dict):
+        return _rule_fallback(task, facts, images, strategy, risks, 'non_object')
+    try:
+        parsed = _LLMDraft.model_validate(result)
+    except ValidationError:
+        return _rule_fallback(task, facts, images, strategy, risks, 'invalid_shape')
+    result = parsed.model_dump()
     allowed_fact_ids = {f.fact_id for f in facts}
     allowed_image_ids = {i.image_id for i in images}
-    result["fact_ids"] = [x for x in result.get("fact_ids", []) if x in allowed_fact_ids]
-    result["image_plan"] = [p for p in result.get("image_plan", []) if p.get("image_id") in allowed_image_ids]
-    if not result.get("title") or not result.get("body"):
-        return _rule_based(task, facts, images, strategy, risks), {"provider": "rule-fallback", "model": None}
-    result.setdefault("tags", [])
-    result.setdefault("cta", rule["cta"])
+    result["fact_ids"] = [x for x in result["fact_ids"] if x in allowed_fact_ids]
+    result["image_plan"] = [p for p in result["image_plan"]
+                            if isinstance(p.get("image_id"), str) and p["image_id"] in allowed_image_ids]
+    if not result["title"].strip() or not result["body"].strip():
+        return _rule_fallback(task, facts, images, strategy, risks, 'empty_copy')
+    result["tags"] = [t.strip() for t in result["tags"] if t.strip()][:6]
+    if not result["cta"].strip():
+        result["cta"] = rule["cta"]
     return result, meta
 
 

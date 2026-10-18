@@ -12,9 +12,19 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from . import __version__
+
 
 class ModelError(RuntimeError):
     pass
+
+
+def _env_int(name, default, low, high):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return min(high, max(low, value))
 
 
 def _settings():
@@ -23,8 +33,8 @@ def _settings():
         "base_url": base,
         "api_key": os.getenv("LLM_API_KEY", ""),
         "model": os.getenv("LLM_MODEL", "deepseek-v4.1-flash"),
-        "timeout": min(170, max(10, int(os.getenv("LLM_TIMEOUT", "90")))),
-        "max_tokens": min(8000, max(500, int(os.getenv("LLM_MAX_TOKENS", "4000")))),
+        "timeout": _env_int("LLM_TIMEOUT", 90, 10, 170),
+        "max_tokens": _env_int("LLM_MAX_TOKENS", 4000, 500, 8000),
     }
 
 
@@ -34,7 +44,7 @@ def _image_settings():
         "base_url": base,
         "api_key": os.getenv("LLM_API_KEY", ""),
         "model": os.getenv("LLM_IMAGE_MODEL", "gpt-image-2"),
-        "timeout": min(170, max(30, int(os.getenv("LLM_IMAGE_TIMEOUT", "150")))),
+        "timeout": _env_int("LLM_IMAGE_TIMEOUT", 150, 30, 170),
         "enabled": os.getenv("ENABLE_AI_COVER", "0") == "1",
     }
 
@@ -70,7 +80,7 @@ def complete_json(system, payload, *, schema_hint=""):
     req = urllib.request.Request(
         settings["base_url"] + "/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
-                 "User-Agent": "huawei-pc-marketing-agent/0.4"},
+                 "User-Agent": "huawei-pc-marketing-agent/" + __version__},
         method="POST")
     try:
         with urllib.request.urlopen(req, timeout=settings["timeout"]) as response:
@@ -115,7 +125,7 @@ def generate_cover_image(prompt):
     req = urllib.request.Request(
         settings["base_url"] + "/images/generations", data=body,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
-                 "User-Agent": "huawei-pc-marketing-agent/0.4"}, method="POST")
+                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=settings["timeout"]) as response:
             raw = response.read(12 * 1024 * 1024)

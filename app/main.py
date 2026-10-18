@@ -1,9 +1,11 @@
+import asyncio
 import os
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from . import __version__
 from .contracts import MaterialBundle, Task
 from .verification import check_materials
 from .platforms import PLATFORM_RULES
@@ -15,7 +17,7 @@ from .conversation import Turn, service, DialogueError
 from .hotspot import related_hot_terms
 from .model import image_configured, generate_cover_image, ModelError
 
-app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version="0.4.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -56,7 +58,7 @@ async def api_documentation():
 
 @app.get("/healthz")
 async def health():
-    return {"status": "ok", "version": "0.4.0", "service": "huawei-pc-marketing-agent"}
+    return {"status": "ok", "version": __version__, "service": "huawei-pc-marketing-agent"}
 
 @app.post('/api/v1/conversations/turn')
 async def conversation_turn(turn: Turn):
@@ -70,9 +72,10 @@ async def conversation_turn(turn: Turn):
 @app.get("/api/v1/readiness")
 async def readiness():
     return {
+        "version": __version__,
         "deployment_ready": True,
         "business_ready": False,
-        "stage": "需求澄清、知识库检索、小红书图文生成、两道人工确认与合规核验已接通；指定赛事共享库仍待加入",
+        "stage": "需求澄清、知识库检索、小红书图文生成、两道人工确认与合规规则扫描已接通；逐条语义核验与指定赛事共享库仍待完成",
         "configured": {
             "ima_credentials": configured(),
             "llm_credentials": bool(os.getenv("LLM_API_KEY")),
@@ -81,7 +84,7 @@ async def readiness():
         "integrations": {
             "retrieval": "implemented_requires_live_connection_check",
             "generation": "implemented_rule_and_llm_engine",
-            "semantic_verification": "implemented_deterministic_compliance_audit",
+            "semantic_verification": "not_implemented_deterministic_rule_scan_only",
         },
         "note": "已填写凭证不等于验证成功；本接口不会输出凭证内容。",
     }
@@ -135,14 +138,14 @@ async def create_task(task: Task):
     })
 
 @app.get("/api/v1/hotspots")
-async def hotspots(scenario: str = "", audience: str = ""):
+def hotspots(scenario: str = "", audience: str = ""):
     return {"terms": related_hot_terms(scenario, audience),
             "note": "来自60s公开热榜的轻关联参考；不是实时验证结果，不替代产品事实或平台实时数据"}
 
 @app.get("/api/v1/conversations/{session_id}/export")
 async def export_result(session_id: str, format: str = "text"):
     s = service.sessions.get(session_id)
-    if not s or not s.draft or not s.draft_approved or not s.compliance_report or not s.compliance_report.get("passed"):
+    if not s or not service.publishable(s):
         return JSONResponse(status_code=409, content={"message": "当前会话没有已通过核验、可导出的图文方案"})
     draft, handoff = s.draft, s.handoff_cache
     body = export_markdown(draft, handoff, s.compliance_report)
@@ -171,9 +174,9 @@ def export_markdown(draft, handoff, compliance):
         caption = image["caption"] if image else item["image_id"]
         lines.append(f"- 图片［{item['image_id']}］{caption} —— 插入位置：{item['position']}；来源：ima")
     lines += ["", "# 四、核验结果",
-              "- 产品事实核验：通过（引用事实均来自ima知识库，见上）" if compliance["passed"] else "- 产品事实核验：未通过",
+              "- 事实与合规核验：规则扫描通过（数字可追溯、无高风险用语）；未做逐条语义核验" if compliance["passed"] else "- 事实与合规核验：未通过",
               "- 图片核验：均为ima来源、型号级核验通过的素材",
-              "- 合规核验：" + ("通过" if compliance["passed"] else "未通过"),
+              "- 合规核验：" + ("通过（规则扫描）" if compliance["passed"] else "未通过"),
               "- 待确认信息：" + ("；".join(handoff["risks_and_gaps"]["blocking"]) or "无"),
               "", "> 本结果为规则/模型辅助生成，不代表法律合规保证，发布前请人工复核。"]
     return "\n".join(lines)
@@ -185,7 +188,7 @@ async def generate_cover(payload: dict):
         return JSONResponse(status_code=503, content={"message": "AI封面氛围图功能未开启或未配置"})
     prompt = str(payload.get("prompt", ""))[:400] or "简约数码桌搭氛围"
     try:
-        body, mime = generate_cover_image(prompt)
+        body, mime = await asyncio.to_thread(generate_cover_image, prompt)
     except ModelError as error:
         return JSONResponse(status_code=502, content={"message": str(error)})
     from .retrieval import store_asset

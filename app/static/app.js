@@ -26,6 +26,21 @@
 
   function renderAssistant(result) {
     let html = '<p>' + escapeHtml(result.message || '(无文字说明)') + '</p>';
+    if (result.candidates && result.candidates.length) {
+      html += '<div class="candidate-list">' + result.candidates.map((c, i) => {
+        const eligibility = c.eligibility === 'verified' ? '证据完整' : '待核实';
+        const price = c.current_price
+          ? '当前核验价 ¥' + escapeHtml(c.current_price.amount) + '｜' + escapeHtml(c.current_price.configuration)
+          : '未取得当前有效价格';
+        const unknowns = (c.unknowns || []).map(u => '<li>' + escapeHtml(u) + '</li>').join('');
+        return '<div class="candidate">' +
+          '<div class="candidate-head"><strong>' + (i + 1) + '. ' + escapeHtml(c.model_name) + '</strong>' +
+          '<span>' + escapeHtml(eligibility) + '</span></div>' +
+          '<div class="candidate-meta">预算：' + escapeHtml(c.budget_status || '未核验') + '｜' + price + '</div>' +
+          (unknowns ? '<ul class="candidate-unknowns">' + unknowns + '</ul>' : '') +
+          '</div>';
+      }).join('') + '</div><p class="hint">回复“选1”确认产品；待核实项不会自动当成已满足。</p>';
+    }
     if (result.questions && result.questions.length) {
       html += '<ul class="q-list">' + result.questions.map(q => '<li>' + escapeHtml(q.question) + '</li>').join('') + '</ul>';
     }
@@ -79,7 +94,12 @@
     const empty = document.getElementById('verify-empty');
     const content = document.getElementById('verify-content');
     const report = result.compliance_report;
-    if (!report) { empty.hidden = false; content.innerHTML = ''; return; }
+    if (!report) {
+      empty.hidden = false; content.innerHTML = '';
+      publishState.textContent = result.can_publish ? '已通过核验，可以复制或导出' : '尚未通过核验，不可发布';
+      publishState.className = result.can_publish ? 'ready' : '';
+      return;
+    }
     empty.hidden = true;
     let html = '<div class="verify-item ' + (report.passed ? 'ok' : 'error') + '">合规核验：' + (report.passed ? '通过' : '未通过') + '</div>';
     html += (report.errors || []).map(e => '<div class="verify-item error">问题：' + escapeHtml(e) + '</div>').join('');

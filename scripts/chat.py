@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from app.conversation import ConversationService, Turn
+from app.conversation import ConversationService, Turn, DialogueError
 from app.retrieval import get_asset
 from scripts.guide import write_private
 
@@ -17,7 +17,11 @@ def export_result(result,path):
     handoff=result.get('handoff')
     if handoff:
         for image in handoff['images']:
-            content=get_asset(image['access_url'].rsplit('/',1)[-1])
+            url=image.get('access_url','')
+            # Re-exporting an already-exported handoff must not treat local paths as dead tokens.
+            if url and not url.startswith('/api/v1/assets/') and Path(url).is_file():
+                continue
+            content=get_asset(url.rsplit('/',1)[-1]) if url else None
             if not content:
                 handoff['data_state'].update(status='unavailable',can_generate=False)
                 result['can_generate']=False
@@ -73,6 +77,7 @@ async def main():
             session=service.sessions[result['session_id']]
             write_private(args.output.parent/'conversation-transcript.json',json.dumps(session.history,ensure_ascii=False,indent=2))
             if result.get('handoff'): print('  已保存：'+str(args.output.resolve()))
+        except DialogueError as error: print('会话不可用：'+str(error.message))
         except ValueError: print('信息格式无法确认，请明确预算或使用用途；不会自动填默认值。')
     print('本次会话结束；已有输出位于 '+str(args.output.parent.resolve()))
 
