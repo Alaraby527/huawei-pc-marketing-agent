@@ -149,10 +149,14 @@ async def create_task(task: Task):
 @app.get("/api/v1/hotspots")
 def hotspots(scenario: str = "", audience: str = ""):
     topics = related_hot_topics(scenario, audience)
-    live = any(topic.get("data_mode") == "live" for topic in topics)
-    return {"topics": topics, "terms": [topic["title"] for topic in topics], "data_mode": "live" if live else "editorial_fallback",
-            "note": ("来自60s公开热榜的轻关联参考；不是实时验证结果，不替代产品事实或平台实时数据" if live
-                     else "公开热榜暂不可用；以下为编辑内容方向，不是实时热点，也不代表传播效果")}
+    mode = topics[0].get("data_mode", "editorial_fallback") if topics else "editorial_fallback"
+    if mode == "live":
+        note = "来自60s小红书热榜的轻关联参考；不是实时验证结果，不替代产品事实或平台实时数据"
+    elif mode == "live_fallback":
+        note = "小红书热榜暂不可用；以下为微博热榜，仅作跨平台话题参考，不是小红书实时热点"
+    else:
+        note = "公开热榜暂不可用；以下为编辑内容方向，不是实时热点，也不代表传播效果"
+    return {"topics": topics, "terms": [topic["title"] for topic in topics], "data_mode": mode, "note": note}
 
 @app.get("/api/v1/conversations/{session_id}/export")
 async def export_result(session_id: str, format: str = "text"):

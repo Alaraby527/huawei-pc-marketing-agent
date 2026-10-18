@@ -209,6 +209,19 @@ def test_hotspot_falls_back_to_editorial_when_public_feed_is_down(monkeypatch):
     assert topics[0]['source'] == 'editorial-fallback'
 
 
+def test_hotspot_uses_weibo_fallback_when_rednote_is_down(monkeypatch):
+    from app.hotspot import related_hot_topics
+    def fake_fetch_source(platform, limit=50):
+        if platform != 'weibo':
+            return []
+        return [{'title': '微博测试话题', 'heat': 100, 'rank': 1, 'url': '',
+                 'source': '60s-weibo', 'platform': 'weibo', 'observed_at': '2026-10-18T22:00:00+08:00'}]
+    monkeypatch.setattr('app.hotspot._fetch_source', fake_fetch_source)
+    topics = related_hot_topics('课堂学习', '大学新生')
+    assert topics[0]['data_mode'] == 'live_fallback'
+    assert topics[0]['source'] == '60s-weibo'
+
+
 def test_ima_image_signature_and_url():
     assert safe_resource_url('https://pkb.ima.myqcloud.com/test.png')
     assert image_type(PNG)=='image/png'

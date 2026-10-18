@@ -365,7 +365,9 @@
       const response = await fetch('/api/v1/hotspots?scenario=' + encodeURIComponent(scenario) + '&audience=' + encodeURIComponent(audience));
       const data = await response.json();
       const topics = data.topics || [];
-      $('hotspot-note').textContent = data.data_mode === 'live' ? '公开热榜' : '编辑方向（热榜暂不可用）';
+      $('hotspot-note').textContent = data.data_mode === 'live' ? '小红书热榜'
+        : data.data_mode === 'live_fallback' ? '微博热榜（跨平台参考）'
+        : '编辑方向（热榜暂不可用）';
       if (!topics.length) {
         $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
         return;
