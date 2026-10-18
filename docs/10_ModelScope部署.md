@@ -65,7 +65,7 @@ LLM_IMAGE_TIMEOUT=150
 
 ```bash
 curl -s https://<你的运行域名>/healthz
-# {"status":"ok","version":"0.5.0",...}
+# {"status":"ok","version":"0.7.0",...}
 
 curl -s https://<你的运行域名>/api/v1/readiness
 # 检查 ima_credentials / llm_credentials / llm_endpoint_and_model

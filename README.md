@@ -20,7 +20,7 @@
 
 ![线上工作台](app/static/samples/live-workbench.png)
 
-> 截图来自 Public / Running 的魔搭实例：三分栏工作台、需求选项、热点灵感、证据区和模型/规则切换。完整验收记录见 [`docs/12_线上验证记录.md`](docs/12_线上验证记录.md)。
+> 截图来自 Public / Running 的魔搭实例：自由输入对话框、输入区内模型选择、五步进度、候选/六页画布和证据区。完整验收记录见 [`docs/12_线上验证记录.md`](docs/12_线上验证记录.md)。
 
 ### 小红书扫码热点（内部服务）
 
@@ -248,6 +248,7 @@ app/
   contracts.py     材料包与任务契约
   intake.py        单轮任务解析与场景策略
   model.py         OpenAI 兼容文本 / DashScope 原生异步生图
+  posters.py       六页 1080×1440 PNG 海报渲染与 ZIP 打包
   static/          HarmonyOS 风格工作台
   static/samples/  六页样稿与 AI 封面示例
 scripts/           CLI、预检、真实联调记录
