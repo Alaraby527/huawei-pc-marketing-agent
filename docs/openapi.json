@@ -121,6 +121,22 @@
         }
       }
     },
+    "/api/v1/models": {
+      "get": {
+        "summary": "Models",
+        "operationId": "models_api_v1_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/contracts/materials": {
       "get": {
         "summary": "Materials Schema",
@@ -1184,6 +1200,18 @@
             ],
             "title": "Engine",
             "default": "rule"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "revise_instruction": {
             "type": "string",

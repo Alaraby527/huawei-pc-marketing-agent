@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.6.0-5">
+<link rel="stylesheet" href="/static/style.css?v=0.6.0-6">
 </head>
 <body>
 <div class="app-shell">
@@ -23,6 +23,7 @@
         <button type="button" data-engine="rule">规则</button>
         <button type="button" data-engine="llm" class="active">模型</button>
       </div>
+      <select id="model-select" class="model-select" aria-label="模型选择" hidden></select>
       <span class="version-tag">v0.6.0</span>
     </div>
   </header>
@@ -213,6 +214,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.6.0-5" defer></script>
+<script src="/static/app.js?v=0.6.0-6" defer></script>
 </body>
 </html>

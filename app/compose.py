@@ -155,7 +155,7 @@ def _rule_based(task, facts, images, strategy, risks):
             "image_plan": image_plan}
 
 
-def _llm_based(task, facts, images, strategy, risks):
+def _llm_based(task, facts, images, strategy, risks, model=None):
     rule = PLATFORM_RULES[task.platform.value]
     payload = {
         "platform": task.platform.value, "platform_rules": rule, "strategy": strategy,
@@ -167,7 +167,7 @@ def _llm_based(task, facts, images, strategy, risks):
     }
     schema_hint = "fact_ids 和 pages[].fact_ids 只能引用上面 facts 中的 id；pages[].image_id 和 image_plan[].image_id 只能引用上面 images 中的 id。"
     try:
-        result, meta = complete_json(SYSTEM_PROMPT, payload, schema_hint=schema_hint)
+        result, meta = complete_json(SYSTEM_PROMPT, payload, schema_hint=schema_hint, model=model)
     except ModelError:
         return _rule_fallback(task, facts, images, strategy, risks, 'model_error')
     if not isinstance(result, dict):
@@ -204,9 +204,9 @@ def _llm_based(task, facts, images, strategy, risks):
     return result, meta
 
 
-def compose_draft(task, facts, images, strategy, risks, engine="rule"):
+def compose_draft(task, facts, images, strategy, risks, engine="rule", model=None):
     if engine == "llm":
-        draft, meta = _llm_based(task, facts, images, strategy, risks)
+        draft, meta = _llm_based(task, facts, images, strategy, risks, model=model)
     else:
         draft = _rule_based(task, facts, images, strategy, risks)
         meta = {"provider": "local-rule-template", "model": None}

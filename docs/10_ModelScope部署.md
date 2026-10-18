@@ -27,6 +27,7 @@ IMA_KB_NAME=你的知识库精确名称
 
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-plus
+LLM_ALLOWED_MODELS=qwen-plus,qwen-max
 LLM_API_KEY=...
 
 LLM_IMAGE_MODEL=wanx2.1-t2i-turbo

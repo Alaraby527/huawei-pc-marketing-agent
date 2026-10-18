@@ -13,11 +13,15 @@
   let lastResult = null;
   let selectedPlatform = 'xiaohongshu';
   let selectedEngine = 'llm';
+  let selectedModel = null;
   let lastCoverKey = '';
   let lastHotKey = '';
   let loadingNode = null;
   let quickStartData = null;
-  let quickSelection = {};
+  let quickIndex = 0;
+  let quickSelections = {};
+  let currentHotTopics = [];
+  let wizardHotspot = null;
   let xhsPollTimer = null;
   let xhsTopicsActive = false;
 
@@ -52,7 +56,12 @@
     sendBtn.disabled = busy;
     sendBtn.textContent = busy ? '生成中…' : '发送';
     if (busy) {
-      loadingNode = addMessage('assistant', '<p class="loading">正在读取知识库、核验素材并组织内容，请稍候…</p>');
+      loadingNode = addMessage('assistant', '<p class="loading">Agent 正在调用工具与技能…</p>' +
+        '<div class="agent-running">' +
+        '<span class="trace-step active">tool · 官方知识库</span>' +
+        '<span class="trace-step">skill · 图片核验</span>' +
+        '<span class="trace-step">skill · 六页方案</span>' +
+        '<span class="trace-step">skill · 合规扫描</span></div>');
     } else if (loadingNode) {
       loadingNode.remove();
       loadingNode = null;
@@ -84,6 +93,7 @@
 
   function send(message, slotUpdates) {
     const payload = { session_id: sessionId, message: message || '', engine: selectedEngine };
+    if (selectedEngine === 'llm' && selectedModel) payload.model = selectedModel;
     if (slotUpdates) payload.slot_updates = slotUpdates;
     return requestTurn(payload);
   }
@@ -107,14 +117,29 @@
     if (result.slots) loadHotspots(result.slots);
   }
 
+  function traceHtml(result) {
+    const steps = [['skill · 需求解析', 'done']];
+    if (result.slots && result.slots.hotspot) steps.push(['skill · 热点接入', 'done']);
+    if (result.handoff || (result.candidates && result.candidates.length)) steps.push(['tool · 官方知识库', 'done']);
+    if (result.candidates && result.candidates.length) steps.push(['skill · 候选核验', 'done']);
+    if (result.selected) steps.push(['gate · 产品确认', 'done']);
+    if (result.draft) steps.push(['skill · 六页方案', 'done']);
+    if (result.compliance_report) {
+      steps.push(['skill · 合规扫描', result.compliance_report.passed ? 'done' : 'warn']);
+    }
+    if (result.can_publish) steps.push(['gate · 人工确认', 'done']);
+    return '<div class="tool-trace">' + steps.map(([label, state]) =>
+      '<span class="trace-step ' + state + '">' + escapeHtml(label) + '</span>').join('') + '</div>';
+  }
+
   function renderChat(result) {
     if (result.message) {
-      addMessage('assistant', '<p>' + escapeHtml(result.message) + '</p>');
+      addMessage('assistant', '<p>' + escapeHtml(result.message) + '</p>' + traceHtml(result));
     }
     if (result.status === 'candidates' && result.candidates && result.candidates.length && !result.draft) {
       const names = result.candidates.map((candidate, index) => (index + 1) + '. ' + candidate.model_name).join('；');
       addMessage('assistant', '<p>已找到候选：' + escapeHtml(names) + '</p>' +
-        '<p class="hint">在右侧候选卡点击“选 N”继续；也可以直接回复“选1”。</p>');
+        '<p class="hint">在右侧候选卡点击“选 N”继续；也可以在下方向导里选。</p>');
     }
     if (result.issues && result.issues.length) {
       addMessage('assistant', '<ul class="issues">' +
@@ -123,8 +148,7 @@
   }
 
   function renderOptions(questions) {
-    const usable = (questions || []).filter(q => q.options && q.options.length &&
-      q.field !== 'candidate_id' && q.field !== 'draft_decision');
+    const usable = (questions || []).filter(question => question.options && question.options.length);
     if (!usable.length) {
       optionsWrap.hidden = true;
       optionsWrap.innerHTML = '';
@@ -133,15 +157,27 @@
     }
     optionsWrap.hidden = false;
     $('hotspot-box').hidden = true;
-    optionsWrap.innerHTML = usable.map(question => {
-      const options = question.options.map(option => {
-        const slot = option.slot_updates ? ' data-slot="' + escapeHtml(JSON.stringify(option.slot_updates)) + '"' : '';
-        return '<button type="button" class="chip" data-message="' + escapeHtml(option.message || option.label) + '"' + slot + '>' +
-          escapeHtml(option.label) + '</button>';
-      }).join('');
-      return '<div class="option-group"><div class="option-label">' +
-        escapeHtml(FIELD_NAMES[question.field] || question.question) + '</div><div class="chip-row">' + options + '</div></div>';
+    const question = usable[0];
+    const title = question.field === 'candidate_id' ? '产品确认'
+      : question.field === 'draft_decision' ? '发布确认' : '需求确认';
+    const options = question.options.map(option => {
+      const slot = option.slot_updates ? ' data-slot="' + escapeHtml(JSON.stringify(option.slot_updates)) + '"' : '';
+      return '<button type="button" class="wizard-option" data-message="' +
+        escapeHtml(option.message || option.label) + '"' + slot + '>' + escapeHtml(option.label) + '</button>';
     }).join('');
+    let html = '<div class="wizard" data-field="' + escapeHtml(question.field) + '"><div class="wizard-head"><span>' + title + '</span>' +
+      '<span class="hint">' + (usable.length > 1 ? '第 1 / ' + usable.length + ' 问' : '请选择') + '</span></div>' +
+      '<div class="wizard-question">' + escapeHtml(question.question) + '</div>' +
+      '<div class="wizard-options">' + options + '</div>';
+    if (question.field === 'objective' && currentHotTopics.length) {
+      html += '<div class="wizard-hotspots"><div class="option-label">热点（可选，选中后会结合进推文）</div>' +
+        '<div class="chip-row">' + currentHotTopics.slice(0, 3).map(topic =>
+          '<button type="button" class="chip' + (wizardHotspot === topic.title ? ' active' : '') +
+          '" data-wizard-hotspot="' + escapeHtml(topic.title) + '">' + escapeHtml(topic.title) + '</button>').join('') +
+        '</div></div>';
+    }
+    html += '<div class="wizard-foot">点击一个选项后自动进入下一题；也可以直接在输入框补充。</div></div>';
+    optionsWrap.innerHTML = html;
   }
 
   function renderCandidates(result) {
@@ -349,7 +385,12 @@
 
   function updateEngineBadge(draft) {
     const badge = $('engine-badge');
-    if (!draft) { badge.textContent = '等待生成'; return; }
+    if (!draft) {
+      badge.textContent = selectedEngine === 'llm'
+        ? '模型 · ' + (selectedModel || '默认')
+        : '规则引擎';
+      return;
+    }
     const meta = draft.engine_meta || {};
     if (meta.provider === 'rule-fallback' || (meta.provider || '').startsWith('rule-fallback-compliance')) badge.textContent = '规则回退';
     else if (meta.provider === 'local-rule-template') badge.textContent = '规则引擎';
@@ -357,13 +398,51 @@
     else badge.textContent = '规则引擎';
   }
 
+  function syncEngineControls() {
+    const select = $('model-select');
+    select.hidden = selectedEngine !== 'llm' || !select.options.length;
+    if (selectedEngine === 'llm' && selectedModel) select.value = 'llm:' + selectedModel;
+    $('engine-switch').querySelectorAll('button').forEach(button => {
+      button.classList.toggle('active', button.dataset.engine === selectedEngine);
+    });
+    if (!lastResult || !lastResult.draft) {
+      $('engine-badge').textContent = selectedEngine === 'llm'
+        ? '模型 · ' + (selectedModel || '默认')
+        : '规则引擎';
+    }
+  }
+
+  async function loadModels() {
+    try {
+      const response = await fetch('/api/v1/models');
+      const data = await response.json();
+      const select = $('model-select');
+      select.innerHTML = '<option value="rule">规则引擎</option>' +
+        (data.text || []).map(model =>
+          '<option value="llm:' + escapeHtml(model) + '">模型 · ' + escapeHtml(model) + '</option>').join('');
+      if (data.default) {
+        selectedEngine = 'llm';
+        selectedModel = data.default;
+      } else {
+        selectedEngine = 'rule';
+        selectedModel = null;
+      }
+      syncEngineControls();
+    } catch (error) {
+      selectedEngine = 'rule';
+      selectedModel = null;
+      syncEngineControls();
+    }
+  }
+
   function renderHotTopics(topics, note) {
+    currentHotTopics = (topics || []).slice(0, 3);
     $('hotspot-note').textContent = note || '';
-    if (!topics || !topics.length) {
+    if (!currentHotTopics.length) {
       $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
       return;
     }
-    $('hotspot-chips').innerHTML = topics.slice(0, 3).map(topic =>
+    $('hotspot-chips').innerHTML = currentHotTopics.map(topic =>
       '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '"' +
       (topic.url ? ' title="' + escapeHtml(topic.url) + '"' : '') + '>' +
       escapeHtml(topic.title) + '</button>').join('');
@@ -565,6 +644,8 @@
       if (!response.ok) return;
       const data = await response.json();
       quickStartData = data.core;
+      quickIndex = 0;
+      quickSelections = {};
       renderQuickStart();
     } catch (error) {
       // The normal typed flow still works when this optional panel fails.
@@ -573,34 +654,33 @@
 
   function renderQuickStart() {
     if (sessionId || lastResult || !quickStartData) return;
+    const fields = ['audience', 'budget', 'scenario'];
+    if (quickIndex >= fields.length) return sendQuickStart();
+    const field = fields[quickIndex];
+    const question = quickStartData[field] || {};
     const labels = { audience: '客户画像', budget: '预算', scenario: '使用场景' };
-    const groups = Object.entries(quickStartData).map(([field, question]) => {
-      const options = (question.options || []).map(option =>
-        '<button type="button" class="chip" data-quick-field="' + field + '" data-quick-message="' +
-        escapeHtml(option.message) + '">' + escapeHtml(option.label) + '</button>').join('');
-      return '<div class="option-group"><div class="option-label">' + (labels[field] || field) +
-        '</div><div class="chip-row">' + options + '</div></div>';
-    }).join('');
-    optionsWrap.innerHTML = groups +
-      '<div class="quick-start-footer"><span class="hint">三项都选好后开始；也可以直接在输入框描述</span>' +
-      '<button type="button" class="btn-primary" id="quick-start-send" disabled>开始选品</button></div>';
+    const options = (question.options || []).map(option =>
+      '<button type="button" class="wizard-option" data-quick-field="' + field + '" data-quick-message="' +
+      escapeHtml(option.message) + '">' + escapeHtml(option.label) + '</button>').join('');
+    optionsWrap.innerHTML = '<div class="wizard"><div class="wizard-head"><span>需求确认</span>' +
+      '<span class="hint">' + (quickIndex + 1) + ' / ' + fields.length + '</span></div>' +
+      '<div class="wizard-question">' + escapeHtml(labels[field] || field) + '：' +
+      escapeHtml(question.question || '请选择一个方向') + '</div>' +
+      '<div class="wizard-options">' + options + '</div>' +
+      '<div class="wizard-foot">点击一个方向后自动进入下一题；也可以直接在输入框描述。</div></div>';
     optionsWrap.hidden = false;
     $('hotspot-box').hidden = true;
   }
 
   function sendQuickStart() {
-    const message = ['audience', 'budget', 'scenario'].map(field => quickSelection[field]).filter(Boolean).join('，');
+    const fields = ['audience', 'budget', 'scenario'];
+    const message = fields.map(field => quickSelections[field]).filter(Boolean).join('，');
     if (!message) return;
     addMessage('operator', '<p>' + escapeHtml(message) + '</p>');
-    quickSelection = {};
+    quickIndex = 0;
+    quickSelections = {};
     optionsWrap.hidden = true;
     send(message);
-  }
-
-  function updateQuickStartState() {
-    const ready = ['audience', 'budget', 'scenario'].every(field => quickSelection[field]);
-    const button = $('quick-start-send');
-    if (button) button.disabled = !ready;
   }
 
   function populateSamplePages() {
@@ -640,21 +720,35 @@
     const quick = event.target.closest('button[data-quick-field]');
     if (quick) {
       const field = quick.dataset.quickField;
-      quickSelection[field] = quickSelection[field] === quick.dataset.quickMessage ? null : quick.dataset.quickMessage;
-      optionsWrap.querySelectorAll('button[data-quick-field="' + field + '"]').forEach(button => {
-        button.classList.toggle('active', button === quick && Boolean(quickSelection[field]));
-      });
-      updateQuickStartState();
+      quickSelections[field] = quick.dataset.quickMessage;
+      quickIndex += 1;
+      if (quickIndex < 3) {
+        renderQuickStart();
+      } else {
+        sendQuickStart();
+      }
       return;
     }
-    if (event.target.closest('#quick-start-send')) {
-      sendQuickStart();
+    const hotspot = event.target.closest('button[data-wizard-hotspot]');
+    if (hotspot) {
+      wizardHotspot = wizardHotspot === hotspot.dataset.wizardHotspot ? null : hotspot.dataset.wizardHotspot;
+      optionsWrap.querySelectorAll('button[data-wizard-hotspot]').forEach(button => {
+        button.classList.toggle('active', button.dataset.wizardHotspot === wizardHotspot);
+      });
       return;
     }
     const button = event.target.closest('button[data-message]');
     if (!button) return;
     addMessage('operator', '<p>' + escapeHtml(button.textContent) + '</p>');
     const slot = button.dataset.slot ? JSON.parse(button.dataset.slot) : null;
+    const wizard = optionsWrap.querySelector('.wizard');
+    const field = wizard && wizard.dataset.field;
+    optionsWrap.hidden = true;
+    if (field === 'objective' && wizardHotspot) {
+      send(button.dataset.message, { hotspot: wizardHotspot });
+      wizardHotspot = null;
+      return;
+    }
     send(slot ? '' : button.dataset.message, slot);
   });
 
@@ -699,10 +793,24 @@
     const button = event.target.closest('button[data-engine]');
     if (!button) return;
     selectedEngine = button.dataset.engine;
-    $('engine-switch').querySelectorAll('button').forEach(item => item.classList.toggle('active', item === button));
-    if (!lastResult || !lastResult.draft) {
-      $('engine-badge').textContent = selectedEngine === 'llm' ? '模型引擎' : '规则引擎';
+    if (selectedEngine === 'llm' && !selectedModel) {
+      const select = $('model-select');
+      const option = Array.from(select.options).find(item => item.value.startsWith('llm:'));
+      selectedModel = option ? option.value.slice(4) : null;
     }
+    syncEngineControls();
+  });
+
+  $('model-select').addEventListener('change', (event) => {
+    const value = event.target.value;
+    if (value === 'rule') {
+      selectedEngine = 'rule';
+      selectedModel = null;
+    } else {
+      selectedEngine = 'llm';
+      selectedModel = value.slice(4);
+    }
+    syncEngineControls();
   });
 
   document.querySelectorAll('.tab').forEach(tab => {
@@ -727,6 +835,6 @@
   loadHotspots(null);
   loadQuickStart();
   loadXhsStatus();
+  loadModels();
   populateSamplePages();
-  $('engine-badge').textContent = selectedEngine === 'llm' ? '模型引擎' : '规则引擎';
 })();

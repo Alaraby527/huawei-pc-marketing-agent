@@ -29,12 +29,20 @@ def _env_int(name, default, low, high):
     return min(high, max(low, value))
 
 
-def _settings():
+def allowed_models():
+    default = os.getenv("LLM_MODEL", "").strip()
+    configured = [item.strip() for item in os.getenv("LLM_ALLOWED_MODELS", "").split(",") if item.strip()]
+    if default:
+        configured.insert(0, default)
+    return list(dict.fromkeys(configured))
+
+
+def _settings(model=None):
     base = os.getenv("LLM_BASE_URL", "").rstrip("/")
     return {
         "base_url": base,
         "api_key": os.getenv("LLM_API_KEY", ""),
-        "model": os.getenv("LLM_MODEL", "deepseek-v4.1-flash"),
+        "model": model or os.getenv("LLM_MODEL", "deepseek-v4.1-flash"),
         "timeout": _env_int("LLM_TIMEOUT", 90, 10, 170),
         "max_tokens": _env_int("LLM_MAX_TOKENS", 4000, 500, 8000),
     }
@@ -62,14 +70,16 @@ def _check_https(base_url):
         raise ModelError("模型服务地址需为 HTTPS；仅本机地址允许 HTTP")
 
 
-def complete_json(system, payload, *, schema_hint=""):
+def complete_json(system, payload, *, schema_hint="", model=None):
     """Call chat/completions and parse a JSON object from the response content.
 
     The payload is untrusted task data from the caller's perspective of the
     model, not additional instructions; callers must still validate the
     returned structure against their own contract before trusting it.
     """
-    settings = _settings()
+    if model and model not in allowed_models():
+        raise ModelError("该模型未在服务端允许列表；请在 LLM_ALLOWED_MODELS 中配置")
+    settings = _settings(model)
     if not all([settings["base_url"], settings["api_key"], settings["model"]]):
         raise ModelError("请先配置 LLM_BASE_URL、LLM_API_KEY 和 LLM_MODEL")
     _check_https(settings["base_url"])

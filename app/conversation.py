@@ -44,6 +44,7 @@ class Turn(StrictModel):
                      'approve_draft','revise_draft','regenerate_draft'] = 'continue'
     candidate_id: str | None = Field(default=None,max_length=80)
     engine: Literal['rule','llm'] = 'rule'
+    model: str | None = Field(default=None,max_length=100)
     revise_instruction: str = Field(default='',max_length=1000)
 
 
@@ -506,7 +507,7 @@ class ConversationService:
             return self.response(s,'draft_ready',message='已按要求修改，请核对后再确认是否可发布。',issues=report['errors']+report['warnings'],handoff=handoff)
 
         if action=='regenerate_draft' or s.draft is None:
-            s.draft=await asyncio.to_thread(compose_draft,task,facts,images,strategy,risks,engine=request.engine)
+            s.draft=await asyncio.to_thread(compose_draft,task,facts,images,strategy,risks,engine=request.engine,model=request.model)
             report=audit_current(s.draft)
             fallback_note=''
             if request.engine=='llm' and not report['passed']:

@@ -116,3 +116,13 @@ def test_task_does_not_fabricate_success(monkeypatch):
 
 def test_api_not_cached():
     assert client.get('/api/v1/readiness').headers['cache-control'] == 'no-store'
+
+
+def test_models_endpoint_returns_names_without_keys(monkeypatch):
+    monkeypatch.setenv('LLM_MODEL', 'qwen-plus')
+    monkeypatch.setenv('LLM_ALLOWED_MODELS', 'qwen-plus,qwen-max')
+    monkeypatch.setenv('LLM_API_KEY', 'must-not-leak')
+    data = client.get('/api/v1/models').json()
+    assert data['default'] == 'qwen-plus'
+    assert 'qwen-max' in data['text']
+    assert 'must-not-leak' not in str(data)

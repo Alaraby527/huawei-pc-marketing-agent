@@ -105,7 +105,8 @@ docker run --rm -p 7860:7860 \
 | `IMA_NODE_BIN` | 否 | Node 绝对路径；PATH 中已有 `node` 时不需要 |
 | `LLM_BASE_URL` | 否 | OpenAI 兼容服务地址，必须 HTTPS（本机地址可用 HTTP） |
 | `LLM_API_KEY` | 否 | 模型密钥；规则引擎不需要 |
-| `LLM_MODEL` | 否 | 文本模型名称 |
+| `LLM_MODEL` | 否 | 文本模型名称；也是模型选择的默认值 |
+| `LLM_ALLOWED_MODELS` | 否 | 逗号分隔的可选模型白名单；UI 只能选择这里列出的模型 |
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` | 否 | 超时与输出上限，自动限制在安全范围 |
 | `ENABLE_AI_COVER` | 否 | `1` 才启用 AI 氛围封面；只生成背景，不生成产品外观 |
 | `LLM_IMAGE_MODEL` | 否 | 生图模型；DashScope 默认 `wanx2.1-t2i-turbo` |
@@ -191,7 +192,7 @@ AI 封面氛围图示例（只做背景，不是产品实拍）：
 - 文本：DashScope `qwen-plus` 生成六页方案，引用事实 ID，规则扫描通过。
 - 人工确认：产品选择 + 成稿确认两道门；确认后导出四段式 Markdown（含六页方案）返回 200。
 - 生图：DashScope `wanx2.1-t2i-turbo` 原生异步接口返回 768×1024 PNG，用于封面氛围背景。
-- 测试：111 个用例通过；CI 在 GitHub Actions 上通过；容器镜像启动后 `/healthz` 冒烟测试通过。
+- 测试：112 个用例通过；CI 在 GitHub Actions 上通过；容器镜像启动后 `/healthz` 冒烟测试通过。
 
 ## 团队分工
 
@@ -208,7 +209,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-当前 111 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、六页事实引用、本地官方库 ZIP 适配、小红书 MCP 映射、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
+当前 112 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、六页事实引用、本地官方库 ZIP 适配、小红书 MCP 映射、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
 
 ## 部署说明
 

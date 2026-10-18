@@ -7,6 +7,9 @@
 - **Xiaohongshu QR login**: the main workbench can show a QR from an internal Xiaohongshu MCP, let the user scan/authorize, and then load real note titles/links/metrics as hotspot leads.
 - **Cross-platform fallback**: rednote → Weibo → editorial angles; every source is labelled and never presented as Xiaohongshu real-time data unless it is.
 - **Single user entry**: the MCP is an internal service; the main app remains the only platform users open.
+- **WorkBuddy-style requirement wizard**: one question at a time, click an option to advance, progress indicator, optional hotspot selection in the objective step.
+- **Tool/skill trace**: assistant messages and the running state show `skill · 需求解析`, `tool · 官方知识库`, `skill · 候选核验`, `skill · 六页方案`, `skill · 合规扫描`, `gate · 人工确认`.
+- **Model selector**: topbar model dropdown backed by a server-side allowlist (`LLM_ALLOWED_MODELS`); no API keys are exposed to the browser.
 
 ## 0.6.0 — 2026-10-18
 
