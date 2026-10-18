@@ -316,6 +316,21 @@ def test_finite_budget_selection_blocks_and_isolates_sessions(mocked):
     asyncio.run(run())
 
 
+def test_unverified_price_can_generate_conditional_draft_without_price(mocked):
+    async def run():
+        service=ConversationService(Fake)
+        r=await service.turn(Turn(message='大学生，预算6000以内，主要用来写论文',action='skip_preferences'))
+        sid=r['session_id']
+        r=await service.turn(Turn(session_id=sid,message='选1'))
+        assert r['status']=='pending_verification'
+        r=await service.turn(Turn(session_id=sid,message='继续生成型号级附条件稿，不写价格'))
+        assert r['status']=='needs_input'
+        r=await service.turn(Turn(session_id=sid,message='到店体验'))
+        assert r['status']=='draft_ready' and r['draft']['pages']
+        assert '价格' not in r['draft']['body'] or '以门店' in r['draft']['body']
+    asyncio.run(run())
+
+
 def test_scope_cannot_switch_on_refresh(mocked,monkeypatch):
     async def run():
         service=ConversationService(Fake)

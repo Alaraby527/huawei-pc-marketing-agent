@@ -65,6 +65,7 @@ class Session:
     last_questions: list = field(default_factory=list)
     candidates: list = field(default_factory=list)
     selected: dict | None = None
+    price_conditional: bool = False
     catalog: object = None
     catalog_time: float = 0
     history: list = field(default_factory=list)
@@ -377,7 +378,7 @@ class ConversationService:
         changed=any(old[key]!=new_slots[key] for key in selection_fields)
         old_selected=s.selected
         if changed:
-            s.selected=None; s.candidates=[]
+            s.selected=None; s.candidates=[]; s.price_conditional=False
             if old['audience']!=s.slots.audience or old['scenario']!=s.slots.scenario: s.catalog=None
         missing=[ask(key) for key in CORE_QUESTIONS if not getattr(s.slots,key)]
         if missing:
@@ -414,6 +415,8 @@ class ConversationService:
             if not selected:
                 self.invalidate_draft(s)
                 return self.response(s,'needs_input',message='该候选不在本轮有效范围，请重新选择。',rejected=rejected)
+            if not old_selected or old_selected.get('candidate_id')!=candidate_id:
+                s.price_conditional=False
             s.selected=selected.copy()
         if s.selected:
             current=next((c for c in candidates if c['candidate_id']==s.selected['candidate_id']),None)
@@ -430,15 +433,33 @@ class ConversationService:
                                for i,c in enumerate(candidates,1)]
             return self.response(s,'candidates',[{'field':'candidate_id','question':'请确认候选编号，如“选1”。未核实价格或软件适配的候选会明确标为待核实，不能承诺适合购买。','options':candidate_options}],
                 '以下按场景相关规格与偏好排序。仅展示本库有完整规格原文的型号，可能不足三款；未确认销售SKU时，只能制作附条件的型号介绍。',issues=catalog.issues,rejected=rejected)
-        if s.selected['unknowns']:
-            questions=[]
-            if s.slots.budget.approximate: questions.append({'field':'budget','question':'请明确可接受的最高预算，例如“预算6000以内”。'})
-            if s.selected['current_price'] is None and not s.slots.budget.unlimited:
-                for key,q in [('region','客户购买地区是什么？'),('channel','实际购买渠道是什么？')]:
-                    if not getattr(s.slots,key): questions.append({'field':key,'question':q})
-            self.invalidate_draft(s)
-            return self.response(s,'pending_verification',questions[:2],
-                '已记录意向型号，但以下硬性条件尚未证实，不能交给下游当作推荐成立。请补充同库核验资料后刷新。',issues=s.selected['unknowns'],rejected=rejected)
+        if s.selected['unknowns'] and not s.price_conditional:
+            price_only = all(any(word in issue for word in ('价格', '预算', '销售SKU', '渠道', '地区'))
+                             for issue in s.selected['unknowns'])
+            if price_only and re.search(r'附条件|不写价格|继续生成', text):
+                s.price_conditional=True
+            elif price_only and re.search(r'换一个|重新选', text):
+                s.selected=None
+                candidate_options=[{'label':f'{i}. {c["model_name"]}','message':f'选{i}'}
+                                   for i,c in enumerate(candidates,1)]
+                self.invalidate_draft(s)
+                return self.response(s,'candidates',[{'field':'candidate_id','question':'请重新确认候选编号。','options':candidate_options}],
+                    '已取消当前候选，请重新选择。',issues=catalog.issues,rejected=rejected)
+            elif price_only:
+                self.invalidate_draft(s)
+                return self.response(s,'pending_verification',[{
+                    'field':'price_gap',
+                    'question':'该候选的当前价格与销售SKU尚未核实。可以继续生成不写价格的型号级附条件稿，或换一个候选。',
+                    'options':[
+                        {'label':'继续生成型号级附条件稿（不写价格）','message':'继续生成型号级附条件稿，不写价格'},
+                        {'label':'换一个候选','message':'换一个候选'}]}],
+                    '价格未核实，不能声称预算内可买；但可以生成不含价格的型号级附条件介绍。',
+                    issues=s.selected['unknowns'],rejected=rejected)
+            else:
+                self.invalidate_draft(s)
+                return self.response(s,'pending_verification',[],
+                    '已记录意向型号，但以下硬性条件尚未证实，不能交给下游当作推荐成立。请补充同库核验资料后刷新。',
+                    issues=s.selected['unknowns'],rejected=rejected)
         missing=[]
         if not s.slots.platform: s.slots.platform=Platform.XIAOHONGSHU  # single-platform MVP: never ask
         if not s.slots.objective: missing.append(ask('objective',**OBJECTIVE_OPTIONS))
@@ -454,7 +475,11 @@ class ConversationService:
             return self.response(s,'needs_input',message='交接前检测到产品证据变化，请重新查看候选并确认。')
         current,_=rank_products(fresh,s.slots.model_dump(mode='json'))
         chosen=next((c for c in current if c['candidate_id']==s.selected['candidate_id']),None)
-        if not chosen or chosen['unknowns'] or chosen['configuration']!=s.selected['configuration']:
+        price_gap_only=bool(chosen) and all(
+            any(word in issue for word in ('价格', '预算', '销售SKU', '渠道', '地区'))
+            for issue in chosen['unknowns'])
+        conditional_ok=s.price_conditional and price_gap_only
+        if not chosen or (chosen['unknowns'] and not conditional_ok) or chosen['configuration']!=s.selected['configuration']:
             s.selected=None
             self.invalidate_draft(s)
             return self.response(s,'pending_verification',message='交接前价格或硬约束核验已变化，请重新确认。')
