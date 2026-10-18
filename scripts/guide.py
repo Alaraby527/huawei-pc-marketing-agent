@@ -9,7 +9,8 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from app.ima import ImaClient, ImaError
+from app.ima import ImaError
+from app.local_kb import default_client
 from app.intake import Intake
 from app.retrieval import guide, get_asset
 
@@ -32,9 +33,9 @@ async def main():
     if args.kb: os.environ['IMA_KB_NAME']=args.kb
     try:
         if args.command=='libraries':
-            result=await ImaClient().libraries()
+            result=await default_client().libraries()
         elif args.command=='connection':
-            result=await ImaClient().connect()
+            result=await default_client().connect()
         else:
             if args.command=='interactive':
                 print('输入任务，回车采用示例值。产品必须包含版本后缀；泛化型号会返回候选。')

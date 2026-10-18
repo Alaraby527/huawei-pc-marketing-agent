@@ -12,7 +12,7 @@ def check_materials(bundle: MaterialBundle) -> dict:
         blockers.append("产品身份或配置尚未确认")
     if not bundle.facts:
         blockers.append("没有可引用的产品事实")
-    usable_images = [i for i in bundle.images if i.model_verified and i.source.kind == "ima"]
+    usable_images = [i for i in bundle.images if i.model_verified and i.source.kind in ("ima", "local_official_export")]
     rule = PLATFORM_RULES[bundle.task.platform.value]
     if len(usable_images) < rule["image_min"]:
         blockers.append(f"已核实ima图片不足：{len(usable_images)}张，需要至少{rule['image_min']}张")

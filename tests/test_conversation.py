@@ -125,6 +125,12 @@ def test_negated_os_is_not_a_requirement(text):
     assert parse_message('必须用Windows',Slots(),[])['required_os']=='Windows'
 
 
+def test_scenario_phrase_is_not_software_requirement():
+    patch = parse_message('主要用途是课堂学习、写论文、上网课', Slots(), [])
+    assert patch.get('scenario')
+    assert 'required_software' not in patch
+
+
 def test_guided_questions_expose_options():
     from app.conversation import ask, DRAFT_OPTIONS
     for field in ['audience', 'budget', 'scenario', 'preferences', 'required_software']:

@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
 from app.conversation import ConversationService, Turn
+from app.local_kb import default_client
 from scripts.chat import export_result
 from scripts.guide import write_private
 
 async def main():
-    service=ConversationService(); records=[]
+    service=ConversationService(default_client); records=[]
     result=None
     for message in ['大学新生','预算不限','主要用来写论文、上网课，便携优先','选1','门店朋友圈，希望邀请到店体验']:
         result=await service.turn(Turn(session_id=result['session_id'] if result else None,message=message))

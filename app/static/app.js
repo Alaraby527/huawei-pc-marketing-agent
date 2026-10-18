@@ -16,6 +16,8 @@
   let lastCoverKey = '';
   let lastHotKey = '';
   let loadingNode = null;
+  let quickStartData = null;
+  let quickSelection = {};
 
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
   const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
@@ -97,12 +99,20 @@
     updateQuickActions(result);
     updatePublishState(result);
     updateEngineBadge(result.draft);
+    if (result.draft || (result.candidates && result.candidates.length && !result.selected)) {
+      switchTab('plan');
+    }
     if (result.slots) loadHotspots(result.slots);
   }
 
   function renderChat(result) {
     if (result.message) {
       addMessage('assistant', '<p>' + escapeHtml(result.message) + '</p>');
+    }
+    if (result.status === 'candidates' && result.candidates && result.candidates.length && !result.draft) {
+      const names = result.candidates.map((candidate, index) => (index + 1) + '. ' + candidate.model_name).join('；');
+      addMessage('assistant', '<p>已找到候选：' + escapeHtml(names) + '</p>' +
+        '<p class="hint">在右侧候选卡点击“选 N”继续；也可以直接回复“选1”。</p>');
     }
     if (result.issues && result.issues.length) {
       addMessage('assistant', '<ul class="issues">' +
@@ -116,9 +126,11 @@
     if (!usable.length) {
       optionsWrap.hidden = true;
       optionsWrap.innerHTML = '';
+      $('hotspot-box').hidden = false;
       return;
     }
     optionsWrap.hidden = false;
+    $('hotspot-box').hidden = true;
     optionsWrap.innerHTML = usable.map(question => {
       const options = question.options.map(option => {
         const slot = option.slot_updates ? ' data-slot="' + escapeHtml(JSON.stringify(option.slot_updates)) + '"' : '';
@@ -358,7 +370,7 @@
         $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
         return;
       }
-      $('hotspot-chips').innerHTML = topics.slice(0, 4).map(topic =>
+      $('hotspot-chips').innerHTML = topics.slice(0, 3).map(topic =>
         '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '">' +
         escapeHtml(topic.title) + '</button>').join('');
     } catch (error) {
@@ -373,7 +385,9 @@
       const response = await fetch('/api/v1/knowledge/connection');
       const data = await response.json();
       if (response.ok) {
-        badge.textContent = '知识库：已连接 · ' + (data.knowledge_base_name || '');
+        const name = data.knowledge_base_name || '';
+        badge.textContent = name.includes('本地官方') ? '知识库：本地官方库 v7' : '知识库：已连接 · ' + name;
+        badge.title = name;
         badge.className = 'badge ok';
       } else {
         badge.textContent = '知识库：暂不可用';
@@ -413,6 +427,58 @@
     }
   }
 
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === name));
+    document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = true; });
+    const panel = $('panel-' + name);
+    if (panel) panel.hidden = false;
+  }
+
+  async function loadQuickStart() {
+    if (sessionId || lastResult) return;
+    try {
+      const response = await fetch('/api/v1/questions');
+      if (!response.ok) return;
+      const data = await response.json();
+      quickStartData = data.core;
+      renderQuickStart();
+    } catch (error) {
+      // The normal typed flow still works when this optional panel fails.
+    }
+  }
+
+  function renderQuickStart() {
+    if (sessionId || lastResult || !quickStartData) return;
+    const labels = { audience: '客户画像', budget: '预算', scenario: '使用场景' };
+    const groups = Object.entries(quickStartData).map(([field, question]) => {
+      const options = (question.options || []).map(option =>
+        '<button type="button" class="chip" data-quick-field="' + field + '" data-quick-message="' +
+        escapeHtml(option.message) + '">' + escapeHtml(option.label) + '</button>').join('');
+      return '<div class="option-group"><div class="option-label">' + (labels[field] || field) +
+        '</div><div class="chip-row">' + options + '</div></div>';
+    }).join('');
+    optionsWrap.innerHTML = groups +
+      '<div class="quick-start-footer"><span class="hint">三项都选好后开始；也可以直接在输入框描述</span>' +
+      '<button type="button" class="btn-primary" id="quick-start-send" disabled>开始选品</button></div>';
+    optionsWrap.hidden = false;
+    $('hotspot-box').hidden = true;
+  }
+
+  function sendQuickStart() {
+    const message = ['audience', 'budget', 'scenario'].map(field => quickSelection[field]).filter(Boolean).join('，');
+    if (!message) return;
+    addMessage('operator', '<p>' + escapeHtml(message) + '</p>');
+    quickSelection = {};
+    optionsWrap.hidden = true;
+    send(message);
+  }
+
+  function updateQuickStartState() {
+    const ready = ['audience', 'budget', 'scenario'].every(field => quickSelection[field]);
+    const button = $('quick-start-send');
+    if (button) button.disabled = !ready;
+  }
+
   function populateSamplePages() {
     const wrap = $('sample-pages');
     if (!wrap) return;
@@ -447,6 +513,20 @@
   });
 
   optionsWrap.addEventListener('click', (event) => {
+    const quick = event.target.closest('button[data-quick-field]');
+    if (quick) {
+      const field = quick.dataset.quickField;
+      quickSelection[field] = quickSelection[field] === quick.dataset.quickMessage ? null : quick.dataset.quickMessage;
+      optionsWrap.querySelectorAll('button[data-quick-field="' + field + '"]').forEach(button => {
+        button.classList.toggle('active', button === quick && Boolean(quickSelection[field]));
+      });
+      updateQuickStartState();
+      return;
+    }
+    if (event.target.closest('#quick-start-send')) {
+      sendQuickStart();
+      return;
+    }
     const button = event.target.closest('button[data-message]');
     if (!button) return;
     addMessage('operator', '<p>' + escapeHtml(button.textContent) + '</p>');
@@ -496,11 +576,7 @@
   });
 
   document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item === tab));
-      document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = true; });
-      $('panel-' + tab.dataset.tab).hidden = false;
-    });
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
   });
 
   $('copy-draft').addEventListener('click', async () => {
@@ -519,6 +595,7 @@
 
   loadKnowledgeBase();
   loadHotspots(null);
+  loadQuickStart();
   populateSamplePages();
   $('engine-badge').textContent = selectedEngine === 'llm' ? '模型引擎' : '规则引擎';
 })();

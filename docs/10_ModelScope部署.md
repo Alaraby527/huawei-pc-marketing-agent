@@ -34,6 +34,15 @@ LLM_IMAGE_SIZE=768*1024
 ENABLE_AI_COVER=1
 ```
 
+使用官方知识库 ZIP 本地导出时，增加：
+
+```text
+KB_SOURCE=local
+LOCAL_KB_ZIP=/app/data/official-kb-v7.zip
+```
+
+把官方 ZIP 以 `data/official-kb-v7.zip` 放入部署源码；Dockerfile 会复制到镜像。ZIP 已被 `.gitignore` 排除，不会进入 GitHub。该模式不调用实时 ima，`competition_ready` 仍为 false。
+
 可选：
 
 ```text

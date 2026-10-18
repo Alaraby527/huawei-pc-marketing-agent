@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from app.conversation import ConversationService, Turn, DialogueError
+from app.local_kb import default_client
 from app.retrieval import get_asset
 from scripts.guide import write_private
 
@@ -59,7 +60,7 @@ async def main():
     parser.add_argument('--kb',default=os.getenv('IMA_KB_NAME','Alaraby的知识库'))
     parser.add_argument('--output',type=Path,default=ROOT/'.runtime/conversation-handoff.json')
     args=parser.parse_args(); os.environ['IMA_KB_NAME']=args.kb
-    service=ConversationService()
+    service=ConversationService(default_client)
     print('华为PC · 门店/运营前段助手（真实知识库：'+args.kb+'）')
     print('请描述客户或目标客群，可以先提供一条信息。命令：跳过、选1、刷新、导出、退出。')
     print('硬性条件缺证据时会停在待核实；历史价格不会自动当成当前报价。')

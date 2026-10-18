@@ -137,6 +137,7 @@
         "kind": {
           "enum": [
             "ima",
+            "local_official_export",
             "development"
           ],
           "title": "Kind",

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.5.0">
+<link rel="stylesheet" href="/static/style.css?v=0.6.0-3">
 </head>
 <body>
 <div class="app-shell">
@@ -22,7 +22,7 @@
         <button type="button" data-engine="rule">规则</button>
         <button type="button" data-engine="llm" class="active">模型</button>
       </div>
-      <span class="version-tag">v0.5.0</span>
+      <span class="version-tag">v0.6.0</span>
     </div>
   </header>
 
@@ -45,12 +45,12 @@
       </div>
       <div class="chat-log" id="chat-log" aria-live="polite">
         <div class="msg assistant">
-          <p>你好，我是华为 PC 营销助手。告诉我客户是谁、预算和用途，我会从 ima 知识库选品、核验证据，再生成六页小红书图文。</p>
-          <p class="hint">可以从下面的选项开始，也可以直接描述，例如：“大学新生，预算 6000 以内，主要写论文、上网课，偏好轻薄”。</p>
+          <p>你好，我是华为 PC 营销助手。告诉我客户是谁、预算和用途，我会从官方知识库选品、核验证据，再生成六页小红书图文。</p>
+          <p class="hint">可以从下面的选项开始，也可以直接描述，例如：“大学新生，预算不限，主要写论文、上网课，偏好轻薄”。</p>
         </div>
       </div>
 
-      <div class="hotspot-box">
+      <div class="hotspot-box" id="hotspot-box">
         <div class="hotspot-head">
           <span>热点灵感</span>
           <span id="hotspot-note" class="hint">加载中…</span>
@@ -95,8 +95,8 @@
           <h3>先完成需求澄清</h3>
           <p>补齐画像、预算和用途后，这里会出现可比较的候选型号；确认型号后生成图文方案。</p>
           <div class="empty-actions">
-            <button class="chip" data-example="大学新生，预算6000以内，主要写论文、上网课，偏好轻薄">用示例开始</button>
-            <button class="chip" data-example="职场办公，预算8000以内，经常出差开会，重视便携和接口">职场办公示例</button>
+            <button class="chip" data-example="大学新生，预算不限，主要写论文、上网课，偏好轻薄">用示例开始</button>
+            <button class="chip" data-example="职场办公，预算不限，经常出差开会，重视便携和接口">职场办公示例</button>
           </div>
         </div>
         <div class="candidate-board" id="candidate-board" hidden></div>
@@ -200,6 +200,6 @@
     </span>
   </footer>
 </div>
-<script src="/static/app.js?v=0.5.0" defer></script>
+<script src="/static/app.js?v=0.6.0-3" defer></script>
 </body>
 </html>

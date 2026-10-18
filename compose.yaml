@@ -8,6 +8,9 @@ services:
       IMA_OPENAPI_CLIENTID: ${IMA_OPENAPI_CLIENTID:-}
       IMA_OPENAPI_APIKEY: ${IMA_OPENAPI_APIKEY:-}
       IMA_KB_NAME: ${IMA_KB_NAME:-}
+      KB_SOURCE: ${KB_SOURCE:-ima}
+      LOCAL_KB_ZIP: ${LOCAL_KB_ZIP:-/app/data/official-kb-v7.zip}
+      LOCAL_KB_NAME: ${LOCAL_KB_NAME:-华为PC全板块深度知识库_v7（本地官方导出）}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}

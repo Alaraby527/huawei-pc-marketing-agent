@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 — 2026-10-18
+
+### Added
+
+- **Local official KB adapter**: `KB_SOURCE=local` reads the provided official knowledge base v7 ZIP directly (10 key models, scene cards, image indexes and images). It is marked `local_official_export`, not a live ima call; `competition_ready` stays false.
+- **One-click requirement builder**: the initial workbench exposes audience, budget and scenario chips; selecting all three sends one structured request.
+- **Smoother flow**: candidate-ready summary in chat, automatic switch to the plan tab, wider two-pane layout at 1280px, evidence available as a tab, shorter hotspot strip, sticky quick-start action.
+- **Local KB verification**: product facts, P8 scene cards, image index and image bytes are read from the ZIP without network; the six-page draft, compliance scan and approval work on the official data.
+
+### Changed
+
+- `MaterialBundle` accepts `local_official_export` sources in live mode.
+- Image identity skips are warnings; only insufficient usable image count blocks a handoff.
+- Docker image includes `data/`; the official ZIP is gitignored and supplied at deployment time.
+
 ## 0.5.0 — 2026-10-18
 
 ### Added

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "华为PC营销Agent · 门店导购与图文生成",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "paths": {
     "/": {
@@ -93,6 +93,22 @@
       "get": {
         "summary": "Platforms",
         "operationId": "platforms_api_v1_platforms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/questions": {
+      "get": {
+        "summary": "Questions",
+        "operationId": "questions_api_v1_questions_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -902,6 +918,7 @@
             "type": "string",
             "enum": [
               "ima",
+              "local_official_export",
               "development"
             ],
             "title": "Kind"

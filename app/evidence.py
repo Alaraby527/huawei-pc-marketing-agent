@@ -13,6 +13,7 @@ from urllib.parse import urlsplit, parse_qs
 from pydantic import Field, model_validator
 from .contracts import StrictModel, Fact, Source
 from .ima import ImaClient, ImaError, image_type, read_resource
+from .local_kb import default_client
 from .retrieval import Document, normalize, model_from_document, extract_facts, conflicts, image_matches, image_score, store_asset
 from .platforms import PLATFORM_RULES
 
@@ -138,7 +139,7 @@ def is_product_original(entry):
 
 
 async def load_catalog(profile,scenario,client=None):
-    client=client or ImaClient()
+    client=client or default_client()
     connection=await client.connect()
     # Enumerate the configured KB: even a rogue search hit cannot read another KB's media.
     entries=await client.catalog()
@@ -168,7 +169,7 @@ async def load_catalog(profile,scenario,client=None):
         if not model: continue
         if '发现卡' in text and '## 官方规格摘录' not in text and '产品事实' not in entry.get('title',''): continue
         doc=Document(entry,text,model)
-        facts,gaps=extract_facts(doc,'P-'+digest(normalize(model))[:16])
+        facts,gaps=extract_facts(doc,'P-'+digest(normalize(model))[:16],source_kind=getattr(client,'source_kind','ima'))
         if not facts: continue
         for fact in facts:
             fact.source.locator=f"{client.kb_name} / {entry.get('_path',entry['title'])} / media:{entry['media_id']} / sha256:{digest(text)} / {fact.text.partition('：')[0]}"
@@ -211,7 +212,7 @@ async def load_catalog(profile,scenario,client=None):
             continue
         entry=matches[0]; text=await client.read_text(entry)
         heading=re.search(r'^#\s+(.+)',text,re.M)
-        if not heading or name.removesuffix('.md') not in heading.group(1):
+        if not heading or (name.removesuffix('.md') not in heading.group(1) and not entry.get('_scene_verified')):
             issues.append('场景资料标题与原文不一致：'+name); continue
         scenes.append({'title':name,'locator':client.kb_name+' / '+entry.get('_path',name),
             'content_sha256':digest(text),'excerpt':text[:1200],
@@ -352,33 +353,46 @@ async def verified_images(catalog,product,platform,priorities):
         selected.append((entry,row))
     selected.sort(key=lambda pair:image_score(pair[0],priorities),reverse=True)
     images=[]
+    local=getattr(catalog.client,'source_kind',None)=='local_official_export'
     for entry,row in selected[:rule['image_max']+3]:
         try:
-            data=await catalog.client.media(entry['media_id']); info=data.get('url_info') or {}
-            if not info.get('url'): raise ImaError('图片没有读取地址')
-            body,_=await asyncio.to_thread(read_resource,info['url'],info.get('headers'),8_000_000)
-            mime=image_type(body)
-            if not mime: raise ImaError('图片签名错误，不能使用失效页或非图片资源')
-            # Original source must match actual ima bytes; filename/index alone is insufficient.
-            original,_=await asyncio.to_thread(read_resource,row['原始图片URL'],None,8_000_000)
-            if hashlib.sha256(body).digest()!=hashlib.sha256(original).digest():
-                raise ImaError('ima图片字节与索引官方原图不一致，停止使用此图')
+            if local:
+                body,mime=await catalog.client.read_media_bytes(entry)
+                if not mime: raise ImaError('图片签名错误，不能使用失效页或非图片资源')
+                method='local_official_export_index'
+                excerpt='本地官方知识库图片索引+型号目录一致；未与官网原图字节比对；'+entry['title']
+                limitations='本地官方知识库导出；未证明颜色/键盘/屏幕/SKU一致；下游不得写成所选SKU实拍或推断参数'
+            else:
+                data=await catalog.client.media(entry['media_id']); info=data.get('url_info') or {}
+                if not info.get('url'): raise ImaError('图片没有读取地址')
+                body,_=await asyncio.to_thread(read_resource,info['url'],info.get('headers'),8_000_000)
+                mime=image_type(body)
+                if not mime: raise ImaError('图片签名错误，不能使用失效页或非图片资源')
+                # Original source must match actual ima bytes; filename/index alone is insufficient.
+                original,_=await asyncio.to_thread(read_resource,row['原始图片URL'],None,8_000_000)
+                if hashlib.sha256(body).digest()!=hashlib.sha256(original).digest():
+                    raise ImaError('ima图片字节与索引官方原图不一致，停止使用此图')
+                method='same_library_index_slug_and_original_sha256'
+                excerpt='同库图片索引+本型号官方slug+官方原图与ima下载字节SHA256一致；'+entry['title']
+                limitations='未证明颜色/键盘/屏幕/SKU一致；下游不得写成所选SKU实拍或推断参数'
             token=store_asset(body,mime)
             fid='I-'+hashlib.sha256(body).hexdigest()[:16]
             if any(x['image_id']==fid for x in images): continue
             images.append({'image_id':fid,'product_id':product.product_id,'access_url':token,
                 'caption':row.get('画面说明') or entry['title'],'model_verified':True,
-                'source':{'kind':'ima','title':entry['title'],
+                'source':{'kind':getattr(catalog.client,'source_kind','ima'),'title':entry['title'],
                     'locator':row['_index_locator']+' / '+entry['title'],
-                    'excerpt':'同库图片索引+本型号官方slug+官方原图与ima下载字节SHA256一致；'+entry['title']},
-                'verification':{'method':'same_library_index_slug_and_original_sha256',
+                    'excerpt':excerpt},
+                'verification':{'method':method,
                     'sha256':hashlib.sha256(body).hexdigest(),'identity_scope':'model_only',
                     'configuration_verified':False,'original_url':row['原始图片URL'],
                     'index_sha256':row['_index_hash'],'source_date':row.get('抓取日期'),
-                    'limitations':'未证明颜色/键盘/屏幕/SKU一致；下游不得写成所选SKU实拍或推断参数'},
+                    'limitations':limitations},
                 'expires_in_seconds':1800})
             if len(images)>=rule['image_max']: break
         except ImaError as error: issues.append(entry['title']+'：'+str(error))
+    if local:
+        issues.append('图片身份按本地官方知识库索引与型号目录核对；未与官网原图字节比对')
     if len(images)<rule['image_min']:
         issues.append(f"经来源核实的不同图片只有{len(images)}张，平台需要至少{rule['image_min']}张")
     return images,issues

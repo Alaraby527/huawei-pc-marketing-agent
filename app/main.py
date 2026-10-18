@@ -13,9 +13,12 @@ from .retrieval import retrieve_materials
 from .retrieval import guide, get_asset
 from .intake import Intake
 from .ima import ImaClient, ImaError, configured
-from .conversation import Turn, service, DialogueError
+from .local_kb import default_client, kb_source, local_kb_ready
+from .conversation import Turn, service, DialogueError, ask
 from .hotspot import related_hot_terms, related_hot_topics
 from .model import image_configured, generate_cover_image, ModelError
+
+service.client_factory=default_client
 
 app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None)
 static_dir = Path(__file__).parent / "static"
@@ -78,9 +81,11 @@ async def readiness():
         "stage": "需求澄清、知识库检索、小红书图文生成、两道人工确认与合规规则扫描已接通；逐条语义核验与指定赛事共享库仍待完成",
         "configured": {
             "ima_credentials": configured(),
+            "local_kb_ready": local_kb_ready(),
             "llm_credentials": bool(os.getenv("LLM_API_KEY")),
             "llm_endpoint_and_model": bool(os.getenv("LLM_BASE_URL") and os.getenv("LLM_MODEL")),
         },
+        "knowledge_source": kb_source(),
         "integrations": {
             "retrieval": "implemented_requires_live_connection_check",
             "generation": "implemented_rule_and_llm_engine",
@@ -93,6 +98,10 @@ async def readiness():
 async def platforms():
     return PLATFORM_RULES
 
+@app.get("/api/v1/questions")
+async def questions():
+    return {"core": {key: ask(key) for key in ("audience", "budget", "scenario")}}
+
 @app.get("/api/v1/contracts/materials")
 async def materials_schema():
     return MaterialBundle.model_json_schema()
@@ -104,13 +113,13 @@ async def validate_materials(bundle: MaterialBundle):
 @app.get("/api/v1/knowledge/libraries")
 async def libraries():
     try:
-        return {"status":"ok","libraries":await ImaClient().libraries()}
+        return {"status":"ok","libraries":await default_client().libraries()}
     except ImaError as error:
         return JSONResponse(status_code=503,content={"status":"unavailable","reason":str(error)})
 
 @app.get("/api/v1/knowledge/connection")
 async def connection():
-    client=ImaClient()
+    client=default_client()
     try:
         return {"status":"ok",**await client.connect(),"trace":client.trace}
     except ImaError as error:

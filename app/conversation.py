@@ -153,7 +153,7 @@ def parse_message(message,slots,last_questions):
     software=[]
     for c in clauses:
         if re.search(r'不(?:需要|用|要)|无需|不要|不用',c): continue
-        if re.search(r'必用|必须用|需要运行|需要用|要用(?!来)|常用软件|软件要求|必须连接|外设要求',c):
+        if re.search(r'必用|必须用|需要运行|需要用|(?<!主)要用(?!来)|常用软件|软件要求|必须连接|外设要求',c):
             software.append(c.strip()[:150])
     if software: patch['required_software']=list(dict.fromkeys(slots.required_software+software))[:12]
     for c in clauses:
@@ -542,14 +542,22 @@ class ConversationService:
                   hotspot=s.slots.hotspot)
         context=strategy(task)
         images,image_issues=await verified_images(catalog,product,task.platform.value,context['fact_priority_sections'])
-        blocking=list(product.issues)+image_issues
+        # Individual image identity skips are warnings; only insufficient usable
+        # images should block the handoff.
+        image_blockers=[issue for issue in image_issues if '不同图片只有' in issue or '至少' in issue]
+        blocking=list(product.issues)+image_blockers
         status='ready' if not blocking else 'unavailable'
         risks=input_risks(task)
-        issues=list(catalog.issues)+blocking
+        issues=list(catalog.issues)+list(product.issues)+list(image_issues)
         if not candidate['current_price']: issues.append('未交付当前价格或销售SKU；不得推断不同容量/屏幕/键盘组合')
         issues.append('活动、补贴、赠品与库存未核验，全部不交付；不得从历史价格卡或用户输入补写')
         issues.append('图片只证明型号级来源；颜色、屏幕与键盘未证明匹配特定SKU，不得标为配置实拍')
-        if not catalog.connection.get('official_library'): issues.append('个人库联调：尚未满足赛事指定共享知识库要求')
+        connection=catalog.connection
+        if not connection.get('official_library'):
+            if connection.get('source_kind')=='local_official_export':
+                issues.append('本地官方知识库 v7 导出：不是实时ima调用，赛事指定库要求仍不算满足')
+            else:
+                issues.append('个人库联调：尚未满足赛事指定共享知识库要求')
         bundle=MaterialBundle(request_id='task-'+secrets.token_hex(10),data_mode='live',status=status,task=task,
             product=Product(product_id=product.product_id,model_name=product.model,configuration=candidate['configuration'],confirmed=True),
             facts=product.facts,images=[ImageAsset.model_validate({k:v for k,v in i.items() if k not in ['verification','expires_in_seconds']}) for i in images],issues=issues)
@@ -566,6 +574,7 @@ class ConversationService:
                              'historical_sources_excluded':product.history},
             'data_state':{'read_at':read_at,'catalog_read_at':catalog.read_at,'status':status,
                 'can_generate':status=='ready','can_publish':False,'competition_ready':status=='ready' and catalog.connection.get('official_library',False),
+                'knowledge_source':catalog.connection.get('source_kind','ima'),
                 'reasons':issues,'knowledge_base':s.kb_name,'scope_sha256':catalog.scope_hash,
                 'evidence_sha256':self.fingerprint(catalog,product.product_id),'image_address_ttl_seconds':1800,
                 'refresh_policy':'开始生成前检查状态与有效期；再次发布前重新核验；读库时间不代表资料更新时间'},

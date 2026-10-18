@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .contracts import Task, MaterialBundle, Product, Fact, Source, ImageAsset
 from .ima import ImaClient, ImaError, OFFICIAL_KB, read_resource, image_type
+from .local_kb import default_client
 from .intake import Intake, strategy
 from .platforms import PLATFORM_RULES
 
@@ -56,7 +57,7 @@ class Document:
         return aliases if len(aliases)==1 else set()
 
 
-def extract_facts(doc, product_id):
+def extract_facts(doc, product_id, source_kind='ima'):
     """Keep whole specification sections and footnotes, never split a qualifier away."""
     prefix = doc.text.split('\n## ',1)[0]
     conditions = '；'.join(line.strip('> ').strip() for line in prefix.splitlines() if line.startswith('>'))
@@ -77,7 +78,7 @@ def extract_facts(doc, product_id):
         fingerprint = hashlib.sha256((doc.entry['media_id']+heading+content).encode()).hexdigest()[:14]
         facts.append(Fact(fact_id='F-'+fingerprint, product_id=product_id,
             text=heading+'：\n'+content, conditions=conditions,
-            source=Source(kind='ima', title=doc.entry.get('title') or doc.model,
+            source=Source(kind=source_kind, title=doc.entry.get('title') or doc.model,
                           locator=doc.model+' / '+heading+' / evidence-'+fingerprint,
                           excerpt=excerpt)))
     return facts, issues
@@ -151,7 +152,7 @@ def input_risks(task):
 
 
 async def _prepare_materials(task: Task, client=None):
-    client = client or ImaClient()
+    client = client or default_client()
     started = datetime.now(timezone.utc).isoformat()
     request_id = 'guide-'+secrets.token_hex(10)
     issues=[]
@@ -218,7 +219,7 @@ async def _prepare_materials(task: Task, client=None):
             configuration='型号级规格，非单一销售SKU；屏幕/键盘/内存/存储分支见各事实条件，不推断组合')
         facts=[]
         for doc in matched:
-            extracted,gaps=extract_facts(doc,pid); facts.extend(extracted); issues.extend(gaps)
+            extracted,gaps=extract_facts(doc,pid,source_kind=getattr(client,'source_kind','ima')); facts.extend(extracted); issues.extend(gaps)
         problems=conflicts(facts)
         if problems:
             issues.extend(problems)
@@ -238,23 +239,30 @@ async def _prepare_materials(task: Task, client=None):
         candidates.sort(key=lambda x:image_score(x,priorities),reverse=True)
         images=[]
         rule=PLATFORM_RULES[task.platform.value]
+        source_kind=getattr(client,'source_kind','ima')
         for entry in candidates[:rule['image_max']+3]:
             try:
-                media=await client.media(entry['media_id']); info=media.get('url_info') or {}
-                if not info.get('url'): raise ImaError('图片没有可读链接')
-                body,_=await asyncio.to_thread(read_resource,info['url'],info.get('headers'),8_000_000)
-                mime=image_type(body)
-                if not mime: raise ImaError('图片实际签名不是PNG/JPEG/WebP')
+                if hasattr(client,'read_media_bytes'):
+                    body,mime=await client.read_media_bytes(entry)
+                    if not mime: raise ImaError('图片实际签名不是PNG/JPEG/WebP')
+                    excerpt='本地官方知识库图片索引与型号目录一致；未与官网原图字节比对：'+entry['title']
+                else:
+                    media=await client.media(entry['media_id']); info=media.get('url_info') or {}
+                    if not info.get('url'): raise ImaError('图片没有可读链接')
+                    body,_=await asyncio.to_thread(read_resource,info['url'],info.get('headers'),8_000_000)
+                    mime=image_type(body)
+                    if not mime: raise ImaError('图片实际签名不是PNG/JPEG/WebP')
+                    excerpt='ima文件名与产品原文官方URL型号slug严格一致：'+entry['title']
                 url=store_asset(body,mime)
                 fid=hashlib.sha256(entry['media_id'].encode()).hexdigest()[:14]
                 images.append(ImageAsset(image_id='I-'+fid,product_id=pid,access_url=url,
                     caption=entry['title'],model_verified=True,
-                    source=Source(kind='ima',title=entry['title'],locator=model+' / image-'+fid,
-                        excerpt='ima文件名与产品原文官方URL型号slug严格一致：'+entry['title'])))
+                    source=Source(kind=source_kind,title=entry['title'],locator=model+' / image-'+fid,
+                        excerpt=excerpt)))
                 if len(images)>=rule['image_max']: break
             except ImaError as error:
                 issues.append('图片读取失败：'+str(error))
-        issues.append('图片身份按ima文件名与规格原文slug核对，未做像素级外观/颜色/SKU鉴定；参数不得由图片推断')
+        issues.append(('本地官方知识库' if source_kind!='ima' else 'ima')+'图片身份按文件名与规格原文slug核对，未做像素级外观/颜色/SKU鉴定；参数不得由图片推断')
         issues.append('图片地址为当前服务30分钟临时读取地址；跨机器须加服务基址，失效或重启后重新检索')
         if len(images)<rule['image_min']:
             issues.append(f"平台至少需要{rule['image_min']}张已核实图片，当前{len(images)}张")
@@ -272,7 +280,7 @@ async def _prepare_materials(task: Task, client=None):
 
 
 async def prepare_materials(task: Task, client=None):
-    client=client or ImaClient()
+    client=client or default_client()
     try:
         return await asyncio.wait_for(_prepare_materials(task,client),timeout=150)
     except asyncio.TimeoutError:

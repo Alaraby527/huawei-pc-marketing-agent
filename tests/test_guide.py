@@ -224,7 +224,8 @@ def test_repeated_pagination_cursor_fails_instead_of_silent_truncation():
 
 
 def test_http_guide_and_connection_use_real_adapter_boundary(monkeypatch):
-    monkeypatch.setattr('app.retrieval.ImaClient',FakeIma)
+    monkeypatch.setattr('app.retrieval.default_client',lambda:FakeIma())
+    monkeypatch.setattr('app.main.default_client',lambda:FakeIma())
     client=TestClient(app)
     response=client.post('/api/v1/guide',json=VALUES)
     assert response.status_code==200 and response.json()['status']=='ready'

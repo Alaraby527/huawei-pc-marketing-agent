@@ -25,7 +25,7 @@ class Task(StrictModel):
     hotspot: str = Field(default="", max_length=300)
 
 class Source(StrictModel):
-    kind: Literal["ima", "development"]
+    kind: Literal["ima", "local_official_export", "development"]
     title: str = Field(min_length=1, max_length=500)
     locator: str = Field(min_length=1, max_length=1500)
     excerpt: str = Field(min_length=1, max_length=4000)
@@ -75,6 +75,7 @@ class MaterialBundle(StrictModel):
                 raise ValueError("资料必须关联产品身份")
             if any(x.product_id != self.product.product_id for x in [*self.facts, *self.images]):
                 raise ValueError("资料中存在与任务产品不一致的事实或图片")
-        if self.data_mode == "live" and any(x.source.kind != "ima" for x in [*self.facts, *self.images]):
-            raise ValueError("真实模式的事实与图片必须声明ima来源；实际来源还需检索适配器验证")
+        if self.data_mode == "live" and any(
+                x.source.kind not in ("ima", "local_official_export") for x in [*self.facts, *self.images]):
+            raise ValueError("真实模式的事实与图片必须声明ima或local_official_export来源；实际来源还需检索适配器验证")
         return self
