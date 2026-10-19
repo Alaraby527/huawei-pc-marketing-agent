@@ -4,22 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.7.0-1">
+<link rel="stylesheet" href="/static/style.css?v=0.8.0-1">
 </head>
 <body>
 <div class="app-shell">
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">HUAWEI</span>
-      <div class="brand-text">
-        <strong>PC 营销工作台</strong>
-        <span class="brand-sub">Marketing Agent</span>
+    <div class="topbar-left">
+      <button type="button" class="icon-btn" id="sidebar-toggle" title="任务与热点" aria-label="任务与热点">☰</button>
+      <div class="brand">
+        <span class="brand-mark">HUAWEI</span>
+        <div class="brand-text">
+          <strong>PC 营销工作台</strong>
+          <span class="brand-sub">Marketing Agent</span>
+        </div>
       </div>
     </div>
     <div class="topbar-right">
       <span class="badge" id="kb-badge">知识库：检测中…</span>
       <button type="button" class="chip xhs-login" id="xhs-login">连接小红书</button>
-      <span class="version-tag">v0.7.0</span>
+      <button type="button" class="icon-btn" id="work-toggle" title="展开或收起工作栏" aria-label="展开或收起工作栏">▤</button>
+      <span class="version-tag">v0.8.0</span>
     </div>
   </header>
 
@@ -31,65 +35,100 @@
     <div class="step" data-step="5"><span class="step-index">05</span><span class="step-label">导出交付</span></div>
   </nav>
 
-  <main class="workspace">
-    <section class="pane chat-pane" aria-label="对话">
-      <div class="pane-head">
-        <div>
-          <h2 class="pane-title">对话</h2>
-          <p class="pane-sub">先问清需求，再动配置</p>
-        </div>
-        <span class="engine-badge" id="engine-badge">规则引擎</span>
+  <div class="body-row">
+    <aside class="sidebar" id="sidebar" aria-label="任务与热点">
+      <div class="side-top">
+        <button type="button" class="side-primary" id="new-task"><span class="side-ico">＋</span><span>新建任务</span><kbd>⌘N</kbd></button>
+        <button type="button" class="side-item" id="hot-search"><span class="side-ico">⌕</span><span>热点搜索</span><kbd>⌘K</kbd></button>
+        <button type="button" class="side-item" id="automation-btn"><span class="side-ico">◎</span><span>自动化</span></button>
+        <button type="button" class="side-item" id="plugins-btn"><span class="side-ico">▦</span><span>插件市场</span></button>
       </div>
-      <div class="chat-log" id="chat-log" aria-live="polite">
-        <div class="msg assistant">
-          <p>你好，我是华为 PC 营销助手。直接说说这次要写给谁、解决什么问题，我会先理解需求，再缺什么问什么。</p>
-          <p class="hint">例如：“给大学新生写一篇小红书，预算不限，主要上课和写论文。”也可以先随便描述，不用一次说全。</p>
-        </div>
+      <div class="side-group">
+        <div class="side-group-title">任务</div>
+        <div class="task-list" id="task-list"><p class="hint">暂无任务</p></div>
       </div>
+    </aside>
 
-      <div class="options-wrap" id="options-wrap" hidden></div>
-
-      <form class="composer" id="composer">
-        <div class="composer-box">
-          <textarea id="input" rows="2" placeholder="今天帮你做些什么？ @添加上下文，/调用技能与指令" required></textarea>
-          <div class="composer-bar">
-            <div class="composer-left">
-              <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
-              <span class="context-pill"><span class="status-dot"></span>官方知识库</span>
-            </div>
-            <div class="composer-right">
-              <label class="model-pick" title="选择生成模型">
-                <span class="model-dot" aria-hidden="true"></span>
-                <select id="model-select" aria-label="模型选择"></select>
-              </label>
-              <button type="submit" id="send" class="send-btn" aria-label="发送" disabled>
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
+    <main class="main-area">
+      <section class="pane chat-pane" id="chat-view" aria-label="对话">
+        <div class="pane-head">
+          <div>
+            <h2 class="pane-title">对话</h2>
+            <p class="pane-sub">先问清需求，再动配置</p>
+          </div>
+          <span class="engine-badge" id="engine-badge">规则引擎</span>
+        </div>
+        <div class="chat-log" id="chat-log" aria-live="polite">
+          <div class="msg assistant">
+            <p>你好，我是华为 PC 营销助手。直接说说这次要写给谁、解决什么问题，我会先理解需求，再缺什么问什么。</p>
+            <p class="hint">例如：“给大学新生写一篇小红书，预算不限，主要上课和写论文。”也可以先随便描述，不用一次说全。</p>
           </div>
         </div>
-      </form>
-      <div class="ctx-menu" id="ctx-menu" hidden>
-        <button type="button" data-ctx="kb"><strong>官方知识库</strong><span>已连接 · 只读检索产品事实</span></button>
-        <button type="button" data-ctx="hot"><strong>小红书热点</strong><span>连接后可读取实时笔记</span></button>
-      </div>
-      <div class="hotspot-box" id="hotspot-box" hidden>
-        <div class="hotspot-head">
-          <span>热点灵感</span>
-          <span id="hotspot-note" class="hint">加载中…</span>
-        </div>
-        <div class="chip-row" id="hotspot-chips"></div>
-      </div>
-      <div class="quick-actions" id="quick-actions" hidden>
-        <button type="button" data-action="通过">通过，可以发布</button>
-        <button type="button" data-action="再短一点">再短一点</button>
-        <button type="button" data-action="换一版">换一版</button>
-        <button type="button" data-action="刷新">刷新材料</button>
-      </div>
-    </section>
 
-    <section class="pane canvas-pane" aria-label="工作区">
-      <div class="canvas-toolbar">
+        <div class="options-wrap" id="options-wrap" hidden></div>
+
+        <form class="composer" id="composer">
+          <div class="composer-box">
+            <textarea id="input" rows="2" placeholder="今天帮你做些什么？ @添加上下文，/调用技能与指令" required></textarea>
+            <div class="composer-bar">
+              <div class="composer-left">
+                <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
+                <span class="context-pill"><span class="status-dot"></span>官方知识库</span>
+              </div>
+              <div class="composer-right">
+                <label class="model-pick" title="选择生成模型">
+                  <span class="model-dot" aria-hidden="true"></span>
+                  <select id="model-select" aria-label="模型选择"></select>
+                </label>
+                <button type="submit" id="send" class="send-btn" aria-label="发送" disabled>
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+        <div class="ctx-menu" id="ctx-menu" hidden>
+          <button type="button" data-ctx="kb"><strong>官方知识库</strong><span>已连接 · 只读检索产品事实</span></button>
+          <button type="button" data-ctx="hot"><strong>热点搜索</strong><span>打开小红书热点榜单并带入对话</span></button>
+        </div>
+        <div class="quick-actions" id="quick-actions" hidden>
+          <button type="button" data-action="通过">通过，可以发布</button>
+          <button type="button" data-action="再短一点">再短一点</button>
+          <button type="button" data-action="换一版">换一版</button>
+          <button type="button" data-action="刷新">刷新材料</button>
+        </div>
+      </section>
+
+      <section class="hot-view" id="hot-view" hidden aria-label="热点搜索">
+        <div class="hot-head">
+          <div>
+            <h2>热点搜索</h2>
+            <p class="hint" id="hot-source-note">正在加载小红书热点…</p>
+          </div>
+          <div class="hot-actions">
+            <button type="button" class="btn-secondary" id="hot-refresh">刷新</button>
+            <button type="button" class="btn-secondary" id="hot-connect">连接小红书</button>
+            <button type="button" class="btn-secondary" id="hot-back">返回对话</button>
+          </div>
+        </div>
+        <div class="hot-body">
+          <div class="hot-list" id="hot-list"></div>
+          <aside class="hot-detail" id="hot-detail">
+            <div class="empty-state">
+              <div class="empty-icon">🔥</div>
+              <h3>选择一个热点</h3>
+              <p>点左侧热点查看详情，或直接“使用热点”带入对话框。</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <aside class="work-panel" id="work-panel" aria-label="工作栏">
+        <div class="work-head">
+          <span class="work-title">工作栏</span>
+          <button type="button" class="icon-btn" id="work-close" title="收起工作栏" aria-label="收起工作栏">×</button>
+        </div>
+        <div class="canvas-toolbar">
         <div class="tabs" role="tablist">
           <button class="tab active" data-tab="plan" role="tab">图文方案</button>
           <button class="tab" data-tab="pages" role="tab">六页图文</button>
@@ -195,23 +234,18 @@
           <figcaption>AI 封面氛围图示例：只做背景，不是产品实拍</figcaption>
         </figure>
       </div>
-    </section>
+      </aside>
 
-    <aside class="pane evidence-pane" aria-label="证据与素材">
-      <div class="pane-head">
-        <div>
-          <h2 class="pane-title">证据与素材</h2>
-          <p class="pane-sub">每个结论都要能回到来源</p>
-        </div>
+      <aside class="evidence-pane" id="evidence-pane" aria-label="证据与素材" hidden>
         <span class="count-badge" id="evidence-count">0</span>
-      </div>
-      <div class="evidence-status" id="evidence-status">
-        <p class="hint">完成选品后显示知识库状态、事实与图片。</p>
-      </div>
-      <div class="evidence-list" id="evidence-list"></div>
-      <div class="evidence-images" id="evidence-images"></div>
-    </aside>
-  </main>
+        <div class="evidence-status" id="evidence-status">
+          <p class="hint">完成选品后显示知识库状态、事实与图片。</p>
+        </div>
+        <div class="evidence-list" id="evidence-list"></div>
+        <div class="evidence-images" id="evidence-images"></div>
+      </aside>
+    </main>
+  </div>
 
   <footer class="statusbar">
     <span id="publish-state">尚未通过核验，不可发布</span>
@@ -233,6 +267,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.7.0-1" defer></script>
+<script src="/static/app.js?v=0.8.0-1" defer></script>
 </body>
 </html>

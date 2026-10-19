@@ -213,6 +213,16 @@ async def export_result(session_id: str, format: str = "text"):
                      headers={"Content-Disposition": 'attachment; filename="xiaohongshu-draft.txt"'})
 
 
+@app.get("/api/v1/conversations/{session_id}/state")
+async def conversation_state(session_id: str):
+    s = service.sessions.get(session_id)
+    if not s:
+        return JSONResponse(status_code=404, content={"message": "会话不存在或已过期，请新建任务"})
+    payload = service.response(s, 'state', s.last_questions, handoff=s.handoff_cache)
+    payload['history'] = s.history[-40:]
+    return payload
+
+
 @app.get("/api/v1/conversations/{session_id}/posters/{page}.png")
 def poster_page(session_id: str, page: int):
     s = service.sessions.get(session_id)

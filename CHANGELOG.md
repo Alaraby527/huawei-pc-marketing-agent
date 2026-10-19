@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0 — 2026-10-19
+
+### Added
+
+- **Left task sidebar**: 新建任务, 热点搜索, 自动化/插件市场 placeholders, and a recent-task list backed by `localStorage` + `GET /api/v1/conversations/{id}/state`.
+- **Hotspot search view**: a dedicated screen with the Xiaohongshu ranking (or a clearly labelled public/editorial fallback), topic detail, and two actions — 查看热点详情 / 使用热点. Using a hotspot inserts the topic title and link into the composer and returns to chat.
+- **Collapsible work panel**: the old right canvas is now a side panel that expands/collapses; the chat takes the remaining width and stays free of overlays.
+- **Keyboard shortcuts**: `⌘/Ctrl+N` for a new task, `⌘/Ctrl+K` for hotspot search.
+
+### Changed
+
+- Chat is the main area; evidence remains available as a work-panel tab and hidden DOM is kept for its renderer.
+- Toasts moved to the bottom-right so they never cover the composer.
+
 ## 0.7.0 — 2026-10-18
 
 ### Added

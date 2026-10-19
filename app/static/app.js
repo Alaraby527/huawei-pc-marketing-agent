@@ -19,6 +19,8 @@
   let lastQuestions = [];
   let loadingNode = null;
   let currentHotTopics = [];
+  let hotTopics = [];
+  let selectedHotIndex = -1;
   let wizardHotspot = null;
   let optionsRenderedAt = 0;
   let xhsPollTimer = null;
@@ -29,6 +31,10 @@
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
   const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
   const FIELD_NAMES = { audience: '客户画像', budget: '预算', scenario: '使用场景', preferences: '偏好', required_software: '必用软件 / 系统', objective: '内容目标' };
+  const TASKS_KEY = 'huawei-agent-tasks-v1';
+  const WORK_PANEL_KEY = 'huawei-agent-work-panel';
+  const WELCOME_HTML = chatLog.innerHTML;
+  let lastUserText = '';
 
   function escapeHtml(text) {
     const div = document.createElement('div');
@@ -51,6 +57,118 @@
     node.textContent = text;
     document.body.appendChild(node);
     setTimeout(() => node.remove(), 2600);
+  }
+
+  function readTasks() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(TASKS_KEY) || '[]');
+      return Array.isArray(stored) ? stored : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function writeTasks(tasks) {
+    try {
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks.slice(0, 20)));
+    } catch (error) {
+      // Task history is a convenience; the chat still works without storage.
+    }
+  }
+
+  function relativeTime(value) {
+    const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
+    if (seconds < 60) return '刚刚';
+    if (seconds < 3600) return Math.round(seconds / 60) + ' 分钟前';
+    if (seconds < 86400) return Math.round(seconds / 3600) + ' 小时前';
+    return Math.round(seconds / 86400) + ' 天前';
+  }
+
+  function saveTask() {
+    if (!sessionId) return;
+    const existing = readTasks().find(task => task.id === sessionId);
+    const title = (lastUserText || (existing && existing.title) || '新任务')
+      .replace(/\s+/g, ' ').slice(0, 22) || '新任务';
+    const tasks = readTasks().filter(task => task.id !== sessionId);
+    tasks.unshift({ id: sessionId, title, updated: Date.now() });
+    writeTasks(tasks);
+    renderTasks();
+  }
+
+  function renderTasks() {
+    const wrap = $('task-list');
+    const tasks = readTasks();
+    if (!tasks.length) {
+      wrap.innerHTML = '<p class="hint">暂无任务</p>';
+      return;
+    }
+    wrap.innerHTML = tasks.map(task =>
+      '<button type="button" class="task-item' + (task.id === sessionId ? ' active' : '') +
+      '" data-task="' + escapeHtml(task.id) + '"><span class="task-title">' + escapeHtml(task.title) +
+      '</span><span class="task-time">' + relativeTime(task.updated) + '</span></button>').join('');
+  }
+
+  function newTask() {
+    sessionId = null;
+    lastResult = null;
+    lastUserText = '';
+    selectedHotIndex = -1;
+    chatLog.innerHTML = WELCOME_HTML;
+    optionsWrap.hidden = true;
+    optionsWrap.innerHTML = '';
+    quickActions.hidden = true;
+    $('candidate-board').hidden = true;
+    $('draft-card').hidden = true;
+    $('plan-empty').hidden = false;
+    $('cover-result').hidden = true;
+    $('publish-state').textContent = '尚未通过核验，不可发布';
+    $('publish-state').className = '';
+    renderTasks();
+    switchView('chat');
+    input.value = '';
+    sendBtn.disabled = true;
+    input.focus();
+    toast('已新建任务');
+  }
+
+  async function openTask(id) {
+    if (!id) return;
+    if (id === sessionId) {
+      switchView('chat');
+      return;
+    }
+    try {
+      const response = await fetch('/api/v1/conversations/' + encodeURIComponent(id) + '/state');
+      if (!response.ok) {
+        toast('任务已过期，请新建任务');
+        return;
+      }
+      const result = await response.json();
+      sessionId = id;
+      lastUserText = ((result.slots && result.slots.instructions) || '').split('\n')[0];
+      chatLog.innerHTML = WELCOME_HTML;
+      (result.history || []).forEach(item => {
+        if (item && item.text) {
+          addMessage(item.role === 'operator' ? 'operator' : 'assistant',
+            '<p>' + escapeHtml(item.text) + '</p>');
+        }
+      });
+      render(result);
+      switchView('chat');
+    } catch (error) {
+      toast('任务加载失败，请重试');
+    }
+  }
+
+  function setWorkPanel(open) {
+    const panel = $('work-panel');
+    panel.classList.toggle('collapsed', !open);
+    $('work-toggle').setAttribute('aria-expanded', String(open));
+    try {
+      localStorage.setItem(WORK_PANEL_KEY, open ? '1' : '0');
+    } catch (error) {
+      // Non-persistent toggle is fine.
+    }
   }
 
   function setBusy(busy) {
@@ -99,6 +217,7 @@
 
   function send(message, slotUpdates) {
     if (turnInFlight) return;
+    if (message && message.trim()) lastUserText = message.trim();
     const payload = { session_id: sessionId, message: message || '', engine: selectedEngine };
     if (selectedEngine === 'llm' && selectedModel) payload.model = selectedModel;
     if (slotUpdates) payload.slot_updates = slotUpdates;
@@ -122,6 +241,7 @@
       switchTab('plan');
     }
     if (result.slots) loadHotspots(result.slots);
+    saveTask();
   }
 
   function traceHtml(result) {
@@ -171,7 +291,6 @@
       return;
     }
     optionsWrap.hidden = false;
-    $('hotspot-box').hidden = true;
     $('ctx-menu').hidden = true;
     const title = question.field === 'candidate_id' ? '产品确认' : '需求确认';
     const options = question.options.map(option => {
@@ -475,24 +594,19 @@
   }
 
   function renderHotTopics(topics, note) {
-    currentHotTopics = (topics || []).slice(0, 3);
-    $('hotspot-note').textContent = note || '';
-    if (!currentHotTopics.length) {
-      $('hotspot-chips').innerHTML = '<span class="chip muted">暂无热点</span>';
-    } else {
-      $('hotspot-chips').innerHTML = currentHotTopics.map(topic =>
-        '<button type="button" class="chip" data-hotspot="' + escapeHtml(topic.title) + '"' +
-        (topic.url ? ' title="' + escapeHtml(topic.url) + '"' : '') + '>' +
-        escapeHtml(topic.title) + '</button>').join('');
-      const wizard = optionsWrap.querySelector('.wizard');
-      if (wizard && wizard.dataset.field === 'objective' && lastQuestions.length) {
-        renderOptions(lastQuestions);
-      }
+    hotTopics = topics || [];
+    currentHotTopics = hotTopics.slice(0, 3);
+    const noteNode = $('hot-source-note');
+    if (noteNode) noteNode.textContent = note || '';
+    if (!$('hot-view').hidden) renderHotList();
+    const wizard = optionsWrap.querySelector('.wizard');
+    if (wizard && wizard.dataset.field === 'objective' && lastQuestions.length) {
+      renderOptions(lastQuestions);
     }
   }
 
   async function loadHotspots(slots) {
-    if (xhsTopicsActive) return;
+    if (xhsTopicsActive || hotTopics.length) return;
     const scenario = (slots && slots.scenario) || '';
     const audience = (slots && slots.audience) || '';
     const key = scenario + '|' + audience;
@@ -536,21 +650,117 @@
       }
       if (!response.ok) {
         xhsTopicsActive = false;
-        renderHotTopics([], data.message || '小红书暂不可用');
-        return;
+        return loadPublicHotspots('小红书暂不可用，以下为公开热榜参考');
       }
       const topics = data.topics || [];
       if (!topics.length) {
         xhsTopicsActive = false;
-        renderHotTopics([], '小红书未返回相关笔记');
-        return;
+        return loadPublicHotspots('小红书未返回相关笔记，以下为公开热榜参考');
       }
       xhsTopicsActive = true;
       $('xhs-login').textContent = '小红书已连接';
       renderHotTopics(topics, '小红书实时笔记');
     } catch (error) {
       xhsTopicsActive = false;
-      renderHotTopics([], '小红书连接失败');
+      return loadPublicHotspots('小红书连接失败，以下为公开热榜参考');
+    }
+  }
+
+  async function loadPublicHotspots(note) {
+    const slots = (lastResult && lastResult.slots) || {};
+    try {
+      const response = await fetch('/api/v1/hotspots?scenario=' +
+        encodeURIComponent(slots.scenario || '') + '&audience=' + encodeURIComponent(slots.audience || ''));
+      const data = await response.json();
+      const sourceNote = data.data_mode === 'live' ? '小红书热榜'
+        : data.data_mode === 'live_fallback' ? '微博热榜（跨平台参考）'
+        : '编辑方向（公开热榜暂不可用）';
+      renderHotTopics(data.topics || [], (note ? note + ' · ' : '') + sourceNote);
+    } catch (error) {
+      renderHotTopics([], '热点暂不可用');
+    }
+  }
+
+  function renderHotList() {
+    const list = $('hot-list');
+    if (!hotTopics.length) {
+      list.innerHTML = '<div class="empty-state"><div class="empty-icon">🔥</div><h3>暂无热点</h3>' +
+        '<p>可以点“连接小红书”扫码授权，或稍后刷新公开热榜。</p></div>';
+      return;
+    }
+    list.innerHTML = hotTopics.map((topic, index) => {
+      const heat = topic.heat ? '热度 ' + escapeHtml(String(topic.heat)) : '';
+      const source = topic.source === 'xiaohongshu-mcp' ? '小红书' : (topic.source || '公开热榜');
+      return '<button type="button" class="hot-item' + (index === selectedHotIndex ? ' active' : '') +
+        '" data-hot-index="' + index + '">' +
+        '<span class="hot-rank">' + String(index + 1).padStart(2, '0') + '</span>' +
+        '<span class="hot-main"><strong>' + escapeHtml(topic.title) + '</strong>' +
+        '<span class="hint">' + escapeHtml(source) + (heat ? ' · ' + heat : '') + '</span></span>' +
+        '<span class="hot-arrow">›</span></button>';
+    }).join('');
+  }
+
+  function showHotDetail(index) {
+    const topic = hotTopics[index];
+    if (!topic) return;
+    selectedHotIndex = index;
+    renderHotList();
+    const detail = $('hot-detail');
+    detail.innerHTML = '<article class="hot-card">' +
+      '<span class="eyebrow">热点 ' + String(index + 1).padStart(2, '0') + '</span>' +
+      '<h3>' + escapeHtml(topic.title) + '</h3>' +
+      '<p class="hint">来源：' + escapeHtml(topic.source || '公开热榜') +
+      (topic.heat ? ' · 热度 ' + escapeHtml(String(topic.heat)) : '') + '</p>' +
+      '<div class="hot-detail-actions">' +
+      '<button type="button" class="btn-secondary" id="hot-detail-toggle">查看热点详情</button>' +
+      '<button type="button" class="btn-primary" id="hot-use">使用热点</button></div>' +
+      '<div class="hot-detail-body" id="hot-detail-body" hidden>' +
+      '<div class="evidence-kv"><span>标题</span><span>' + escapeHtml(topic.title) + '</span>' +
+      '<span>来源</span><span>' + escapeHtml(topic.source || '公开热榜') + '</span>' +
+      '<span>热度</span><span>' + escapeHtml(String(topic.heat || '未提供')) + '</span>' +
+      '<span>关系</span><span>' + escapeHtml(topic.relation || '参考') + '</span>' +
+      '<span>链接</span><span>' + (topic.url
+        ? '<a href="' + escapeHtml(topic.url) + '" target="_blank" rel="noreferrer">打开原帖 ↗</a>'
+        : '未提供') + '</span></div>' +
+      '<p class="hint">热点只是切入线索，不是产品事实；生成时仍以官方知识库为准。</p></div></article>';
+  }
+
+  function useHotTopic(index) {
+    const topic = hotTopics[index];
+    if (!topic) return;
+    const lines = ['参考热点：' + topic.title];
+    if (topic.url) lines.push('热点链接：' + topic.url);
+    lines.push('我的想法：');
+    input.value = lines.join('\n');
+    sendBtn.disabled = false;
+    switchView('chat');
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+    toast('热点已带入对话框，补充你的想法后发送');
+  }
+
+  function switchView(view) {
+    const hot = view === 'hot';
+    $('chat-view').hidden = hot;
+    $('hot-view').hidden = !hot;
+    if (hot) loadHotList();
+  }
+
+  async function loadHotList() {
+    const note = $('hot-source-note');
+    note.textContent = '正在加载小红书热点…';
+    try {
+      const status = await fetch('/api/v1/xhs/status').then(r => r.json()).catch(() => ({}));
+      if (!status.configured) {
+        return loadPublicHotspots('小红书未配置，以下为公开热榜参考');
+      }
+      if (!status.logged_in) {
+        return loadPublicHotspots('未登录小红书，以下为公开热榜参考；扫码后显示实时笔记');
+      }
+      return loadXhsTopics();
+    } catch (error) {
+      return loadPublicHotspots('热点加载失败，以下为公开热榜参考');
     }
   }
 
@@ -759,13 +969,34 @@
     form.requestSubmit();
   });
 
-  $('hotspot-chips').addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-hotspot]');
+  $('hot-list').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-hot-index]');
     if (!button) return;
-    const text = '参考热点：' + button.dataset.hotspot;
-    addMessage('operator', '<p>' + escapeHtml(text) + '</p>');
-    send(text);
+    showHotDetail(Number(button.dataset.hotIndex));
   });
+
+  $('hot-detail').addEventListener('click', (event) => {
+    if (event.target.closest('#hot-detail-toggle')) {
+      const body = $('hot-detail-body');
+      const toggle = $('hot-detail-toggle');
+      if (body) {
+        body.hidden = !body.hidden;
+        toggle.textContent = body.hidden ? '查看热点详情' : '收起热点详情';
+      }
+      return;
+    }
+    if (event.target.closest('#hot-use')) useHotTopic(selectedHotIndex);
+  });
+
+  $('hot-search').addEventListener('click', () => switchView('hot'));
+  $('hot-back').addEventListener('click', () => switchView('chat'));
+  $('hot-refresh').addEventListener('click', () => {
+    hotTopics = [];
+    currentHotTopics = [];
+    lastHotKey = '';
+    loadHotList();
+  });
+  $('hot-connect').addEventListener('click', xhsLogin);
 
   $('xhs-login').addEventListener('click', xhsLogin);
   $('xhs-close').addEventListener('click', closeXhsModal);
@@ -783,7 +1014,6 @@
 
   $('context-toggle').addEventListener('click', () => {
     $('ctx-menu').hidden = !$('ctx-menu').hidden;
-    $('hotspot-box').hidden = true;
   });
 
   $('ctx-menu').addEventListener('click', (event) => {
@@ -791,9 +1021,7 @@
     if (!button) return;
     $('ctx-menu').hidden = true;
     if (button.dataset.ctx === 'hot') {
-      $('hotspot-box').hidden = false;
-      loadHotspots(lastResult && lastResult.slots);
-      if (!currentHotTopics.length) loadXhsTopics();
+      switchView('hot');
       return;
     }
     toast('官方知识库已连接，生成时会自动检索产品事实');
@@ -828,6 +1056,42 @@
   });
 
   $('generate-cover').addEventListener('click', generateCover);
+
+  $('new-task').addEventListener('click', newTask);
+  $('task-list').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-task]');
+    if (button) openTask(button.dataset.task);
+  });
+  $('work-toggle').addEventListener('click', () => {
+    setWorkPanel($('work-panel').classList.contains('collapsed'));
+  });
+  $('work-close').addEventListener('click', () => setWorkPanel(false));
+  $('sidebar-toggle').addEventListener('click', () => {
+    document.body.classList.toggle('sidebar-open');
+  });
+  $('automation-btn').addEventListener('click', () => toast('自动化编排将在后续版本开放'));
+  $('plugins-btn').addEventListener('click', () => toast('插件市场将在后续版本开放'));
+
+  document.addEventListener('keydown', (event) => {
+    const meta = event.metaKey || event.ctrlKey;
+    if (!meta) return;
+    if (event.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      newTask();
+    } else if (event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      switchView('hot');
+    }
+  });
+
+  let workPanelOpen = true;
+  try {
+    workPanelOpen = localStorage.getItem(WORK_PANEL_KEY) !== '0';
+  } catch (error) {
+    workPanelOpen = true;
+  }
+  setWorkPanel(workPanelOpen);
+  renderTasks();
 
   loadKnowledgeBase();
   loadXhsStatus();

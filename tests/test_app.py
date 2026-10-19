@@ -126,3 +126,9 @@ def test_models_endpoint_returns_names_without_keys(monkeypatch):
     assert data['default'] == 'qwen-plus'
     assert 'qwen-max' in data['text']
     assert 'must-not-leak' not in str(data)
+
+
+def test_conversation_state_unknown_session_is_404():
+    result = client.get('/api/v1/conversations/does-not-exist/state')
+    assert result.status_code == 404
+    assert '新建任务' in result.json()['message']

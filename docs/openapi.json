@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "华为PC营销Agent · 门店导购与图文生成",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "paths": {
     "/": {
@@ -496,6 +496,43 @@
               "type": "string",
               "default": "text",
               "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{session_id}/state": {
+      "get": {
+        "summary": "Conversation State",
+        "operationId": "conversation_state_api_v1_conversations__session_id__state_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
             }
           }
         ],
