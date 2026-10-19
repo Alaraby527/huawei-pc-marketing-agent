@@ -209,6 +209,17 @@ def test_hotspot_falls_back_to_editorial_when_public_feed_is_down(monkeypatch):
     assert topics[0]['source'] == 'editorial-fallback'
 
 
+def test_hotspot_curated_mode_never_calls_public_feeds(monkeypatch):
+    from app.hotspot import related_hot_topics
+    monkeypatch.setenv('HOT_SOURCE', 'curated')
+    def explode(*args, **kwargs):
+        raise AssertionError('public feed should not be called in curated mode')
+    monkeypatch.setattr('app.hotspot._fetch', explode)
+    topics = related_hot_topics('课堂学习', '大学新生')
+    assert topics and topics[0]['data_mode'] == 'editorial_fallback'
+    assert topics[0]['source'] == 'editorial-fallback'
+
+
 def test_hotspot_uses_weibo_fallback_when_rednote_is_down(monkeypatch):
     from app.hotspot import related_hot_topics
     def fake_fetch_source(platform, limit=50):

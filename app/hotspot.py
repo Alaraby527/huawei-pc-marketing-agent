@@ -80,14 +80,23 @@ def _domain_match(title, term):
     return term in title
 
 
+def _curated(limit):
+    return [{**topic, "source": "editorial-fallback", "data_mode": "editorial_fallback",
+             "observed_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
+             "relation": "editorial", "heat": None, "url": ""}
+            for topic in CURATED_ANGLES[:limit]]
+
+
 def related_hot_topics(scenario, audience, limit=6):
     """Return loosely related topics; curated angles when public feeds are down."""
+    if (os.getenv("HOT_SOURCE") or "public").strip().lower() == "curated":
+        # Public social feeds can be rejected by a hosting gateway's content
+        # inspection; curated product angles keep the panel usable and clearly
+        # labelled as editorial rather than real-time.
+        return _curated(limit)
     topics = _fetch()
     if not topics:
-        return [{**topic, "source": "editorial-fallback", "data_mode": "editorial_fallback",
-                 "observed_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
-                 "relation": "editorial", "heat": None, "url": ""}
-                for topic in CURATED_ANGLES[:limit]]
+        return _curated(limit)
     live_mode = "live" if any(topic.get("platform") == "rednote" for topic in topics) else "live_fallback"
     terms = [w for w in re.split(r"[，、\s]+", (scenario or "") + " " + (audience or "")) if len(w) >= 2]
     domain_terms = ["笔记本", "电脑", "PC", "数码", "科技", "开学", "学生", "课堂", "学习",

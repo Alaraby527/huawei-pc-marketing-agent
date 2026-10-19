@@ -1,9 +1,37 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rednote
+      POSTGRES_PASSWORD: rednote
+      POSTGRES_DB: rednote
+    ports:
+      - "5432:5432"
+    volumes:
+      - rednote-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rednote -d rednote"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - rednote-redis:/data
+    restart: unless-stopped
+
   app:
     build: .
     image: huawei-pc-marketing-agent:local
     ports:
       - "7860:7860"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       IMA_OPENAPI_CLIENTID: ${IMA_OPENAPI_CLIENTID:-}
       IMA_OPENAPI_APIKEY: ${IMA_OPENAPI_APIKEY:-}
@@ -17,4 +45,12 @@ services:
       LLM_IMAGE_MODEL: ${LLM_IMAGE_MODEL:-wanx2.1-t2i-turbo}
       LLM_IMAGE_SIZE: ${LLM_IMAGE_SIZE:-768*1024}
       ENABLE_AI_COVER: ${ENABLE_AI_COVER:-1}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://rednote:rednote@postgres:5432/rednote}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDNOTE_DATA_DIR: ${REDNOTE_DATA_DIR:-/app/data/rednote}
+      HOT_SOURCE: ${HOT_SOURCE:-public}
     restart: unless-stopped
+
+volumes:
+  rednote-postgres:
+  rednote-redis:

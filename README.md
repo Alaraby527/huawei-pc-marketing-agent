@@ -5,7 +5,7 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.8.2（已在魔搭公开部署，个人库联调）**
+> **当前版本：v0.9.0（已在魔搭公开部署，个人库联调）**
 >
 > 已实现：左侧任务栏（新建任务 / 热点搜索 / 任务列表）、热点搜索独立视图（小红书榜单、热点详情、使用热点带入对话）、可折叠右侧工作栏、自由输入优先（先理解需求，缺什么问什么）、WorkBuddy 式逐题选项卡片、工具/技能调用轨迹、多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、输入区内模型选择与服务端白名单、**六页小红书图文方案**、**六页 1080×1440 PNG 导出**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感与内容目标步骤可选热点、HarmonyOS 风格 PC 工作台。
 >
@@ -81,11 +81,11 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ### Docker
 
 ```bash
-docker build -t huawei-pc-marketing-agent:0.8.2 .
+docker build -t huawei-pc-marketing-agent:0.9.0 .
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  huawei-pc-marketing-agent:0.8.2
+  huawei-pc-marketing-agent:0.9.0
 ```
 
 镜像以非 root 用户运行，包含 Node 运行时、健康检查和 `vendor/ima-skill` 只读调用脚本。推送到 `main` 后，GitHub Actions 会自动构建并发布 `ghcr.io/cangyuyi/huawei-pc-marketing-agent:latest`。
@@ -112,8 +112,27 @@ docker run --rm -p 7860:7860 \
 | `LLM_IMAGE_MODEL` | 否 | 生图模型；DashScope 默认 `wanx2.1-t2i-turbo` |
 | `LLM_IMAGE_SIZE` | 否 | 生图尺寸，默认 `768*1024`（3:4） |
 | `LLM_IMAGE_NATIVE_BASE` | 否 | DashScope 原生 API 基址；Base URL 含 dashscope 时自动推导 |
+| `DATABASE_URL` | 否 | 工作区持久化；Postgres 例：`postgresql+psycopg://rednote:rednote@127.0.0.1:5432/rednote`。未设置时工作区接口返回 `CAPABILITY_DISABLED`，对话链路不受影响 |
+| `REDIS_URL` | 否 | 队列/缓存预留；M1 未强制依赖 |
+| `REDNOTE_DATA_DIR` | 否 | 工作区资产目录，默认 `data` |
+| `HOT_SOURCE` | 否 | `public` 或 `curated`；托管环境建议 `curated`，避免网关内容审查拒绝社交流内容 |
 
 应用不会自动读取 `.env`；请由启动环境或平台 Secrets 注入。`.env.example` 只有占位符。
+
+## 小红书工作区（M1）
+
+左侧栏“小红书数据运营”只放发布后的数据运营与管理：发布记录、运营监控、评论待办、告警、复盘与经验。创作与审核在工作栏里完成，整条链路由“新建任务”对话驱动。当前交付 M1 主链路：
+
+**上游简报交接 → 用户选主热点 → 6 个创意方向（≥3 表达机制、≥3 视觉家族）→ 最多 3 方向样张比较 → 设计文档 → 提交审核 → 批准 → 人工发布计划 → 回填链接（待核对）。**
+
+模型可以在对话里自主调用这些模块：`POST /agent/turn` 提供工具注册表（简报、热点、方向、样张、设计、审核、发布、运营查询），有界循环并把工具轨迹返回给界面。工作栏按平台组织：平台在最上，标签页随平台变化。
+
+- 工作区 API 前缀：`/api/v1/workspaces/{workspace_id}/apps/rednote`；服务端校验 `X-Workspace-Id`，对象归属不匹配直接拒绝。
+- 持久化：`compose.yaml` 提供 Postgres 16 + Redis 7；`python -m app.db init` 建表。未配置 `DATABASE_URL` 时工作区返回 `CAPABILITY_DISABLED`，不伪造成功。
+- 编辑器：`/studio` 是同源挂载点，等快图 vue-fabric-editor 预构建产物放入 `app/static/studio/` 后加载；在此之前使用 JSON 往返 + PNG 样张导出，并明确标注。
+- 发布：连接器写发布登记为待联调；人工路径已走通（导出 → 提醒 → 回填 → “已回填，待核对”，不冒充已公开可见）。
+- 运营监控/评论/告警/复盘：M1 提供合同与空态，真实数据接入待 M3；不会用 0 或模拟数字冒充真实值。
+- 详细映射、复用卡与未完成清单见 [`docs/13_小红书工作区_M0映射与M1实施.md`](docs/13_小红书工作区_M0映射与M1实施.md)。
 
 ## 主要接口
 
@@ -222,13 +241,13 @@ python -m pytest -q
 - `container.yml`：在 `main`/版本 tag 上构建并推送 GHCR 镜像，并启动容器请求 `/healthz` 做冒烟测试。
 - `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
 
-当前镜像标签包括 `latest`、`0.8.2`、`v0.8.2` 和 `sha-<commit>`：
+当前镜像标签包括 `latest`、`0.9.0`、`v0.9.0` 和 `sha-<commit>`：
 
 ```bash
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.8.2
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.9.0
 ```
 
 要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。当前实例已按 ModelScope Docker SDK 部署在 7860 端口；重建步骤见 [`docs/10_ModelScope部署.md`](docs/10_ModelScope部署.md)。
@@ -282,4 +301,4 @@ vendor/ima-skill/  官方 ima 只读调用脚本
 
 ## License
 
-尚未添加开源许可证。若要以开源方式复用，请由仓库所有者选择 MIT / Apache-2.0 等许可证后再添加 `LICENSE`。
+Apache-2.0（见 `LICENSE`）。第三方组件的许可与版权单独登记；未引入 GPL/AGPL 代码，模板/字体只用可商用授权资源。

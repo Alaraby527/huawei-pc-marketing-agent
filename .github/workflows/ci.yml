@@ -28,6 +28,8 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q app scripts tests
       - name: Check frontend syntax
-        run: node --check app/static/app.js
+        run: |
+          node --check app/static/app.js
+          node --check app/static/workspace.js
       - name: Run tests
         run: python -m pytest -q

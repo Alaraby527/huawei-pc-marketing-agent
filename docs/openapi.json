@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "华为PC营销Agent · 门店导购与图文生成",
-    "version": "0.8.2"
+    "version": "0.9.0"
   },
   "paths": {
     "/": {
@@ -678,10 +678,1608 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/capabilities": {
+      "get": {
+        "summary": "Rednote Capabilities",
+        "operationId": "rednote_capabilities_api_v1_workspaces__workspace_id__apps_rednote_capabilities_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/brief-handoffs/consume": {
+      "post": {
+        "summary": "Rednote Consume Brief",
+        "operationId": "rednote_consume_brief_api_v1_workspaces__workspace_id__apps_rednote_brief_handoffs_consume_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BriefConsume"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/brief-snapshots/{snapshot_id}": {
+      "get": {
+        "summary": "Rednote Brief Snapshot",
+        "operationId": "rednote_brief_snapshot_api_v1_workspaces__workspace_id__apps_rednote_brief_snapshots__snapshot_id__get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/content-items/{item_id}": {
+      "get": {
+        "summary": "Rednote Content Item",
+        "operationId": "rednote_content_item_api_v1_workspaces__workspace_id__apps_rednote_content_items__item_id__get",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/trend-selections": {
+      "post": {
+        "summary": "Rednote Trend Selection",
+        "operationId": "rednote_trend_selection_api_v1_workspaces__workspace_id__apps_rednote_trend_selections_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrendSelectionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/creative-directions": {
+      "post": {
+        "summary": "Rednote Directions",
+        "operationId": "rednote_directions_api_v1_workspaces__workspace_id__apps_rednote_creative_directions_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectionsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/creative-boards": {
+      "post": {
+        "summary": "Rednote Board",
+        "operationId": "rednote_board_api_v1_workspaces__workspace_id__apps_rednote_creative_boards_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/creative-boards/{board_id}/preview": {
+      "post": {
+        "summary": "Rednote Board Preview",
+        "operationId": "rednote_board_preview_api_v1_workspaces__workspace_id__apps_rednote_creative_boards__board_id__preview_post",
+        "parameters": [
+          {
+            "name": "board_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Board Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents": {
+      "post": {
+        "summary": "Rednote Design Document",
+        "operationId": "rednote_design_document_api_v1_workspaces__workspace_id__apps_rednote_design_documents_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesignDocumentIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents/{document_id}": {
+      "patch": {
+        "summary": "Rednote Patch Design Document",
+        "operationId": "rednote_patch_design_document_api_v1_workspaces__workspace_id__apps_rednote_design_documents__document_id__patch",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesignDocumentPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/review-submissions": {
+      "post": {
+        "summary": "Rednote Review",
+        "operationId": "rednote_review_api_v1_workspaces__workspace_id__apps_rednote_review_submissions_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSubmission"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/approvals": {
+      "post": {
+        "summary": "Rednote Approve",
+        "operationId": "rednote_approve_api_v1_workspaces__workspace_id__apps_rednote_approvals_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans": {
+      "post": {
+        "summary": "Rednote Publish Plan",
+        "operationId": "rednote_publish_plan_api_v1_workspaces__workspace_id__apps_rednote_publish_plans_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishPlanIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Rednote Publish Plans",
+        "operationId": "rednote_publish_plans_api_v1_workspaces__workspace_id__apps_rednote_publish_plans_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans/{plan_id}/execute": {
+      "post": {
+        "summary": "Rednote Execute Publish",
+        "operationId": "rednote_execute_publish_api_v1_workspaces__workspace_id__apps_rednote_publish_plans__plan_id__execute_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans/{plan_id}/manual-results": {
+      "post": {
+        "summary": "Rednote Manual Result",
+        "operationId": "rednote_manual_result_api_v1_workspaces__workspace_id__apps_rednote_publish_plans__plan_id__manual_results_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualResultIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/agent/turn": {
+      "post": {
+        "summary": "Rednote Agent Turn",
+        "operationId": "rednote_agent_turn_api_v1_workspaces__workspace_id__apps_rednote_agent_turn_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTurn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/retrospectives": {
+      "get": {
+        "summary": "Rednote Retrospectives",
+        "operationId": "rednote_retrospectives_api_v1_workspaces__workspace_id__apps_rednote_retrospectives_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/analytics/overview": {
+      "get": {
+        "summary": "Rednote Overview",
+        "operationId": "rednote_overview_api_v1_workspaces__workspace_id__apps_rednote_analytics_overview_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/comments": {
+      "get": {
+        "summary": "Rednote Comments",
+        "operationId": "rednote_comments_api_v1_workspaces__workspace_id__apps_rednote_comments_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/alerts": {
+      "get": {
+        "summary": "Rednote Alerts",
+        "operationId": "rednote_alerts_api_v1_workspaces__workspace_id__apps_rednote_alerts_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/apps/rednote/assets/{asset_id}": {
+      "get": {
+        "summary": "Rednote Asset",
+        "operationId": "rednote_asset_api_v1_workspaces__workspace_id__apps_rednote_assets__asset_id__get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-actor",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local-operator",
+              "title": "X-Actor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/studio": {
+      "get": {
+        "summary": "Studio Host",
+        "description": "Same-origin host page for the vue-fabric-editor build.\n\nThe editor bundle is not committed yet; until it is built this page states\nthat plainly and points at the JSON/PNG fallback instead of faking an editor.",
+        "operationId": "studio_host_studio_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AgentTurn": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "AgentTurn"
+      },
+      "ApprovalIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Revision Id"
+          },
+          "account_ref": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Account Ref",
+            "default": ""
+          },
+          "approved_window": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Approved Window",
+            "default": ""
+          },
+          "approved_by": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Approved By",
+            "default": "local-operator"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id",
+          "revision_id"
+        ],
+        "title": "ApprovalIn"
+      },
+      "BoardIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "direction_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Direction Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id"
+        ],
+        "title": "BoardIn"
+      },
+      "BriefConsume": {
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "account_ref": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Account Ref",
+            "default": ""
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Objective",
+            "default": ""
+          },
+          "constraints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Constraints"
+          },
+          "product_model": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Product Model",
+            "default": ""
+          },
+          "product_configuration": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Product Configuration",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BriefConsume"
+      },
       "Budget": {
         "properties": {
           "minimum": {
@@ -723,6 +2321,123 @@
         "additionalProperties": false,
         "type": "object",
         "title": "Budget"
+      },
+      "DesignDocumentIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "engine": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Engine",
+            "default": "vue-fabric-editor"
+          },
+          "engine_version": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Engine Version",
+            "default": ""
+          },
+          "native_payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Native Payload"
+          },
+          "sidecar": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Sidecar"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Manifest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id"
+        ],
+        "title": "DesignDocumentIn"
+      },
+      "DesignDocumentPatch": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "native_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Payload"
+          },
+          "sidecar": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidecar"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "DesignDocumentPatch"
+      },
+      "DirectionsIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 6
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id"
+        ],
+        "title": "DirectionsIn"
       },
       "Fact": {
         "properties": {
@@ -882,6 +2597,40 @@
         "type": "object",
         "title": "Intake"
       },
+      "ManualResultIn": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Url"
+          },
+          "platform_note_id": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Platform Note Id",
+            "default": ""
+          },
+          "reported_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "ManualResultIn"
+      },
       "MaterialBundle": {
         "properties": {
           "schema_version": {
@@ -1006,6 +2755,76 @@
           "configuration"
         ],
         "title": "Product"
+      },
+      "PublishPlanIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "revision_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Revision Id"
+          },
+          "account_ref": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Account Ref",
+            "default": ""
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled At"
+          },
+          "mode": {
+            "type": "string",
+            "pattern": "^(manual|connector)$",
+            "title": "Mode",
+            "default": "manual"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id",
+          "revision_id"
+        ],
+        "title": "PublishPlanIn"
+      },
+      "ReviewSubmission": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "design_document_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Design Document Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id",
+          "design_document_id"
+        ],
+        "title": "ReviewSubmission"
       },
       "Slots": {
         "properties": {
@@ -1242,6 +3061,59 @@
           "platform"
         ],
         "title": "Task"
+      },
+      "TrendSelectionIn": {
+        "properties": {
+          "content_item_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Content Item Id"
+          },
+          "main_topic": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Main Topic"
+          },
+          "aux_topics": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Aux Topics"
+          },
+          "scenario": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Scenario",
+            "default": ""
+          },
+          "benefits": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Benefits"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Evidence Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content_item_id",
+          "main_topic"
+        ],
+        "title": "TrendSelectionIn"
       },
       "Turn": {
         "properties": {

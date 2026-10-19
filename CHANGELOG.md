@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0 — 2026-10-19
+
+### Added
+
+- **Rednote workspace module (M1)**: `/api/v1/workspaces/{id}/apps/rednote` with brief handoff, structured trend selection, six creative directions (>=3 mechanisms / >=3 visual families), up to three sample boards, native design documents, review/approval and the manual publish path.
+- **Postgres/Redis via compose**: `compose.yaml` now ships Postgres 16 and Redis 7 for local development; SQLite remains available for tests and demo.
+- **Data operations workspace**: the left-sidebar entry now holds only post-publish operations (publish records, analytics, comments, alerts, retrospectives); the creative pipeline stays in the chat and the work panel.
+- **Platform-first work panel**: platforms (小红书/公众号/朋友圈/海报) sit above the tabs, and each platform has its own tab set and generation/publish rules.
+- **Autonomous tool loop**: `POST /agent/turn` exposes the Rednote modules as tools; the model chooses tools in the chat and the tool trace is shown.
+- **Same-origin editor host**: `/studio` is reserved for the vue-fabric-editor build; until the bundle is built the page states that plainly and the JSON/PNG fallback is used.
+- **Apache-2.0 LICENSE**.
+
+### Changed
+
+- Workspace APIs are disabled with `CAPABILITY_DISABLED` when `DATABASE_URL` is unset, so the existing chat pipeline keeps working unchanged.
+
+## 0.8.3 — 2026-10-19
+
+### Added
+
+- `HOT_SOURCE=curated` mode: the public deployment returns curated product angles without calling public social feeds, because the hosting gateway can reject social hot-list responses with a content-security error. The UI keeps labelling them as editorial, never as real-time Xiaohongshu data.
+
 ## 0.8.2 — 2026-10-19
 
 ### Added

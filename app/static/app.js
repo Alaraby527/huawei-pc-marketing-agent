@@ -29,6 +29,12 @@
   const SEND_ICON = sendBtn.innerHTML;
 
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
+  const PLATFORM_TABS = {
+    xiaohongshu: [['plan', '图文方案'], ['pages', '六页图文'], ['verify', '核验结果'], ['evidence', '证据'], ['sample', '六页样稿']],
+    wechat_article: [['plan', '文章方案'], ['pages', '段落结构'], ['verify', '核验结果'], ['evidence', '证据']],
+    moments: [['plan', '短文案'], ['pages', '配图'], ['verify', '核验结果'], ['evidence', '证据']],
+    poster: [['plan', '海报方案'], ['pages', '版面'], ['verify', '核验结果'], ['evidence', '证据']],
+  };
   const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
   const FIELD_NAMES = { audience: '客户画像', budget: '预算', scenario: '使用场景', preferences: '偏好', required_software: '必用软件 / 系统', objective: '内容目标' };
   const TASKS_KEY = 'huawei-agent-tasks-v1';
@@ -215,9 +221,42 @@
     }
   }
 
+  function agentTraceHtml(trace) {
+    if (!trace || !trace.length) return '';
+    return '<div class="tool-trace">' + trace.map(step =>
+      '<span class="trace-step ' + (step.ok ? 'done' : 'warn') + '">tool · ' + escapeHtml(step.tool) +
+      ' · ' + escapeHtml(step.summary || '') + '</span>').join('') + '</div>';
+  }
+
+  async function agentTurn(message) {
+    if (turnInFlight) return;
+    turnInFlight = true;
+    setBusy(true);
+    try {
+      const response = await fetch('/api/v1/workspaces/default/apps/rednote/agent/turn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': 'default' },
+        body: JSON.stringify({ message: message, conversation_id: sessionId, model: selectedModel }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        addMessage('assistant', '<p>' + escapeHtml(data.message || 'Agent 调用失败') + '</p>');
+        return;
+      }
+      addMessage('assistant', '<p>' + escapeHtml(data.reply) + '</p>' + agentTraceHtml(data.tool_trace));
+    } catch (error) {
+      addMessage('assistant', '<p>网络错误，请稍后重试。</p>');
+    } finally {
+      turnInFlight = false;
+      setBusy(false);
+      sendBtn.disabled = !input.value.trim();
+    }
+  }
+
   function send(message, slotUpdates) {
     if (turnInFlight) return;
     if (message && message.trim()) lastUserText = message.trim();
+    if (selectedEngine === 'agent') return agentTurn(message || '');
     const payload = { session_id: sessionId, message: message || '', engine: selectedEngine };
     if (selectedEngine === 'llm' && selectedModel) payload.model = selectedModel;
     if (slotUpdates) payload.slot_updates = slotUpdates;
@@ -557,12 +596,13 @@
   function syncEngineControls() {
     const select = $('model-select');
     if (!select) return;
-    if (selectedEngine === 'llm' && selectedModel) select.value = 'llm:' + selectedModel;
+    if (selectedEngine === 'agent') select.value = 'agent';
+    else if (selectedEngine === 'llm' && selectedModel) select.value = 'llm:' + selectedModel;
     else select.value = 'rule';
     if (!lastResult || !lastResult.draft) {
-      $('engine-badge').textContent = selectedEngine === 'llm'
-        ? '模型 · ' + (selectedModel || '默认')
-        : '规则引擎';
+      $('engine-badge').textContent = selectedEngine === 'agent'
+        ? '自主 Agent'
+        : (selectedEngine === 'llm' ? '模型 · ' + (selectedModel || '默认') : '规则引擎');
     }
   }
 
@@ -573,7 +613,7 @@
       const select = $('model-select');
       const textModels = data.text || [];
       const defaultModel = data.default || textModels[0] || null;
-      select.innerHTML = textModels.map(model =>
+      select.innerHTML = '<option value="agent">自主 Agent（工具调用）</option>' + textModels.map(model =>
         '<option value="llm:' + escapeHtml(model) + '">' +
         (model === defaultModel ? '默认模型 · ' : '') + escapeHtml(model) + '</option>').join('') +
         '<option value="rule">规则引擎</option>' +
@@ -742,9 +782,12 @@
 
   function switchView(view) {
     const hot = view === 'hot';
-    $('chat-view').hidden = hot;
+    const workspace = view === 'workspace';
+    $('chat-view').hidden = hot || workspace;
     $('hot-view').hidden = !hot;
+    $('workspace-view').hidden = !workspace;
     if (hot) loadHotList();
+    if (workspace && window.WorkspaceApp) window.WorkspaceApp.open();
   }
 
   async function loadHotList() {
@@ -893,10 +936,18 @@
   }
 
   function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === name));
+    $('work-tabs').querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = true; });
     const panel = $('panel-' + name);
     if (panel) panel.hidden = false;
+  }
+
+  function renderWorkTabs(platform) {
+    const list = PLATFORM_TABS[platform] || PLATFORM_TABS.xiaohongshu;
+    $('work-tabs').innerHTML = list.map(([key, label], index) =>
+      '<button class="tab' + (index === 0 ? ' active' : '') + '" data-tab="' + key + '" role="tab">' +
+      label + '</button>').join('');
+    switchTab(list[0][0]);
   }
 
   function populateSamplePages() {
@@ -998,6 +1049,7 @@
   });
 
   $('hot-search').addEventListener('click', () => switchView('hot'));
+  $('workspace-btn').addEventListener('click', () => switchView('workspace'));
   $('hot-back').addEventListener('click', () => switchView('chat'));
   $('hot-refresh').addEventListener('click', () => {
     hotTopics = [];
@@ -1024,6 +1076,7 @@
     if (!button) return;
     selectedPlatform = button.dataset.platform;
     platformSwitch.querySelectorAll('.platform-btn').forEach(item => item.classList.toggle('active', item === button));
+    renderWorkTabs(selectedPlatform);
     send('', { platform: selectedPlatform });
   });
 
@@ -1047,6 +1100,9 @@
     if (value === 'rule') {
       selectedEngine = 'rule';
       selectedModel = null;
+    } else if (value === 'agent') {
+      selectedEngine = 'agent';
+      selectedModel = null;
     } else {
       selectedEngine = 'llm';
       selectedModel = value.slice(4);
@@ -1054,8 +1110,9 @@
     syncEngineControls();
   });
 
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  $('work-tabs').addEventListener('click', (event) => {
+    const tab = event.target.closest('button[data-tab]');
+    if (tab) switchTab(tab.dataset.tab);
   });
 
   $('copy-draft').addEventListener('click', async () => {
@@ -1106,7 +1163,10 @@
     workPanelOpen = true;
   }
   setWorkPanel(workPanelOpen);
+  renderWorkTabs(selectedPlatform);
   renderTasks();
+
+  window.AgentApp = { getSessionId: () => sessionId, getHotTopics: () => hotTopics, switchView };
 
   loadKnowledgeBase();
   loadXhsStatus();

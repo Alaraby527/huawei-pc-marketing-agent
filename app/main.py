@@ -2,8 +2,9 @@ import asyncio
 import os
 from pathlib import Path
 from fastapi import FastAPI, Request
+from fastapi import Depends, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import MaterialBundle, Task
@@ -19,8 +20,13 @@ from .hotspot import related_hot_terms, related_hot_topics
 from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
 from .model import image_configured, generate_cover_image, ModelError, allowed_models
 from .posters import pages_for, zip_bytes
+from . import db as db_layer
+from . import rednote
+from .agent import AgentTurn, run_agent
+from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
+_workspace_db_ready=False
 
 app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None)
 static_dir = Path(__file__).parent / "static"
@@ -292,3 +298,215 @@ async def generate_cover(payload: dict):
     from .retrieval import store_asset
     url = store_asset(body, mime)
     return {"status": "ok", "access_url": url, "note": "仅为背景氛围图，不代表产品实拍，不得用于证明产品外观"}
+
+
+# ---------------------------------------------------------------- Rednote workspace (M1)
+
+def rednote_scope(workspace_id: str, x_workspace_id: str = Header(default=""),
+                  x_actor: str = Header(default="local-operator")):
+    """Server-side workspace scope. Single-workspace mode today; the header is
+    validated so a client cannot silently act as another workspace."""
+    if x_workspace_id and x_workspace_id != workspace_id:
+        raise HTTPException(status_code=403, detail={"code": "WORKSPACE_ACCESS_DENIED",
+                                                     "message": "工作区不匹配"})
+    if not db_layer.configured():
+        raise HTTPException(status_code=503, detail={"code": "CAPABILITY_DISABLED",
+                                                     "message": "工作区数据库未配置；请设置 DATABASE_URL 并执行 python -m app.db init"})
+    global _workspace_db_ready
+    if not _workspace_db_ready:
+        db_layer.init_db()
+        _workspace_db_ready = True
+    ctx = WorkspaceContext(workspace_id=workspace_id, actor=x_actor)
+    session = db_layer.session_factory()()
+    try:
+        rednote.ensure_workspace(session, ctx.workspace_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        session.close()
+        raise
+    try:
+        yield ctx, session
+        session.commit()
+    except WorkspaceError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@app.exception_handler(WorkspaceError)
+async def workspace_error_handler(request: Request, error: WorkspaceError):
+    return JSONResponse(status_code=error.status, content={"code": error.code, "message": error.message})
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/capabilities")
+def rednote_capabilities(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return {
+        "workspace_id": ctx.workspace_id,
+        "database": "ready",
+        "editor": {"engine": "vue-fabric-editor", "status": os.getenv("REDNOTE_EDITOR_STATUS", "adapter_ready"),
+                   "note": "编辑器构建产物就绪后由 /studio 提供；未就绪时保留 JSON/PNG 导出"},
+        "connector": {"read": "public_sources", "write": "pending_manual_verification"},
+        "image_channel": {"dashscope": bool(image_configured()), "qwen_image_edit": "pending_configuration"},
+        "auth": {"multi_tenant": False, "rbac": "pending", "note": "M1 单工作区；登录/成员/角色待接入"},
+        "publishing": {"manual": "ready", "connector": "pending"},
+    }
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/brief-handoffs/consume")
+def rednote_consume_brief(payload: rednote.BriefConsume, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.consume_brief(session, ctx, payload)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/brief-snapshots/{snapshot_id}")
+def rednote_brief_snapshot(snapshot_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    from .models import BriefSnapshot
+    snapshot = rednote._require(session, ctx, BriefSnapshot, snapshot_id)
+    return {"id": snapshot.id, "content_hash": snapshot.content_hash, "brief": snapshot.payload}
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/content-items/{item_id}")
+def rednote_content_item(item_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    from .models import ContentItem
+    item = rednote._require(session, ctx, ContentItem, item_id)
+    return {"id": item.id, "status": item.status, "objective": item.objective,
+            "account_ref": item.account_ref, "brief_snapshot_id": item.brief_snapshot_id,
+            "product_id": item.product_id}
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/trend-selections")
+def rednote_trend_selection(payload: rednote.TrendSelectionIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.create_trend_selection(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/creative-directions")
+def rednote_directions(payload: rednote.DirectionsIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.create_creative_directions(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/creative-boards")
+def rednote_board(payload: rednote.BoardIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.create_creative_board(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/creative-boards/{board_id}/preview")
+def rednote_board_preview(board_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.style_preview(session, ctx, board_id)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents")
+def rednote_design_document(payload: rednote.DesignDocumentIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.create_design_document(session, ctx, payload)
+
+
+@app.patch("/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents/{document_id}")
+def rednote_patch_design_document(document_id: str, payload: rednote.DesignDocumentPatch,
+                                  scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.patch_design_document(session, ctx, document_id, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/review-submissions")
+def rednote_review(payload: rednote.ReviewSubmission, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.submit_review(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/approvals")
+def rednote_approve(payload: rednote.ApprovalIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.approve(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans")
+def rednote_publish_plan(payload: rednote.PublishPlanIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.create_publish_plan(session, ctx, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans/{plan_id}/execute")
+def rednote_execute_publish(plan_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.execute_publish(session, ctx, plan_id)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans/{plan_id}/manual-results")
+def rednote_manual_result(plan_id: str, payload: rednote.ManualResultIn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.manual_result(session, ctx, plan_id, payload)
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/agent/turn")
+def rednote_agent_turn(payload: AgentTurn, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return run_agent(session, ctx, payload.message, payload.conversation_id, payload.model)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/publish-plans")
+def rednote_publish_plans(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.list_publish_plans(session, ctx)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/retrospectives")
+def rednote_retrospectives(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.list_retrospectives(session, ctx)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/analytics/overview")
+def rednote_overview(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.overview(session, ctx)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/comments")
+def rednote_comments(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.list_comments(session, ctx)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/alerts")
+def rednote_alerts(scope=Depends(rednote_scope)):
+    ctx, session = scope
+    return rednote.list_alerts(session, ctx)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/assets/{asset_id}")
+def rednote_asset(asset_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    path = rednote.get_asset_path(session, ctx, asset_id)
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/studio")
+def studio_host():
+    """Same-origin host page for the vue-fabric-editor build.
+
+    The editor bundle is not committed yet; until it is built this page states
+    that plainly and points at the JSON/PNG fallback instead of faking an editor.
+    """
+    index = static_dir / "studio" / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    return HTMLResponse(
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        "<title>设计编辑器</title><link rel=\"stylesheet\" href=\"/static/style.css\"></head>"
+        "<body style=\"padding:32px;font-family:system-ui\"><h1>快图编辑器构建未就绪</h1>"
+        "<p>仓库预留了同源挂载点：把 vue-fabric-editor 的预构建产物放到 "
+        "<code>app/static/studio/</code> 后，本页会直接加载它。</p>"
+        "<p>在此之前，工作区“设计文档”提供 JSON 往返与 PNG 样张导出，不会假装编辑器已接通。</p>"
+        "<p><a href=\"/\">返回工作台</a></p></body></html>")

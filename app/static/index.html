@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.8.2-1">
+<link rel="stylesheet" href="/static/style.css?v=0.9.0-1">
 </head>
 <body>
 <div class="app-shell">
@@ -23,7 +23,7 @@
       <span class="badge" id="kb-badge">知识库：检测中…</span>
       <button type="button" class="chip xhs-login" id="xhs-login">连接小红书</button>
       <button type="button" class="icon-btn" id="work-toggle" title="展开或收起工作栏" aria-label="展开或收起工作栏">▤</button>
-      <span class="version-tag">v0.8.2</span>
+      <span class="version-tag">v0.9.0</span>
     </div>
   </header>
 
@@ -40,6 +40,7 @@
       <div class="side-top">
         <button type="button" class="side-primary" id="new-task"><span class="side-ico">＋</span><span>新建任务</span><kbd>⌘N</kbd></button>
         <button type="button" class="side-item" id="hot-search"><span class="side-ico">⌕</span><span>热点搜索</span><kbd>⌘K</kbd></button>
+        <button type="button" class="side-item" id="workspace-btn"><span class="side-ico">▤</span><span>小红书工作区</span></button>
         <button type="button" class="side-item" id="automation-btn"><span class="side-ico">◎</span><span>自动化</span></button>
         <button type="button" class="side-item" id="plugins-btn"><span class="side-ico">▦</span><span>插件市场</span></button>
       </div>
@@ -123,24 +124,47 @@
         </div>
       </section>
 
+      <section class="workspace-view" id="workspace-view" hidden aria-label="小红书工作区">
+        <div class="ws-head">
+          <div>
+            <h2>小红书数据运营</h2>
+            <p class="hint" id="ws-status">发布后的数据、评论、告警与复盘管理；创作流程由“新建任务”对话驱动</p>
+          </div>
+          <div class="hot-actions">
+            <button type="button" class="btn-secondary" id="ws-back">返回对话</button>
+          </div>
+        </div>
+        <div class="ws-body">
+          <nav class="ws-nav" id="ws-nav">
+            <button type="button" data-ws="publish" class="active">发布记录</button>
+            <button type="button" data-ws="analytics">运营监控</button>
+            <button type="button" data-ws="comments">评论待办</button>
+            <button type="button" data-ws="alerts">告警</button>
+            <button type="button" data-ws="retro">复盘与经验</button>
+            <button type="button" data-ws="settings" disabled>系统设置（待接入）</button>
+          </nav>
+          <div class="ws-content" id="ws-content"></div>
+        </div>
+      </section>
+
       <aside class="work-panel" id="work-panel" aria-label="工作栏">
         <div class="work-head">
           <span class="work-title">工作栏</span>
           <button type="button" class="icon-btn" id="work-close" title="收起工作栏" aria-label="收起工作栏">×</button>
         </div>
         <div class="canvas-toolbar">
-        <div class="tabs" role="tablist">
-          <button class="tab active" data-tab="plan" role="tab">图文方案</button>
-          <button class="tab" data-tab="pages" role="tab">六页图文</button>
-          <button class="tab" data-tab="verify" role="tab">核验结果</button>
-          <button class="tab" data-tab="evidence" role="tab">证据</button>
-          <button class="tab" data-tab="sample" role="tab">六页样稿</button>
-        </div>
         <div class="platform-switch" id="platform-switch" aria-label="发布平台">
           <button class="platform-btn active" data-platform="xiaohongshu">小红书</button>
           <button class="platform-btn" data-platform="wechat_article">公众号</button>
           <button class="platform-btn" data-platform="moments">朋友圈</button>
           <button class="platform-btn" data-platform="poster">海报</button>
+        </div>
+        <div class="tabs" role="tablist" id="work-tabs">
+          <button class="tab active" data-tab="plan" role="tab">图文方案</button>
+          <button class="tab" data-tab="pages" role="tab">六页图文</button>
+          <button class="tab" data-tab="verify" role="tab">核验结果</button>
+          <button class="tab" data-tab="evidence" role="tab">证据</button>
+          <button class="tab" data-tab="sample" role="tab">六页样稿</button>
         </div>
       </div>
 
@@ -271,6 +295,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.8.2-1" defer></script>
+<script src="/static/app.js?v=0.9.0-1" defer></script>
+<script src="/static/workspace.js?v=0.9.0-1" defer></script>
 </body>
 </html>
