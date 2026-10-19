@@ -39,6 +39,21 @@ TOOL_SPECS = [
          "sidecar": {"type": "object"}, "manifest": {"type": "object"},
          "document_id": {"type": "string"}, "expected_version": {"type": "integer"}},
          "required": ["content_item_id"]}},
+    {"name": "generate_image", "description": "一键生图：用提示词 + 当前会话的产品原图做图生图，返回图片地址",
+     "parameters": {"type": "object", "properties": {
+         "conversation_id": {"type": "string"}, "image_id": {"type": "string"},
+         "prompt": {"type": "string"}, "style": {"type": "string"}, "extra": {"type": "string"},
+         "n": {"type": "integer"}}}},
+    {"name": "list_design_styles", "description": "列出 16 个视觉家族与每家族封面/内页布局 ID",
+     "parameters": {"type": "object", "properties": {}}},
+    {"name": "create_design_from_layout", "description": "用布局配方生成可编辑设计文档（Fabric payload + 语义绑定）",
+     "parameters": {"type": "object", "properties": {
+         "content_item_id": {"type": "string"}, "layout_id": {"type": "string"},
+         "bindings": {"type": "object"}, "product_name": {"type": "string"}},
+         "required": ["content_item_id", "layout_id"]}},
+    {"name": "check_design_document", "description": "对设计文档做尺寸/字体/文字越界/占位图检查",
+     "parameters": {"type": "object", "properties": {"document_id": {"type": "string"}},
+                    "required": ["document_id"]}},
     {"name": "submit_review", "description": "提交当前设计版本审核",
      "parameters": {"type": "object", "properties": {
          "content_item_id": {"type": "string"}, "design_document_id": {"type": "string"}},
@@ -123,6 +138,48 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                                                sidecar=args.get("sidecar", {}),
                                                manifest=args.get("manifest", {}))
             return _clip(rednote.create_design_document(db, ctx, payload))
+        if name == "generate_image":
+            from . import image_edit
+            from .conversation import service as conversation_service
+            from .retrieval import get_asset, store_asset
+            session = conversation_service.sessions.get(str(args.get("conversation_id") or ""))
+            handoff = session.handoff_cache if session else None
+            if not handoff or not handoff.get("images"):
+                return {"error": "EVIDENCE_REQUIRED", "message": "需要先有产品原图，请先完成选品与核验"}
+            images = handoff["images"]
+            image = next((row for row in images if row.get("image_id") == args.get("image_id")), images[0])
+            token = (image.get("access_url") or "").rstrip("/").split("/")[-1]
+            stored = get_asset(token)
+            if not stored:
+                return {"error": "SOURCE_UNAVAILABLE", "message": "产品图片临时地址已过期，请刷新材料"}
+            slots = session.slots.model_dump(mode="json")
+            facts = [str(fact.get("text", "")).partition("：")[0] for fact in handoff.get("facts", [])[:3]]
+            prompt = args.get("prompt") or image_edit.build_prompt(
+                scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
+                objective=slots.get("objective", ""), title=slots.get("instructions", "")[:40],
+                facts=facts, style=args.get("style", "clean_desk"), extra=args.get("extra", ""))
+            results = image_edit.edit_image(stored[0], prompt, stored[1], None,
+                                            int(args.get("n", 1) or 1), None)
+            return _clip({"images": [store_asset(content, "image/png") for content in results],
+                          "prompt": prompt, "note": "生成图只作氛围背景，不是产品实拍"})
+        if name == "list_design_styles":
+            from . import design_library
+            return _clip({"families": design_library.styles(), "count": len(design_library.RECIPES)})
+        if name == "create_design_from_layout":
+            from . import design_library
+            built = design_library.build_document(args["layout_id"], args.get("bindings") or {},
+                                                  str(args.get("product_name", "")))
+            payload = rednote.DesignDocumentIn(content_item_id=args["content_item_id"],
+                                               engine=built["engine"], engine_version=built["engine_version"],
+                                               native_payload=built["native_payload"],
+                                               sidecar=built["sidecar"], manifest=built["manifest"])
+            return _clip(rednote.create_design_document(db, ctx, payload))
+        if name == "check_design_document":
+            from . import design_library
+            from .models import DesignDocument
+            row = rednote._require(db, ctx, DesignDocument, args["document_id"])
+            return _clip(design_library.check_document({"native_payload": row.native_payload,
+                                                        "sidecar": row.sidecar, "manifest": row.manifest}))
         if name == "submit_review":
             payload = rednote.ReviewSubmission(content_item_id=args["content_item_id"],
                                                design_document_id=args["design_document_id"])

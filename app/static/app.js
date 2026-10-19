@@ -1127,6 +1127,36 @@
     }
   });
 
+  async function generateImages() {
+    const button = $('generate-images');
+    if (!sessionId) { toast('请先完成需求澄清与选品，拿到产品原图后再生图'); return; }
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = '生成中…';
+    try {
+      const response = await fetch('/api/v1/images/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, style: $('image-style').value, n: 1 }),
+      });
+      const data = await response.json();
+      if (!response.ok) { toast(data.message || '生图失败'); return; }
+      const wrap = $('image-results');
+      wrap.hidden = false;
+      wrap.innerHTML = data.images.map(url =>
+        '<figure><img src="' + escapeHtml(url) + '" alt="AI 生成图" loading="lazy">' +
+        '<figcaption>AI 氛围图 · 非产品实拍</figcaption></figure>').join('') +
+        '<p class="hint">' + escapeHtml(data.note) + '</p>';
+      toast('已生成图片');
+    } catch (error) {
+      toast('生图失败，请稍后重试');
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
+  $('generate-images').addEventListener('click', generateImages);
   $('generate-cover').addEventListener('click', generateCover);
 
   $('new-task').addEventListener('click', newTask);

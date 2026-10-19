@@ -9,3 +9,5 @@ __pycache__/
 .DS_Store
 
 data/*.zip
+
+# built editor bundle (see scripts/build_studio.sh)

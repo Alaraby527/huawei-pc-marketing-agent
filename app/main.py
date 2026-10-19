@@ -19,10 +19,12 @@ from .conversation import Turn, service, DialogueError, ask
 from .hotspot import related_hot_terms, related_hot_topics
 from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
 from .model import image_configured, generate_cover_image, ModelError, allowed_models
-from .posters import pages_for, zip_bytes
+from .posters import pages_for, render_page, zip_bytes
 from . import db as db_layer
 from . import rednote
 from .agent import AgentTurn, run_agent
+from . import design_library
+from . import image_edit
 from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
@@ -286,6 +288,44 @@ def export_markdown(draft, handoff, compliance):
     return "\n".join(lines)
 
 
+@app.post("/api/v1/images/generate")
+async def generate_images(payload: image_edit.GenerateRequest):
+    """一键生图：用提示词 + 产品原图做图生图。"""
+    if not image_edit.configured():
+        return JSONResponse(status_code=503, content={"code": "CAPABILITY_DISABLED",
+                                                      "message": "图像编辑通道未配置 LLM_API_KEY"})
+    session = service.sessions.get(payload.session_id) if payload.session_id else None
+    handoff = session.handoff_cache if session else None
+    if not handoff or not handoff.get("images"):
+        return JSONResponse(status_code=422, content={"code": "EVIDENCE_REQUIRED",
+                                                      "message": "需要先有产品原图：请先完成选品与核验，或指定 image_id"})
+    images = handoff["images"]
+    image = next((row for row in images if row.get("image_id") == payload.image_id), images[0])
+    token = (image.get("access_url") or "").rstrip("/").split("/")[-1]
+    stored = get_asset(token)
+    if not stored:
+        return JSONResponse(status_code=409, content={"code": "SOURCE_UNAVAILABLE",
+                                                      "message": "产品图片临时地址已过期，请刷新材料后重试"})
+    body, mime = stored
+    slots = session.slots.model_dump(mode="json") if session else {}
+    facts = [str(fact.get("text", "")).partition("：")[0] for fact in handoff.get("facts", [])[:3]]
+    prompt = payload.prompt or image_edit.build_prompt(
+        scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
+        objective=slots.get("objective", ""), title=slots.get("instructions", "")[:40],
+        facts=facts, style=payload.style, extra=payload.extra)
+    try:
+        results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
+                                          payload.size, payload.n, payload.model)
+    except image_edit.ImageEditError as error:
+        return JSONResponse(status_code=error.status, content={"code": "IMAGE_EDIT_FAILED",
+                                                               "message": error.message})
+    from .retrieval import store_asset
+    urls = [store_asset(content, "image/png") for content in results]
+    return {"status": "ok", "prompt": prompt, "model": payload.model or image_edit.DEFAULT_EDIT_MODEL,
+            "images": urls,
+            "note": "生成图只作氛围背景，不是产品实拍；产品外观以原图为准，发布前需人工核对。"}
+
+
 @app.post("/api/v1/covers/generate")
 async def generate_cover(payload: dict):
     if not image_configured():
@@ -404,6 +444,57 @@ def rednote_board(payload: rednote.BoardIn, scope=Depends(rednote_scope)):
 def rednote_board_preview(board_id: str, scope=Depends(rednote_scope)):
     ctx, session = scope
     return rednote.style_preview(session, ctx, board_id)
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/design-library/styles")
+def rednote_design_styles(scope=Depends(rednote_scope)):
+    return {"families": design_library.styles(), "fonts": design_library.FONTS,
+            "note": "16 个自研视觉家族，每家族 2 封面 + 2 内页；不包含第三方模板素材"}
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/design-library/layouts")
+def rednote_design_layouts(family_id: str = "", scope=Depends(rednote_scope)):
+    return {"layouts": design_library.layouts(family_id or None),
+            "count": len(design_library.layouts(family_id or None))}
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/apps/rednote/design-library/layouts/{layout_id}/preview.png")
+def rednote_layout_preview(layout_id: str, scope=Depends(rednote_scope)):
+    recipe = design_library.get_recipe(layout_id)
+    if not recipe:
+        raise WorkspaceError("EVIDENCE_REQUIRED", "布局不存在：" + layout_id, 422)
+    role = "hook" if recipe.role == "cover" else "proof"
+    draft = {"pages": [{"role": role, "title": recipe.name,
+                        "text": f"{recipe.family_name}：布局 {layout_id}（{recipe.archetype}）",
+                        "fact_ids": [], "image_id": ""}]}
+    handoff = {"images": [], "facts": [], "product_identity": {"model_name": "HUAWEI MateBook"}}
+    content = render_page(draft, handoff, 0)
+    return Response(content, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents/from-layout")
+def rednote_design_from_layout(payload: dict, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    layout_id = str(payload.get("layout_id", ""))
+    content_item_id = str(payload.get("content_item_id", ""))
+    if not design_library.get_recipe(layout_id):
+        raise WorkspaceError("EVIDENCE_REQUIRED", "布局不存在：" + layout_id, 422)
+    built = design_library.build_document(layout_id, payload.get("bindings") or {},
+                                          str(payload.get("product_name", "")))
+    doc = rednote.create_design_document(session, ctx, rednote.DesignDocumentIn(
+        content_item_id=content_item_id, engine=built["engine"], engine_version=built["engine_version"],
+        native_payload=built["native_payload"], sidecar=built["sidecar"], manifest=built["manifest"]))
+    return {"document": doc, "layout_id": layout_id, "checks": design_library.check_document(doc)}
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents/{document_id}/checks")
+def rednote_design_checks(document_id: str, scope=Depends(rednote_scope)):
+    ctx, session = scope
+    from .models import DesignDocument
+    row = rednote._require(session, ctx, DesignDocument, document_id)
+    document = {"native_payload": row.native_payload, "sidecar": row.sidecar, "manifest": row.manifest}
+    return design_library.check_document(document)
 
 
 @app.post("/api/v1/workspaces/{workspace_id}/apps/rednote/design-documents")

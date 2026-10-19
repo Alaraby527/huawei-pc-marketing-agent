@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0 — 2026-10-19
+
+### Added
+
+- **一键生图（图生图）**: `POST /api/v1/images/generate` takes the current session's product photo plus a prompt and calls DashScope 通义万相图像编辑 (`wanx2.1-imageedit`, async task API) to produce atmosphere images. The product photo is sent as a base64 data URL, so no public hosting is needed; the prompt keeps product appearance locked and forbids text/watermark/price.
+- **Style presets**: clean desk / campus / commute / home / tech / festival; the draft card has a 一键生图 button and a style selector, and results are shown inline.
+- **Agent tool**: `generate_image` joins the tool registry, so the model can generate images from the chat.
+
+
+## 0.10.0 — 2026-10-19
+
+### Added
+
+- **Design library (M2 foundation)**: 16 visual families x (2 cover + 2 inner) = 64 self-authored layout recipes with structural archetypes, layout preview PNGs, `from-layout` document creation and deterministic design checks (canvas, fonts, text overflow, placeholder images).
+- **Same-origin editor**: the MIT vue-fabric-editor build is served at `/studio` (commercial upstream fonts removed, upstream LICENSE kept); `scripts/build_studio.sh` rebuilds it and `THIRD_PARTY_NOTICES.md` records the licence boundary.
+- **Design APIs/tools**: `/design-library/styles`, `/design-library/layouts`, `/design-library/layouts/{id}/preview.png`, `/design-documents/from-layout`, `/design-documents/{id}/checks`, and matching agent tools.
+
+
 ## 0.9.0 — 2026-10-19
 
 ### Added
