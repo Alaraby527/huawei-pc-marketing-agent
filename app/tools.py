@@ -161,9 +161,11 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                 scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
                 facts=facts, extra=args.get("extra", ""))
             if image_channel.configured():
+                target_ratio = image_channel.reference_ratio(stored[0])
                 results, used = image_channel.generate_from_product(stored[0], prompt, stored[1],
-                                                                    None, "1024x1024",
-                                                                    int(args.get("n", 1) or 1))
+                                                                    None, None,
+                                                                    int(args.get("n", 1) or 1),
+                                                                    target_ratio)
                 channel = "image_api" if used == "primary" else "image_api_fallback"
             elif image_edit.has_alpha(stored[0]):
                 results = image_edit.generate_scene_image(stored[0], style, args.get("prompt", ""))

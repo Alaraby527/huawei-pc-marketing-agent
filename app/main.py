@@ -337,10 +337,27 @@ async def generate_images(payload: image_edit.GenerateRequest):
     try:
         if image_channel.configured():
             try:
-                results, used = await asyncio.to_thread(image_channel.generate_from_product, body,
-                                                        channel_prompt, mime, payload.model,
-                                                        payload.size or "1024x1024", payload.n)
-                channel = "image_api" if used == "primary" else "image_api_fallback"
+                # Default is image-to-image so the product blends into the
+                # scene/style; composite (pixel-identical product) is opt-in.
+                preserve = (os.getenv("IMAGE_PRESERVE_PRODUCT") or "").strip().lower() == "composite"
+                if preserve or payload.mode == "composite":
+                    # Transparent cutouts: generate the background only, then
+                    # composite the original product pixels back, so size,
+                    # ratio, logo and ports are guaranteed unchanged.
+                    background_prompt = (channel_prompt +
+                                         "。背景中不要出现任何笔记本电脑、平板、手机或其他数码产品实体，"
+                                         "只保留环境、桌面与生活道具；不要出现软件界面或品牌图标")
+                    backgrounds, used = await asyncio.to_thread(
+                        image_channel.generate_background, background_prompt, payload.model,
+                        payload.size, payload.n, target_ratio)
+                    results = [image_edit._composite(body, background) for background in backgrounds]
+                    channel = "image_api_composite" if used == "primary" else "image_api_composite_fallback"
+                    mode = "composite_guaranteed"
+                else:
+                    results, used = await asyncio.to_thread(image_channel.generate_from_product, body,
+                                                            channel_prompt, mime, payload.model,
+                                                            payload.size, payload.n, target_ratio)
+                    channel = "image_api" if used == "primary" else "image_api_fallback"
                 prompt = channel_prompt
             except image_channel.ImageChannelError:
                 if not image_edit.configured():
@@ -375,6 +392,8 @@ async def generate_images(payload: image_edit.GenerateRequest):
     except (image_channel.ImageChannelError, image_edit.ImageEditError) as error:
         return JSONResponse(status_code=error.status, content={"code": "IMAGE_GENERATE_FAILED",
                                                                "message": error.message})
+    if target_ratio:
+        results = [image_channel.crop_to_ratio(content, target_ratio) for content in results]
     from .retrieval import store_asset
     urls = [store_asset(content, "image/png") for content in results]
     ratio_note = ""

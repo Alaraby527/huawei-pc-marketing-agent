@@ -822,7 +822,9 @@
         }
         const waited = Date.now() - started;
         if (waited > 15000 && waited < 200000) {
-          $('xhs-status').textContent = '等待扫码；如果已经扫码，请在手机上点“确认登录”';
+          $('xhs-status').textContent = waited > 40000
+            ? '仍未登录：手机已确认也没反应时，通常是云端风控；可改用服务端 Cookie 导入（见连接上线指南）或先用公开热榜'
+            : '等待扫码；如果已经扫码，请在手机上点“确认登录”';
         }
         if (waited > 200000) {
           $('xhs-status').textContent = '二维码已过期，请点“刷新二维码”重新获取';

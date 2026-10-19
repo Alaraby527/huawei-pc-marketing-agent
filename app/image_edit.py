@@ -88,9 +88,9 @@ def build_prompt(scene: str = "", audience: str = "", objective: str = "", title
         parts.append(f"内容目标：{objective}")
     if extra:
         parts.append(f"补充要求：{extra}")
-    parts.append(f"把画面背景整体替换为上述场景，让产品自然融入其中（不要留黑底或透明底）；"
-                 f"严格保留产品原有外观、颜色、Logo、接口、屏幕内容与比例不变，不新增或修改产品部件；"
-                 f"画面高级自然、构图留出文字空间；不要生成文字、水印、价格、促销或人物面部特写；"
+    parts.append(f"把画面背景整体替换为上述场景，让产品自然融入其中；产品以参考图为准，"
+                 f"保持型号、外观与 Logo 正确，不虚构不存在的部件或参数；"
+                 f"画面自然好看、构图留出文字空间；如出现文字必须是正确简短的中文，不要乱码、水印、价格或促销信息；"
                  f"生成图仅作氛围背景，不冒充产品实拍。")
     return "。".join(parts)
 

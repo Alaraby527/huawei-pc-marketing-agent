@@ -116,10 +116,10 @@ def build_prompt(style: str, subject: str = "", scene: str = "", audience: str =
         parts.append("可体现的已确认卖点：" + "、".join(facts[:3]))
     if extra:
         parts.append(f"补充要求：{extra}")
-    parts.append("保持产品原有外观、颜色、Logo、接口、屏幕内容与比例完全不变，不新增或修改产品部件；"
-                 "画面高级自然，构图留出文字空间；画面中不要出现任何文字、字母、数字、水印、价格或促销信息"
-                 "（包括手写体、标题、标签和乱码），所有文字位置留白，由后期排版叠加；"
-                 "不要生成软件界面、应用图标、第三方品牌标识或操作系统 Logo")
+    parts.append("让产品自然地融入场景与画风：光影、色调、材质和背景协调统一，像是真实拍摄或同一画风里的一部分；"
+                 "同时保持产品型号、外观和 Logo 正确，不要虚构不存在的部件、参数或标识；"
+                 "画面自然好看、构图留出文字空间；可以出现少量正确、简短的中文标题（不超过 12 字），"
+                 "不要出现乱码、英文、水印、价格或促销信息，也不要出现软件界面、应用图标或第三方品牌 Logo")
     return "。".join(part.strip() for part in parts if part).strip()[:1800]
 
 
@@ -209,30 +209,44 @@ def _fallback_config() -> tuple[str, str, str] | None:
 
 
 def generate(prompt: str, image_bytes: bytes | None = None, mime: str = "image/png",
-             model: str | None = None, size: str = "1024x1024", n: int = 1,
-             timeout: int = 300) -> tuple[list[bytes], str]:
-    """Return (images, channel_label); retries a fallback channel on 429/5xx."""
+             model: str | None = None, size: str | None = None, n: int = 1,
+             timeout: int = 300, ratio: float | None = None) -> tuple[list[bytes], str]:
+    """Return (images, channel_label); retries a fallback channel on 429/5xx.
+
+    When `ratio` is given the output is center-cropped to that aspect ratio.
+    """
     if not os.getenv("IMAGE_API_KEY"):
         raise ImageChannelError("图像通道未配置 IMAGE_API_KEY", 503)
     resolved = model or DEFAULT_MODEL
+    resolved_size = size or size_for_ratio(ratio or 1.0)
     try:
-        return _attempt(prompt, image_bytes, mime, resolved, size, n, timeout,
-                        DEFAULT_BASE, os.getenv("IMAGE_API_KEY") or ""), "primary"
+        images = _attempt(prompt, image_bytes, mime, resolved, resolved_size, n, timeout,
+                          DEFAULT_BASE, os.getenv("IMAGE_API_KEY") or "")
+        channel = "primary"
     except ImageChannelError as error:
         fallback = _fallback_config()
         retryable = any(code in error.message for code in ("429", "500", "502", "503", "504", "超时", "连接失败"))
         if not fallback or not retryable:
             raise
         base, key, fb_model = fallback
-        images = _attempt(prompt, image_bytes, mime, fb_model, size, n, timeout, base, key)
-        return images, "fallback"
+        images = _attempt(prompt, image_bytes, mime, fb_model, resolved_size, n, timeout, base, key)
+        channel = "fallback"
+    if ratio:
+        images = [crop_to_ratio(image, ratio) for image in images]
+    return images, channel
+
+
+def generate_background(prompt: str, model: str | None = None, size: str | None = None,
+                        n: int = 1, ratio: float | None = None) -> tuple[list[bytes], str]:
+    """Text-to-image background only; the product is composited afterwards."""
+    return generate(prompt, None, "image/png", model, size, n, ratio=ratio)
 
 
 def generate_from_product(product_bytes: bytes, prompt: str, mime: str = "image/png",
-                          model: str | None = None, size: str = "1024x1024",
-                          n: int = 1) -> tuple[list[bytes], str]:
+                          model: str | None = None, size: str | None = None,
+                          n: int = 1, ratio: float | None = None) -> tuple[list[bytes], str]:
     """Image-to-image: product photo + prompt -> (scene images, channel label)."""
-    return generate(prompt, product_bytes, mime, model, size, n)
+    return generate(prompt, product_bytes, mime, model, size, n, ratio=ratio)
 
 
 SIZE_CANDIDATES = ["1024x1024", "1024x1365", "1024x1536", "1536x1024", "1365x1024",

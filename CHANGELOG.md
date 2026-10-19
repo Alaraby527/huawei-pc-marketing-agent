@@ -1,17 +1,30 @@
 # Changelog
 
+## 0.12.5 — 2026-10-19
+## 0.12.4 — 2026-10-19
+
+### Changed
+
+- Image-to-image is the default again so the product blends naturally into the scene and art style; the prompt keeps a reasonable guard (correct model/appearance/logo, no invented parts, no gibberish) instead of a rigid pixel-level demand. Short, correct Chinese titles are allowed.
+- Ratio selector in the UI is now two options: 原比例（跟随知识库原图）and 3:4（小红书）.
+- Pixel-identical product compositing remains available via `mode=composite` (or `IMAGE_PRESERVE_PRODUCT=composite`) for cases that need the exact original product pixels.
+
+
 ## 0.12.2 — 2026-10-19
 
-### Changed
+### Added
 
-- Image prompts also forbid software UIs, app icons, third-party brand marks and OS logos, so generated scenes stay brand-safe.
+- **Cookie-based Xiaohongshu login**: the internal MCP image now restores `/app/data/cookies.json` from the `XHS_COOKIES_JSON` secret at startup, so a session created by a normal local login survives restarts and works from the cloud instance (QR login on datacenter IPs is blocked by Xiaohongshu risk control).
+- **Connection guide** (`docs/15_小红书连接上线指南.md`): root cause, four options (cookie injection, local MCP + tunnel, residential proxy, public fallback) and step-by-step verification.
+- The login dialog now explains the risk-control case after 40 seconds and links to the guide.
 
-## 0.12.1 — 2026-10-19
 
-### Changed
+## 0.12.3 — 2026-10-19
 
-- Image channel switched to `https://api.frimodel.com/v1` with `gpt-image-2-w` (image-to-image via `/images/edits`; falls back to the `image` field on `/images/generations` when multipart is rejected). Verified: realistic campus scene and illustrated comic style both keep the product appearance and leave text areas blank.
-- Added a configurable fallback image channel (`IMAGE_FALLBACK_*`) that is used automatically on 429/5xx/timeout; DashScope remains the last resort. When the primary gateway reports capacity limits, generation still succeeds and the response reports the channel actually used.
+### Added
+
+- **Output ratio control**: generation follows the reference product image ratio by default (`ratio=kb`); `3:4` (Xiaohongshu), `1:1`, `16:9`, `9:16`, `4:3` are selectable. The generator picks the closest supported generation size and then center-crops to the exact target ratio, so the final image matches the chosen ratio precisely.
+- Knowledge-base images are mixed ratio (near-square 817x892, landscape 1048x588/860x684, etc.), so following the reference keeps the generated image consistent with the official asset used in the post.
 
 
 ## 0.12.0 — 2026-10-19

@@ -15,8 +15,8 @@ def test_prompt_keeps_product_appearance_and_style():
     prompt = image_edit.build_prompt(scene='课堂学习', audience='大学新生', title='开学季选本',
                                      facts=['屏幕', '电池'], style='campus')
     assert '校园' in prompt
-    assert '保留产品原有外观' in prompt
-    assert '不要生成文字' in prompt
+    assert '产品以参考图为准' in prompt
+    assert '不要乱码' in prompt
 
 
 def _session_with_image(sid: str, token: str):
@@ -130,9 +130,10 @@ def test_ai_source_uses_dedicated_image_channel(monkeypatch):
     def fake_generate(product_bytes, prompt, mime='image/png', model=None, size=None, n=1, ratio=None):
         seen['prompt'] = prompt
         seen['model'] = model
-        return [PNG], 'primary' 
+        return [PNG], 'primary'
 
     monkeypatch.setattr('app.image_channel.generate_from_product', fake_generate)
+    monkeypatch.setattr('app.image_edit.has_alpha', lambda data: False)
     data = client.post('/api/v1/images/generate',
                        json={'session_id': 'img-session-ai', 'source': 'ai', 'style': 'light_comic'}).json()
     assert data['channel'] == 'image_api' and data['mode'] == 'img2img'
@@ -165,3 +166,27 @@ def test_ratio_preset_3_4_is_available():
     from app import image_channel
     assert image_channel.RATIO_PRESETS["3:4"] == 3 / 4
     assert image_channel.RATIO_PRESETS["kb"] is None
+
+
+def test_transparent_cutout_uses_guaranteed_composite(monkeypatch):
+    import io as _io
+    from PIL import Image
+
+    monkeypatch.setenv('IMAGE_API_KEY', 'test-image-key')
+    token = store_asset(PNG, 'image/png')
+    _session_with_image('img-session-composite', token)
+    monkeypatch.setattr('app.image_edit.has_alpha', lambda data: True)
+    background = _io.BytesIO()
+    Image.new('RGB', (1024, 1024), (220, 225, 230)).save(background, format='PNG')
+    monkeypatch.setattr('app.image_channel.generate_background',
+                        lambda *a, **k: ([background.getvalue()], 'primary'))
+    data = client.post('/api/v1/images/generate', json={
+        'session_id': 'img-session-composite', 'source': 'ai', 'style': 'clean_desk',
+        'mode': 'composite', 'ratio': '3:4'}).json()
+    assert data['channel'] == 'image_api_composite'
+    assert data['mode'] == 'composite_guaranteed'
+    assert '0.750' in data['ratio']
+    image = client.get(data['images'][0]).content
+    with Image.open(_io.BytesIO(image)) as rendered:
+        assert abs(rendered.width / rendered.height - 3 / 4) < 0.005
+    service.sessions.pop('img-session-composite', None)

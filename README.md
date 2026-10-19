@@ -5,7 +5,7 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.12.3（已在魔搭公开部署，个人库联调）**
+> **当前版本：v0.12.5（已在魔搭公开部署，个人库联调）**
 >
 > 已实现：左侧任务栏（新建任务 / 热点搜索 / 任务列表）、热点搜索独立视图（小红书榜单、热点详情、使用热点带入对话）、可折叠右侧工作栏、自由输入优先（先理解需求，缺什么问什么）、WorkBuddy 式逐题选项卡片、工具/技能调用轨迹、多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、输入区内模型选择与服务端白名单、**六页小红书图文方案**、**六页 1080×1440 PNG 导出**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感与内容目标步骤可选热点、HarmonyOS 风格 PC 工作台。
 >
@@ -26,7 +26,7 @@
 
 顶栏的“连接小红书”会弹出二维码。用户用小红书 App 完成扫码登录和授权后，主应用拉取实时笔记作为热点线索；未登录、未配置或 MCP 不可用时，自动回退公开热榜/微博/编辑方向。小红书 MCP 是**内部授权服务**，不是第二个用户入口；用户始终只使用主应用。
 
-> 公网演示不要登录个人主账号；登录会话由实例共享，重启后失效。`XHS_MCP_BASE` 与 `XHS_MCP_TOKEN` 只配置在服务端 Secrets。
+> 公网演示不要登录个人主账号；登录会话由实例共享，重启后失效。云端扫码常被小红书风控拦截（要求短信验证，MCP 无法提交），可改用服务端 Cookie 导入：见 [`docs/15_小红书连接上线指南.md`](docs/15_小红书连接上线指南.md)。`XHS_MCP_BASE` 与 `XHS_MCP_TOKEN` 只配置在服务端 Secrets。
 
 ## 架构
 
@@ -81,11 +81,15 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ### Docker
 
 ```bash
-docker build -t huawei-pc-marketing-agent:0.12.3 .
+docker build -t huawei-pc-marketing-agent:0.12.5 .
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  huawei-pc-marketing-agent:0.12.3
+  huawei-pc-marketing-agent:0.12.5
+docker run --rm -p 7860:7860 \
+  -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
+  -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
+  huawei-pc-marketing-agent:0.12.5
 ```
 
 镜像以非 root 用户运行，包含 Node 运行时、健康检查和 `vendor/ima-skill` 只读调用脚本。推送到 `main` 后，GitHub Actions 会自动构建并发布 `ghcr.io/cangyuyi/huawei-pc-marketing-agent:latest`。
@@ -246,13 +250,15 @@ python -m pytest -q
 - `container.yml`：在 `main`/版本 tag 上构建并推送 GHCR 镜像，并启动容器请求 `/healthz` 做冒烟测试。
 - `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
 
-当前镜像标签包括 `latest`、`0.12.3`、`v0.12.3` 和 `sha-<commit>`：
+当前镜像标签包括 `latest`、`0.12.0`、`v0.12.0` 和 `sha-<commit>`：
+当前镜像标签包括 `latest`、`0.12.4`、`v0.12.4` 和 `sha-<commit>`：
 
 ```bash
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.12.3
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.12.5
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.12.5
 ```
 
 要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。当前实例已按 ModelScope Docker SDK 部署在 7860 端口；重建步骤见 [`docs/10_ModelScope部署.md`](docs/10_ModelScope部署.md)。
