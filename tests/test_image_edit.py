@@ -130,7 +130,7 @@ def test_ai_source_uses_dedicated_image_channel(monkeypatch):
     def fake_generate(product_bytes, prompt, mime='image/png', model=None, size='1024x1024', n=1):
         seen['prompt'] = prompt
         seen['model'] = model
-        return [PNG]
+        return [PNG], 'primary' 
 
     monkeypatch.setattr('app.image_channel.generate_from_product', fake_generate)
     data = client.post('/api/v1/images/generate',

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.2 — 2026-10-19
+
+### Changed
+
+- Image prompts also forbid software UIs, app icons, third-party brand marks and OS logos, so generated scenes stay brand-safe.
+
+## 0.12.1 — 2026-10-19
+
+### Changed
+
+- Image channel switched to `https://api.frimodel.com/v1` with `gpt-image-2-w` (image-to-image via `/images/edits`; falls back to the `image` field on `/images/generations` when multipart is rejected). Verified: realistic campus scene and illustrated comic style both keep the product appearance and leave text areas blank.
+- Added a configurable fallback image channel (`IMAGE_FALLBACK_*`) that is used automatically on 429/5xx/timeout; DashScope remains the last resort. When the primary gateway reports capacity limits, generation still succeeds and the response reports the channel actually used.
+
+
 ## 0.12.0 — 2026-10-19
 
 ### Added

@@ -333,10 +333,28 @@ async def generate_images(payload: image_edit.GenerateRequest):
     mode = "img2img"
     try:
         if image_channel.configured():
-            results = await asyncio.to_thread(image_channel.generate_from_product, body,
-                                              channel_prompt, mime, payload.model,
-                                              payload.size or "1024x1024", payload.n)
-            prompt = channel_prompt
+            try:
+                results, used = await asyncio.to_thread(image_channel.generate_from_product, body,
+                                                        channel_prompt, mime, payload.model,
+                                                        payload.size or "1024x1024", payload.n)
+                channel = "image_api" if used == "primary" else "image_api_fallback"
+                prompt = channel_prompt
+            except image_channel.ImageChannelError:
+                if not image_edit.configured():
+                    raise
+                channel = "dashscope_fallback"
+                prompt = payload.prompt or image_edit.build_prompt(
+                    scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
+                    objective=slots.get("objective", ""), title=subject, facts=facts,
+                    style=payload.style, extra=payload.extra)
+                if image_edit.has_alpha(body):
+                    mode = "scene"
+                    results = await asyncio.to_thread(image_edit.generate_scene_image, body,
+                                                      payload.style, payload.prompt or "")
+                else:
+                    mode = "edit"
+                    results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
+                                                      payload.size, payload.n, payload.model)
         else:  # DashScope fallback keeps the previous behaviour
             channel = "dashscope"
             prompt = payload.prompt or image_edit.build_prompt(

@@ -118,7 +118,8 @@ def build_prompt(style: str, subject: str = "", scene: str = "", audience: str =
         parts.append(f"补充要求：{extra}")
     parts.append("保持产品原有外观、颜色、Logo、接口、屏幕内容与比例完全不变，不新增或修改产品部件；"
                  "画面高级自然，构图留出文字空间；画面中不要出现任何文字、字母、数字、水印、价格或促销信息"
-                 "（包括手写体、标题、标签和乱码），所有文字位置留白，由后期排版叠加")
+                 "（包括手写体、标题、标签和乱码），所有文字位置留白，由后期排版叠加；"
+                 "不要生成软件界面、应用图标、第三方品牌标识或操作系统 Logo")
     return "。".join(part.strip() for part in parts if part).strip()[:1800]
 
 
@@ -126,28 +127,7 @@ def _data_url(image_bytes: bytes, mime: str = "image/png") -> str:
     return f"data:{mime};base64," + base64.b64encode(image_bytes).decode()
 
 
-def generate(prompt: str, image_bytes: bytes | None = None, mime: str = "image/png",
-             model: str | None = None, size: str = "1024x1024", n: int = 1,
-             timeout: int = 300) -> list[bytes]:
-    key = os.getenv("IMAGE_API_KEY") or ""
-    if not key:
-        raise ImageChannelError("图像通道未配置 IMAGE_API_KEY", 503)
-    payload = {"model": model or DEFAULT_MODEL, "prompt": prompt[:1800],
-               "size": size, "n": max(1, min(int(n), 4))}
-    if image_bytes:
-        payload["image"] = _data_url(image_bytes, mime)
-    request = urllib.request.Request(DEFAULT_BASE + "/images/generations",
-                                     data=json.dumps(payload).encode(),
-                                     headers={"Authorization": "Bearer " + key,
-                                              "Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            result = json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode(errors="replace")[:300]
-        raise ImageChannelError(f"图像通道返回 {error.code}：{detail}", 502) from None
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
-        raise ImageChannelError("图像通道连接失败：" + str(error)[:200], 502) from None
+def _decode(result: dict) -> list[bytes]:
     images: list[bytes] = []
     for item in result.get("data") or []:
         if item.get("b64_json"):
@@ -168,8 +148,88 @@ def generate(prompt: str, image_bytes: bytes | None = None, mime: str = "image/p
     return images
 
 
+def _request(path: str, data: bytes, content_type: str, timeout: int,
+             base: str | None = None, key: str | None = None) -> dict:
+    key = key or os.getenv("IMAGE_API_KEY") or ""
+    request = urllib.request.Request((base or DEFAULT_BASE) + path, data=data,
+                                     headers={"Authorization": "Bearer " + key,
+                                              "Content-Type": content_type}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode(errors="replace")[:300]
+        raise ImageChannelError(f"图像通道返回 {error.code}：{detail}", 502) from None
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise ImageChannelError("图像通道连接失败：" + str(error)[:200], 502) from None
+
+
+def _edits(prompt: str, image_bytes: bytes, mime: str, model: str,
+           size: str, n: int, timeout: int, base: str | None = None,
+           key: str | None = None) -> list[bytes]:
+    import uuid
+    boundary = "----zcode" + uuid.uuid4().hex
+    parts: list[bytes] = []
+    fields = [("model", model), ("prompt", prompt[:1800]), ("size", size), ("n", str(max(1, min(n, 4))))]
+    for name, value in fields:
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    extension = "png" if "png" in mime else "jpg"
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+                 f'filename="product.{extension}"\r\nContent-Type: {mime}\r\n\r\n'.encode())
+    parts.append(image_bytes)
+    parts.append(f'\r\n--{boundary}--\r\n'.encode())
+    return _decode(_request("/images/edits", b"".join(parts),
+                            "multipart/form-data; boundary=" + boundary, timeout, base, key))
+
+
+def _attempt(prompt: str, image_bytes: bytes | None, mime: str, model: str, size: str,
+             n: int, timeout: int, base: str, key: str) -> list[bytes]:
+    if image_bytes:
+        # Prefer the standard OpenAI edits endpoint (gpt-image family). Some
+        # gateways reject multipart (404/405) or drop the connection; in both
+        # cases fall through to the image field on /images/generations.
+        try:
+            return _edits(prompt, image_bytes, mime, model, size, n, timeout, base, key)
+        except ImageChannelError:
+            pass
+    payload = {"model": model, "prompt": prompt[:1800], "size": size,
+               "n": max(1, min(int(n), 4))}
+    if image_bytes:
+        payload["image"] = _data_url(image_bytes, mime)
+    return _decode(_request("/images/generations", json.dumps(payload).encode(),
+                            "application/json", timeout, base, key))
+
+
+def _fallback_config() -> tuple[str, str, str] | None:
+    base = (os.getenv("IMAGE_FALLBACK_BASE_URL") or "").strip()
+    key = (os.getenv("IMAGE_FALLBACK_API_KEY") or "").strip()
+    if not base or not key:
+        return None
+    return base, key, (os.getenv("IMAGE_FALLBACK_MODEL") or DEFAULT_MODEL).strip()
+
+
+def generate(prompt: str, image_bytes: bytes | None = None, mime: str = "image/png",
+             model: str | None = None, size: str = "1024x1024", n: int = 1,
+             timeout: int = 300) -> tuple[list[bytes], str]:
+    """Return (images, channel_label); retries a fallback channel on 429/5xx."""
+    if not os.getenv("IMAGE_API_KEY"):
+        raise ImageChannelError("图像通道未配置 IMAGE_API_KEY", 503)
+    resolved = model or DEFAULT_MODEL
+    try:
+        return _attempt(prompt, image_bytes, mime, resolved, size, n, timeout,
+                        DEFAULT_BASE, os.getenv("IMAGE_API_KEY") or ""), "primary"
+    except ImageChannelError as error:
+        fallback = _fallback_config()
+        retryable = any(code in error.message for code in ("429", "500", "502", "503", "504", "超时", "连接失败"))
+        if not fallback or not retryable:
+            raise
+        base, key, fb_model = fallback
+        images = _attempt(prompt, image_bytes, mime, fb_model, size, n, timeout, base, key)
+        return images, "fallback"
+
+
 def generate_from_product(product_bytes: bytes, prompt: str, mime: str = "image/png",
                           model: str | None = None, size: str = "1024x1024",
-                          n: int = 1) -> list[bytes]:
-    """Image-to-image: product photo + prompt -> scene image."""
+                          n: int = 1) -> tuple[list[bytes], str]:
+    """Image-to-image: product photo + prompt -> (scene images, channel label)."""
     return generate(prompt, product_bytes, mime, model, size, n)
