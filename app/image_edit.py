@@ -191,6 +191,7 @@ class GenerateRequest(__import__("pydantic").BaseModel):
     model: str | None = None
     mode: str = "auto"  # auto | scene | edit
     source: str = "ai"  # ai | kb
+    ratio: str = "kb"  # kb | 3:4 | 1:1 | 16:9 | 9:16 | 4:3
 
 
 def has_alpha(image_bytes: bytes) -> bool:

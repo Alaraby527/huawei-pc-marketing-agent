@@ -326,6 +326,9 @@ async def generate_images(payload: image_edit.GenerateRequest):
     facts = [str(fact.get("text", "")).partition("：")[0] for fact in handoff.get("facts", [])[:3]]
     draft_title = (session.draft or {}).get("title", "") if session else ""
     subject = draft_title or slots.get("instructions", "").split("\n")[0]
+    target_ratio = image_channel.RATIO_PRESETS.get(payload.ratio)
+    if target_ratio is None:
+        target_ratio = image_channel.reference_ratio(body)
     channel_prompt = payload.prompt or image_channel.build_prompt(
         style=payload.style, subject=subject, scene=slots.get("scenario", ""),
         audience=slots.get("audience", ""), facts=facts, extra=payload.extra)
@@ -374,7 +377,10 @@ async def generate_images(payload: image_edit.GenerateRequest):
                                                                "message": error.message})
     from .retrieval import store_asset
     urls = [store_asset(content, "image/png") for content in results]
-    return {"status": "ok", "source": "ai", "channel": channel, "mode": mode,
+    ratio_note = ""
+    if target_ratio:
+        ratio_note = f"输出比例 {target_ratio:.3f}（" + ("跟随知识库原图" if payload.ratio == "kb" else payload.ratio) + "）"
+    return {"status": "ok", "source": "ai", "channel": channel, "mode": mode, "ratio": ratio_note,
             "prompt": prompt, "model": payload.model or os.getenv("IMAGE_MODEL", image_channel.DEFAULT_MODEL),
             "images": urls,
             "note": "生成图只作氛围背景，不是产品实拍；产品外观以原图为准，发布前需人工核对。"}

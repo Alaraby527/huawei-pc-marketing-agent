@@ -1,6 +1,6 @@
 [project]
 name = "huawei-pc-marketing-agent"
-version = "0.12.2"
+version = "0.12.3"
 description = "Evidence-first Huawei PC marketing agent: ima retrieval, product confirmation, platform copy, compliance scan."
 readme = "README.md"
 requires-python = ">=3.12"

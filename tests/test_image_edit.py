@@ -127,7 +127,7 @@ def test_ai_source_uses_dedicated_image_channel(monkeypatch):
     _session_with_image('img-session-ai', token)
     seen = {}
 
-    def fake_generate(product_bytes, prompt, mime='image/png', model=None, size='1024x1024', n=1):
+    def fake_generate(product_bytes, prompt, mime='image/png', model=None, size=None, n=1, ratio=None):
         seen['prompt'] = prompt
         seen['model'] = model
         return [PNG], 'primary' 
@@ -139,3 +139,29 @@ def test_ai_source_uses_dedicated_image_channel(monkeypatch):
     assert data['images'] and data['images'][0].startswith('/api/v1/assets/')
     assert '轻漫画' in seen['prompt']
     service.sessions.pop('img-session-ai', None)
+
+
+def test_ratio_follows_reference_and_crops_exactly():
+    import io as _io
+    from PIL import Image
+    from app import image_channel
+
+    buffer = _io.BytesIO()
+    Image.new("RGB", (817, 892), (240, 240, 240)).save(buffer, format="PNG")
+    ratio = image_channel.reference_ratio(buffer.getvalue())
+    assert ratio and abs(ratio - 817 / 892) < 0.001
+    size = image_channel.size_for_ratio(ratio)
+    width, height = (int(part) for part in size.split("x"))
+    assert abs(width / height - ratio) < 0.35  # snaps to the closest supported size
+
+    wide = _io.BytesIO()
+    Image.new("RGB", (1024, 1024), (255, 255, 255)).save(wide, format="PNG")
+    cropped = image_channel.crop_to_ratio(wide.getvalue(), 3 / 4)
+    with Image.open(_io.BytesIO(cropped)) as image:
+        assert abs(image.width / image.height - 3 / 4) < 0.005
+
+
+def test_ratio_preset_3_4_is_available():
+    from app import image_channel
+    assert image_channel.RATIO_PRESETS["3:4"] == 3 / 4
+    assert image_channel.RATIO_PRESETS["kb"] is None

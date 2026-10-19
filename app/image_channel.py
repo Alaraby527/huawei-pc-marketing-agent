@@ -233,3 +233,59 @@ def generate_from_product(product_bytes: bytes, prompt: str, mime: str = "image/
                           n: int = 1) -> tuple[list[bytes], str]:
     """Image-to-image: product photo + prompt -> (scene images, channel label)."""
     return generate(prompt, product_bytes, mime, model, size, n)
+
+
+SIZE_CANDIDATES = ["1024x1024", "1024x1365", "1024x1536", "1536x1024", "1365x1024",
+                   "1440x1080", "1080x1440", "1365x768", "768x1365"]
+
+RATIO_PRESETS = {
+    "kb": None,           # follow the reference image
+    "3:4": 3 / 4,         # Xiaohongshu default
+    "1:1": 1.0,
+    "4:3": 4 / 3,
+    "16:9": 16 / 9,
+    "9:16": 9 / 16,
+}
+
+
+def reference_ratio(image_bytes: bytes) -> float | None:
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            return image.width / image.height
+    except Exception:
+        return None
+
+
+def size_for_ratio(ratio: float) -> str:
+    def value(size: str) -> float:
+        width, height = (int(part) for part in size.split("x"))
+        return width / height
+    return min(SIZE_CANDIDATES, key=lambda size: abs(value(size) - ratio))
+
+
+def crop_to_ratio(image_bytes: bytes, ratio: float) -> bytes:
+    """Center-crop a generated image to the target aspect ratio."""
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image = image.convert("RGB")
+            width, height = image.size
+            current = width / height
+            if abs(current - ratio) < 0.005:
+                out = io.BytesIO()
+                image.save(out, format="PNG")
+                return out.getvalue()
+            if current > ratio:  # too wide
+                new_width = int(round(height * ratio))
+                left = (width - new_width) // 2
+                image = image.crop((left, 0, left + new_width, height))
+            else:  # too tall
+                new_height = int(round(width / ratio))
+                top = (height - new_height) // 2
+                image = image.crop((0, top, width, top + new_height))
+            out = io.BytesIO()
+            image.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        return image_bytes
