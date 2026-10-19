@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 — 2026-10-19
+
+### Fixed
+
+- Xiaohongshu QR login: the dialog now polls for the full 4-minute QR lifetime, shows a “confirm on your phone” hint after 15 seconds, keeps the QR visible when it expires, and adds a **刷新二维码** button. Restarting the internal MCP invalidates any QR generated before the restart, so a fresh QR is required.
+
 ## 0.8.0 — 2026-10-19
 
 ### Added

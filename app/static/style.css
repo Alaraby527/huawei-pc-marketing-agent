@@ -141,6 +141,7 @@ h1,h2,h3,p{margin:0}
 #xhs-qr{width:220px;height:220px;object-fit:contain;border:1px solid var(--divider);border-radius:12px;background:#fff;margin:0 auto 10px;display:block}
 .modal-close{position:absolute;right:10px;top:8px;border:none;background:none;font-size:24px;line-height:1;color:var(--text-3);cursor:pointer}
 .modal-card .btn-secondary{margin-top:4px}
+.modal-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:6px}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px}
 .chip{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);border-radius:999px;padding:6px 12px;font-size:12px;transition:border-color .15s var(--ease),color .15s var(--ease),background .15s var(--ease)}
 .chip:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-softer)}

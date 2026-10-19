@@ -777,9 +777,14 @@
           loadXhsTopics();
           return;
         }
-        if (Date.now() - started > 120000) {
-          closeXhsModal();
-          toast('二维码已过期，请重新连接');
+        const waited = Date.now() - started;
+        if (waited > 15000 && waited < 200000) {
+          $('xhs-status').textContent = '等待扫码；如果已经扫码，请在手机上点“确认登录”';
+        }
+        if (waited > 200000) {
+          $('xhs-status').textContent = '二维码已过期，请点“刷新二维码”重新获取';
+          clearInterval(xhsPollTimer);
+          xhsPollTimer = null;
         }
       } catch (error) {
         // Keep polling; a transient network error should not close the dialog.
@@ -788,6 +793,10 @@
   }
 
   async function xhsLogin() {
+    if (xhsPollTimer) {
+      clearInterval(xhsPollTimer);
+      xhsPollTimer = null;
+    }
     try {
       const response = await fetch('/api/v1/xhs/login/qrcode');
       const data = await response.json();
@@ -805,7 +814,7 @@
         return;
       }
       $('xhs-qr').src = data.qr_image;
-      $('xhs-status').textContent = '请用小红书 App 扫码登录并完成授权';
+      $('xhs-status').textContent = '请用小红书 App 扫码登录，并在手机上点“确认登录”';
       openXhsModal();
       startXhsPoll();
     } catch (error) {
@@ -999,6 +1008,7 @@
   $('hot-connect').addEventListener('click', xhsLogin);
 
   $('xhs-login').addEventListener('click', xhsLogin);
+  $('xhs-refresh').addEventListener('click', xhsLogin);
   $('xhs-close').addEventListener('click', closeXhsModal);
   $('xhs-modal').addEventListener('click', (event) => {
     if (event.target.id === 'xhs-modal') closeXhsModal();
