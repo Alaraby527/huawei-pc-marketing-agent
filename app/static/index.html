@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.8.1-1">
+<link rel="stylesheet" href="/static/style.css?v=0.8.2-1">
 </head>
 <body>
 <div class="app-shell">
@@ -23,7 +23,7 @@
       <span class="badge" id="kb-badge">知识库：检测中…</span>
       <button type="button" class="chip xhs-login" id="xhs-login">连接小红书</button>
       <button type="button" class="icon-btn" id="work-toggle" title="展开或收起工作栏" aria-label="展开或收起工作栏">▤</button>
-      <span class="version-tag">v0.8.1</span>
+      <span class="version-tag">v0.8.2</span>
     </div>
   </header>
 
@@ -265,12 +265,12 @@
     <p id="xhs-status" class="hint">正在获取二维码…</p>
     <div class="modal-actions">
       <button type="button" class="btn-secondary" id="xhs-refresh">刷新二维码</button>
-      <a href="https://www.xiaohongshu.com" target="_blank" rel="noreferrer" class="btn-secondary">打开小红书 ↗</a>
+      <button type="button" class="btn-secondary" id="xhs-fallback">先用公开热榜</button>
     </div>
-    <p class="hint">二维码约 4 分钟有效；扫码后请在手机上点“确认登录”。</p>
+    <p class="hint">二维码约 4 分钟有效。手机 App 里如果要求短信验证，请先在 App 内完成验证再点“确认登录”；云端设备可能触发风控，此时可先用公开热榜参考。</p>
   </div>
 </div>
 
-<script src="/static/app.js?v=0.8.1-1" defer></script>
+<script src="/static/app.js?v=0.8.2-1" defer></script>
 </body>
 </html>

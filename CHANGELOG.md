@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 — 2026-10-19
+
+### Added
+
+- The Xiaohongshu login dialog explains the SMS-verification case and adds a **先用公开热榜** button, so the hotspot feature is usable even when the cloud browser is blocked by Xiaohongshu risk control.
+
 ## 0.8.1 — 2026-10-19
 
 ### Fixed

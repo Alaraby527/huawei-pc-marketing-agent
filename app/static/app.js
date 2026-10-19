@@ -1009,6 +1009,11 @@
 
   $('xhs-login').addEventListener('click', xhsLogin);
   $('xhs-refresh').addEventListener('click', xhsLogin);
+  $('xhs-fallback').addEventListener('click', () => {
+    closeXhsModal();
+    switchView('hot');
+    toast('已切换到公开热榜参考');
+  });
   $('xhs-close').addEventListener('click', closeXhsModal);
   $('xhs-modal').addEventListener('click', (event) => {
     if (event.target.id === 'xhs-modal') closeXhsModal();
