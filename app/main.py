@@ -25,6 +25,7 @@ from . import rednote
 from .agent import AgentTurn, run_agent
 from . import design_library
 from . import image_edit
+from . import image_channel
 from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
@@ -288,18 +289,32 @@ def export_markdown(draft, handoff, compliance):
     return "\n".join(lines)
 
 
+@app.get("/api/v1/images/styles")
+def image_styles():
+    return {"styles": image_channel.style_list(),
+            "channel": {"configured": image_channel.configured(),
+                        "model": os.getenv("IMAGE_MODEL", image_channel.DEFAULT_MODEL),
+                        "base_url": image_channel.DEFAULT_BASE},
+            "sources": [{"id": "ai", "label": "AI 生图"}, {"id": "kb", "label": "知识库原图"}],
+            "note": "AI 生图用提示词 + 产品原图；知识库原图不调用生图模型，直接用核验过的官方素材。"}
+
+
 @app.post("/api/v1/images/generate")
 async def generate_images(payload: image_edit.GenerateRequest):
-    """一键生图：用提示词 + 产品原图做图生图。"""
-    if not image_edit.configured():
-        return JSONResponse(status_code=503, content={"code": "CAPABILITY_DISABLED",
-                                                      "message": "图像编辑通道未配置 LLM_API_KEY"})
+    """一键配图：AI 生图（产品原图 + 提示词）或直接使用知识库原图。"""
     session = service.sessions.get(payload.session_id) if payload.session_id else None
     handoff = session.handoff_cache if session else None
     if not handoff or not handoff.get("images"):
         return JSONResponse(status_code=422, content={"code": "EVIDENCE_REQUIRED",
                                                       "message": "需要先有产品原图：请先完成选品与核验，或指定 image_id"})
     images = handoff["images"]
+    if payload.source == "kb":
+        return {"status": "ok", "source": "kb", "prompt": None, "model": None,
+                "images": [row.get("access_url") for row in images],
+                "note": "已选择知识库原图，未调用生图模型；素材来自官方知识库核验结果。"}
+    if not image_channel.configured() and not image_edit.configured():
+        return JSONResponse(status_code=503, content={"code": "CAPABILITY_DISABLED",
+                                                      "message": "生图通道未配置 IMAGE_API_KEY（或 LLM_API_KEY）"})
     image = next((row for row in images if row.get("image_id") == payload.image_id), images[0])
     token = (image.get("access_url") or "").rstrip("/").split("/")[-1]
     stored = get_asset(token)
@@ -309,19 +324,40 @@ async def generate_images(payload: image_edit.GenerateRequest):
     body, mime = stored
     slots = session.slots.model_dump(mode="json") if session else {}
     facts = [str(fact.get("text", "")).partition("：")[0] for fact in handoff.get("facts", [])[:3]]
-    prompt = payload.prompt or image_edit.build_prompt(
-        scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
-        objective=slots.get("objective", ""), title=slots.get("instructions", "")[:40],
-        facts=facts, style=payload.style, extra=payload.extra)
+    draft_title = (session.draft or {}).get("title", "") if session else ""
+    subject = draft_title or slots.get("instructions", "").split("\n")[0]
+    channel_prompt = payload.prompt or image_channel.build_prompt(
+        style=payload.style, subject=subject, scene=slots.get("scenario", ""),
+        audience=slots.get("audience", ""), facts=facts, extra=payload.extra)
+    channel = "image_api"
+    mode = "img2img"
     try:
-        results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
-                                          payload.size, payload.n, payload.model)
-    except image_edit.ImageEditError as error:
-        return JSONResponse(status_code=error.status, content={"code": "IMAGE_EDIT_FAILED",
+        if image_channel.configured():
+            results = await asyncio.to_thread(image_channel.generate_from_product, body,
+                                              channel_prompt, mime, payload.model,
+                                              payload.size or "1024x1024", payload.n)
+            prompt = channel_prompt
+        else:  # DashScope fallback keeps the previous behaviour
+            channel = "dashscope"
+            prompt = payload.prompt or image_edit.build_prompt(
+                scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
+                objective=slots.get("objective", ""), title=subject, facts=facts,
+                style=payload.style, extra=payload.extra)
+            if payload.mode == "scene" or (payload.mode == "auto" and image_edit.has_alpha(body)):
+                mode = "scene"
+                results = await asyncio.to_thread(image_edit.generate_scene_image, body,
+                                                  payload.style, payload.prompt or "")
+            else:
+                mode = "edit"
+                results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
+                                                  payload.size, payload.n, payload.model)
+    except (image_channel.ImageChannelError, image_edit.ImageEditError) as error:
+        return JSONResponse(status_code=error.status, content={"code": "IMAGE_GENERATE_FAILED",
                                                                "message": error.message})
     from .retrieval import store_asset
     urls = [store_asset(content, "image/png") for content in results]
-    return {"status": "ok", "prompt": prompt, "model": payload.model or image_edit.DEFAULT_EDIT_MODEL,
+    return {"status": "ok", "source": "ai", "channel": channel, "mode": mode,
+            "prompt": prompt, "model": payload.model or os.getenv("IMAGE_MODEL", image_channel.DEFAULT_MODEL),
             "images": urls,
             "note": "生成图只作氛围背景，不是产品实拍；产品外观以原图为准，发布前需人工核对。"}
 

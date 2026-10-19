@@ -1127,6 +1127,19 @@
     }
   });
 
+  async function loadImageStyles() {
+    try {
+      const response = await fetch('/api/v1/images/styles');
+      const data = await response.json();
+      const select = $('image-style');
+      select.innerHTML = (data.styles || []).map(style =>
+        '<option value="' + escapeHtml(style.id) + '">' + escapeHtml(style.label) + '</option>').join('');
+      if (!select.options.length) select.innerHTML = '<option value="clean_desk">清爽桌搭</option>';
+    } catch (error) {
+      $('image-style').innerHTML = '<option value="clean_desk">清爽桌搭</option>';
+    }
+  }
+
   async function generateImages() {
     const button = $('generate-images');
     if (!sessionId) { toast('请先完成需求澄清与选品，拿到产品原图后再生图'); return; }
@@ -1134,20 +1147,23 @@
     button.disabled = true;
     button.textContent = '生成中…';
     try {
+      const source = $('image-source').value;
       const response = await fetch('/api/v1/images/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, style: $('image-style').value, n: 1 }),
+        body: JSON.stringify({ session_id: sessionId, source: source, style: $('image-style').value, n: 1,
+          prompt: source === 'ai' ? (($('image-prompt').value || '').trim() || null) : null }),
       });
       const data = await response.json();
       if (!response.ok) { toast(data.message || '生图失败'); return; }
       const wrap = $('image-results');
       wrap.hidden = false;
+      const caption = data.source === 'kb' ? '知识库原图' : 'AI 生成 · 非产品实拍';
       wrap.innerHTML = data.images.map(url =>
-        '<figure><img src="' + escapeHtml(url) + '" alt="AI 生成图" loading="lazy">' +
-        '<figcaption>AI 氛围图 · 非产品实拍</figcaption></figure>').join('') +
-        '<p class="hint">' + escapeHtml(data.note) + '</p>';
-      toast('已生成图片');
+        '<figure><img src="' + escapeHtml(url) + '" alt="' + escapeHtml(caption) + '" loading="lazy">' +
+        '<figcaption>' + escapeHtml(caption) + '</figcaption></figure>').join('') +
+        '<p class="hint">' + escapeHtml(data.note) + (data.model ? ' · 模型 ' + escapeHtml(data.model) : '') + '</p>';
+      toast(data.source === 'kb' ? '已使用知识库原图' : '已生成图片');
     } catch (error) {
       toast('生图失败，请稍后重试');
     } finally {
@@ -1157,6 +1173,12 @@
   }
 
   $('generate-images').addEventListener('click', generateImages);
+  $('image-source').addEventListener('change', () => {
+    const ai = $('image-source').value === 'ai';
+    $('image-style').disabled = !ai;
+    $('image-prompt').disabled = !ai;
+    $('generate-images').textContent = ai ? '一键生图' : '使用知识库原图';
+  });
   $('generate-cover').addEventListener('click', generateCover);
 
   $('new-task').addEventListener('click', newTask);
@@ -1199,6 +1221,7 @@
   window.AgentApp = { getSessionId: () => sessionId, getHotTopics: () => hotTopics, switchView };
 
   loadKnowledgeBase();
+  loadImageStyles();
   loadXhsStatus();
   loadModels();
   populateSamplePages();

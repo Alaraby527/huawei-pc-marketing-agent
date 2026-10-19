@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "华为PC营销Agent · 门店导购与图文生成",
-    "version": "0.10.0"
+    "version": "0.12.0"
   },
   "paths": {
     "/": {
@@ -619,6 +619,59 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/styles": {
+      "get": {
+        "summary": "Image Styles",
+        "operationId": "image_styles_api_v1_images_styles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/generate": {
+      "post": {
+        "summary": "Generate Images",
+        "description": "一键配图：AI 生图（产品原图 + 提示词）或直接使用知识库原图。",
+        "operationId": "generate_images_api_v1_images_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2803,6 +2856,93 @@
           "source"
         ],
         "title": "Fact"
+      },
+      "GenerateRequest": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "style": {
+            "type": "string",
+            "title": "Style",
+            "default": "clean_desk"
+          },
+          "extra": {
+            "type": "string",
+            "title": "Extra",
+            "default": ""
+          },
+          "n": {
+            "type": "integer",
+            "title": "N",
+            "default": 1
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode",
+            "default": "auto"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "ai"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "GenerateRequest"
       },
       "HTTPValidationError": {
         "properties": {

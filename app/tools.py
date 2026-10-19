@@ -139,7 +139,7 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                                                manifest=args.get("manifest", {}))
             return _clip(rednote.create_design_document(db, ctx, payload))
         if name == "generate_image":
-            from . import image_edit
+            from . import image_channel, image_edit
             from .conversation import service as conversation_service
             from .retrieval import get_asset, store_asset
             session = conversation_service.sessions.get(str(args.get("conversation_id") or ""))
@@ -154,14 +154,27 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                 return {"error": "SOURCE_UNAVAILABLE", "message": "产品图片临时地址已过期，请刷新材料"}
             slots = session.slots.model_dump(mode="json")
             facts = [str(fact.get("text", "")).partition("：")[0] for fact in handoff.get("facts", [])[:3]]
-            prompt = args.get("prompt") or image_edit.build_prompt(
+            draft_title = (session.draft or {}).get("title", "")
+            style = args.get("style", "clean_desk")
+            prompt = args.get("prompt") or image_channel.build_prompt(
+                style=style, subject=draft_title or slots.get("instructions", "").split("\n")[0],
                 scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
-                objective=slots.get("objective", ""), title=slots.get("instructions", "")[:40],
-                facts=facts, style=args.get("style", "clean_desk"), extra=args.get("extra", ""))
-            results = image_edit.edit_image(stored[0], prompt, stored[1], None,
-                                            int(args.get("n", 1) or 1), None)
+                facts=facts, extra=args.get("extra", ""))
+            if image_channel.configured():
+                results = image_channel.generate_from_product(stored[0], prompt, stored[1],
+                                                              None, "1024x1024",
+                                                              int(args.get("n", 1) or 1))
+                channel = "image_api"
+            elif image_edit.has_alpha(stored[0]):
+                results = image_edit.generate_scene_image(stored[0], style, args.get("prompt", ""))
+                channel = "dashscope-scene"
+            else:
+                results = image_edit.edit_image(stored[0], prompt, stored[1], None,
+                                                int(args.get("n", 1) or 1), None)
+                channel = "dashscope-edit"
             return _clip({"images": [store_asset(content, "image/png") for content in results],
-                          "prompt": prompt, "note": "生成图只作氛围背景，不是产品实拍"})
+                          "channel": channel, "prompt": prompt,
+                          "note": "生成图只作氛围背景，不是产品实拍"})
         if name == "list_design_styles":
             from . import design_library
             return _clip({"families": design_library.styles(), "count": len(design_library.RECIPES)})
