@@ -38,9 +38,18 @@ def _read_with_deadline(response, deadline, limit):
     """
     chunks = []
     total = 0
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
     while True:
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise TimeoutError("模型响应超过总时限")
+        if sock is not None:
+            try:
+                # A gateway that trickles bytes can reset the original socket
+                # timeout forever; cap each read by the remaining wall clock.
+                sock.settimeout(remaining)
+            except OSError:
+                pass
         chunk = response.read(65536)
         if not chunk:
             break
