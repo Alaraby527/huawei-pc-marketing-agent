@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.1 — 2026-10-20
+
+### Changed
+
+- `/api/v1/models` now returns labels and context windows for the model picker (still no keys).
+- DeepSeek v4.1 flash runs with `enable_thinking=false` for structured JSON drafting: six pages generated in ~14s instead of consuming thousands of reasoning tokens, avoiding gateway timeouts; qwen models are unchanged.
+
 ## 0.13.0 — 2026-10-20
 
 ### Added

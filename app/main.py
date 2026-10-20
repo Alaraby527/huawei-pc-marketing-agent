@@ -117,10 +117,10 @@ async def questions():
 @app.get("/api/v1/models")
 async def models():
     text_models = allowed_models()
-    return {"rule": True, "text": text_models,
-            "default": text_models[0] if text_models else None,
+    return {"rule": True, "text": text_models, "models": model_catalog(),
+            "default": default_model() if text_models else None,
             "image": os.getenv("LLM_IMAGE_MODEL", "") or None,
-            "note": "只返回服务端允许的模型名；密钥不会下发。新增模型请配置 LLM_ALLOWED_MODELS。"}
+            "note": "只返回服务端允许的模型与上下文信息；密钥不会下发。新增模型请配置 LLM_MODELS_JSON 或 LLM_ALLOWED_MODELS。"}
 
 @app.get("/api/v1/contracts/materials")
 async def materials_schema():

@@ -61,6 +61,7 @@ def model_registry():
                 "context": str(item.get("context") or ""),
                 "default": bool(item.get("default")),
                 "max_tokens": item.get("max_tokens"),
+                "extra_body": item.get("extra_body") if isinstance(item.get("extra_body"), dict) else {},
             })
         if registry:
             return registry
@@ -105,6 +106,7 @@ def _settings(model=None):
         "model": entry["model"],
         "timeout": _env_int("LLM_TIMEOUT", 120, 10, 170),
         "max_tokens": int(max_tokens) if max_tokens else _env_int("LLM_MAX_TOKENS", 6000, 500, 8000),
+        "extra_body": entry.get("extra_body") or {},
     }
 
 
@@ -146,14 +148,16 @@ def complete_json(system, payload, *, schema_hint="", model=None):
     user_content = json.dumps(payload, ensure_ascii=False)
     if schema_hint:
         user_content += "\n\n输出必须是严格 JSON，不要代码围栏。" + schema_hint
-    body = json.dumps({
+    body_data = {
         "model": settings["model"],
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_content}],
         "stream": False,
         "temperature": 0.7,
         "max_tokens": settings["max_tokens"],
         "response_format": {"type": "json_object"},
-    }).encode()
+    }
+    body_data.update(settings.get("extra_body") or {})
+    body = json.dumps(body_data).encode()
     req = urllib.request.Request(
         settings["base_url"] + "/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
