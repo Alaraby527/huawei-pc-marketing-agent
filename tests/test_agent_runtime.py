@@ -165,6 +165,37 @@ def test_render_supports_variable_page_count():
     session.close()
 
 
+def test_mismatch_note_explains_unsupported_requested_value():
+    facts = [{"fact_id": "F-MEM", "text": "内存：16 GB", "source": "合成测试材料",
+              "conditions": ""}]
+    note = agent_runtime._request_mismatch_note("内存写成 64GB", facts)
+    assert "64GB" in note and "16 GB" in note
+    assert "没有照这个数字改写" in note
+    assert agent_runtime._request_mismatch_note("不要写成 64GB", facts) == ""
+    explained = "知识库没有 64GB 版本，实际是 16 GB。"
+    assert agent_runtime._request_mismatch_note("内存写成 64GB", facts, explained) == ""
+
+
+def test_compose_reply_is_used_as_delivery_message(monkeypatch):
+    session, ctx = _ctx()
+    ctx.last_search = {
+        "products": [{"product_id": "P-test"}],
+        "evidence": [{"fact_id": "F-MEM", "text": "内存：16 GB",
+                      "source": "合成测试材料", "conditions": ""}],
+    }
+
+    def fake(system, messages, schema_hint=None, model=None):
+        return {"artifact_type": "post", "reply": "知识库没有 64 GB，这篇按 16 GB 写。",
+                "content": {"product_id": "P-test", "title": "真实配置",
+                            "body": "内存 16 GB"}}, {"model": "stub"}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake)
+    saved, _ = agent_runtime._compose_after_evidence(ctx, "内存写成 64GB", None)
+    assert saved["ok"] is True
+    assert saved["reply"] == "知识库没有 64 GB，这篇按 16 GB 写。"
+    session.close()
+
+
 def test_v2_requires_database(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     response = client.post("/api/v2/conversations", json={})

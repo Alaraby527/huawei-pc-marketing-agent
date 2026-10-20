@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 from . import models
 from .contracts import Fact, Platform
 from .evidence import load_catalog, verified_images
-from .grounding import check_artifact, records_from_facts
+from .grounding import (_FIELD_ALIASES, _field_hint, _normalized, check_artifact,
+                        extract_claims, records_from_facts)
 from .model import ModelError, chat_json_messages, chat_tools
 from .posters import render_page
 from .retrieval import get_asset, store_asset
@@ -88,6 +89,7 @@ TOOL_SPECS = [
                                                       "revision": {"type": "integer"}}}},
 ]
 
+NATIVE_TOOL_SPECS = [{"type": "function", "function": spec} for spec in TOOL_SPECS]
 TOOL_NAMES = {spec["name"] for spec in TOOL_SPECS}
 
 
@@ -108,6 +110,7 @@ class ToolContext:
     evidence_read: bool = False
     auto_chained: bool = False
     last_artifact: dict | None = None
+    compose_attempted: bool = False
     events: list = field(default_factory=list)
 
 
@@ -146,6 +149,127 @@ def _normalize_message(message: dict) -> dict:
                                                                                         "options": obj.get("options") or []},
                                                                                        ensure_ascii=False)}}]}
     return message
+
+
+def _request_mismatch_note(user_text: str, facts: list, reply: str = "") -> str:
+    """Tell the user when a value they asked for is absent from the knowledge base.
+
+    The artifact is already checked, so this only covers the conversational
+    reply: the model must not silently replace a requested value, and it must
+    not imply the requested value was written. Only explicit "write it as"
+    intent is considered, to avoid flagging negations or quoted user text.
+    """
+    if not re.search(r"写成|改写成|改成|标成|写为|改成|写成|说成", user_text or ""):
+        return ""
+    records = records_from_facts(facts or [])
+    notes: list[str] = []
+    for claim in extract_claims(user_text):
+        context = user_text[max(0, claim.start - 12):claim.end + 4]
+        if re.search(r"不要|别|不能|不可|避免|不用", context):
+            continue
+        normalized = _normalized(claim.number, claim.unit)
+        if normalized is None:
+            continue
+        value, family = normalized
+        if family == "price":
+            continue
+        candidates = [record for record in records
+                      if _normalized(record.value, record.unit) and
+                      _normalized(record.value, record.unit)[1] == family]
+        if not candidates:
+            continue
+        if any(abs(_normalized(record.value, record.unit)[0] - value) < 1e-6
+               for record in candidates):
+            continue
+        hint = _field_hint(claim.context)
+        field = _FIELD_ALIASES.get(hint, hint)
+        if field:
+            candidates = [record for record in candidates if field in record.field] or candidates
+        values: list[str] = []
+        for record in candidates[:6]:
+            token = f"{record.value} {record.unit}"
+            if token not in values:
+                values.append(token)
+        if values:
+            compact_reply = re.sub(r"\s+", "", reply or "").lower()
+            compact_claim = re.sub(r"\s+", "", claim.text).lower()
+            if compact_claim and compact_claim in compact_reply and any(
+                    re.sub(r"\s+", "", value).lower() in compact_reply for value in values):
+                continue
+            notes.append(f"知识库没有 {claim.text} 这个配置，我没有照这个数字改写；"
+                         f"交付内容按真实可选值 {' / '.join(values)} 编写。")
+    return " ".join(dict.fromkeys(notes))
+
+
+def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None):
+    """One dedicated writing call after evidence is available.
+
+    This avoids a model loop that keeps re-searching instead of writing; the
+    model still authors the copy, and the backend validates and saves it.
+    """
+    facts = (ctx.last_search or {}).get("evidence") or []
+    products = (ctx.last_search or {}).get("products") or []
+    product_id = products[0]["product_id"] if products else ""
+    system = ("你是华为 PC 营销文案。只能使用用户消息里给定的事实，不得编造参数、价格、体验或适配结论；"
+              "保留“约/最高/选配/仅某版本”等限定。输出一个 JSON 对象："
+              "{\"artifact_type\":\"pages\",\"reply\":\"给用户的一句说明\","
+              "\"content\":{\"product_id\":\"...\","
+              "\"title\":\"...\",\"body\":\"...\",\"tags\":[],"
+              "\"pages\":[{\"role\":\"hook\",\"title\":\"...\",\"text\":\"...\",\"fact_ids\":[]}]}}。"
+              "reply 要说明实际交付了什么；如果用户要求写入的参数与事实不符，reply 必须直接说明未照做并给出真实值，"
+              "不能只说“已保存”。")
+    user = ("用户需求：" + user_text + "\n产品证据：" + json.dumps(facts, ensure_ascii=False) +
+            "\n请按用户要求的页数直接创作；不要调用工具，不要写价格。")
+    try:
+        result, meta = chat_json_messages(system, [{"role": "user", "content": user}],
+                                          schema_hint="只输出交付物 JSON", model=model)
+    except ModelError:
+        return None
+    content = result.get("content") if isinstance(result, dict) else None
+    if not isinstance(content, dict):
+        return None
+    reply = str(result.get("reply") or "").strip() if isinstance(result, dict) else ""
+    content.setdefault("product_id", product_id)
+    saved = _save_artifact(ctx, {"artifact_type": result.get("artifact_type") or "pages",
+                                 "product_id": content.get("product_id") or product_id,
+                                 "content": content})
+    if isinstance(saved, dict):
+        saved["reply"] = reply
+    return saved, meta
+
+
+def _is_edit_request(text: str) -> bool:
+    return bool(re.search(r"改|调整|换成|自然|口语|短一点|长一点|精简|第[一二三四五六七八九十0-9]+页|标题", text or ""))
+
+
+def _edit_artifact(ctx: ToolContext, instruction: str, model: str | None):
+    loaded = _load_artifact(ctx, {})
+    if not loaded.get("ok"):
+        return None
+    system = ("你是华为 PC 营销文案编辑。只输出 JSON："
+              "{\"patch\":{\"pages.1.text\":\"…\"},\"reply\":\"只改了哪里的简短说明\"}，"
+              "路径使用点号表示数组下标；只改用户指定的位置，其他内容、事实和限定保持不变。"
+              "如果用户要求写入的参数与事实不符，不要写入，reply 直接说明并给出真实值。")
+    user = ("当前交付物（v" + str(loaded.get("revision")) + "）：" +
+            json.dumps(loaded.get("content") or {}, ensure_ascii=False) +
+            "\n修改要求：" + instruction)
+    result, meta = chat_json_messages(system, [{"role": "user", "content": user}],
+                                      schema_hint="只输出 patch JSON", model=model)
+    patch = result.get("patch") if isinstance(result, dict) else None
+    content = result.get("content") if isinstance(result, dict) else None
+    reply = str(result.get("reply") or "").strip() if isinstance(result, dict) else ""
+    payload = {"artifact_id": loaded["artifact_id"], "base_revision": loaded["revision"]}
+    if isinstance(patch, dict):
+        payload["patch"] = patch
+    elif isinstance(content, dict):
+        payload["content"] = content
+        payload["product_id"] = content.get("product_id", "")
+    else:
+        return None
+    saved = _save_artifact(ctx, payload)
+    if isinstance(saved, dict):
+        saved["reply"] = reply
+    return saved
 
 
 def _summary(value):
@@ -323,21 +447,37 @@ def _save_artifact(ctx, args):
     if artifact_id:
         artifact = db.get(models.AgentArtifact, artifact_id)
         if not artifact or artifact.conversation_id != ctx.conversation.id:
-            return {"ok": False, "error": "ARTIFACT_NOT_FOUND", "message": "交付物不存在"}
+            if not args.get("content"):
+                return {"ok": False, "error": "ARTIFACT_NOT_FOUND", "message": "交付物不存在"}
+            # The model may invent a friendly id. If this conversation already
+            # has an artifact of the same type, update its latest revision
+            # instead of creating duplicates.
+            artifact = db.scalars(select(models.AgentArtifact).where(
+                models.AgentArtifact.conversation_id == ctx.conversation.id,
+                models.AgentArtifact.artifact_type == str(args.get("artifact_type") or "post")
+            ).order_by(models.AgentArtifact.created_at.desc())).first()
+            artifact_id = artifact.id if artifact else ""
         latest = db.scalars(select(models.AgentArtifactRevision).where(
             models.AgentArtifactRevision.artifact_id == artifact.id).order_by(
-            models.AgentArtifactRevision.revision.desc())).first()
+            models.AgentArtifactRevision.revision.desc())).first() if artifact else None
         base = args.get("base_revision")
         if base is not None and latest and int(base) != latest.revision:
             return {"ok": False, "error": "STALE_REVISION",
                     "message": f"当前版本是 {latest.revision}，请基于最新版本修改"}
-        content = _apply_patch(latest.content if latest else {}, args.get("patch") or {}) \
-            if args.get("patch") else dict(args.get("content") or {})
-        revision_no = (latest.revision if latest else 0) + 1
+        if artifact is not None:
+            content = _apply_patch(latest.content if latest else {}, args.get("patch") or {}) \
+                if args.get("patch") else dict(args.get("content") or {})
+            revision_no = (latest.revision if latest else 0) + 1
+        else:
+            content = dict(args.get("content") or {})
+            revision_no = 1
     else:
         content = dict(args.get("content") or {})
+        artifact = db.scalars(select(models.AgentArtifact).where(
+            models.AgentArtifact.conversation_id == ctx.conversation.id,
+            models.AgentArtifact.artifact_type == str(args.get("artifact_type") or "post")
+        ).order_by(models.AgentArtifact.created_at.desc())).first()
         revision_no = 1
-        artifact = None
     product_id = str(args.get("product_id") or content.get("product_id") or "")
     check = {"passed": True, "errors": [], "warnings": [], "checked": 0,
              "note": "未绑定产品事实，仅做创意内容交付"}
@@ -468,6 +608,8 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
         elif name == "ask_user":
             result = {"ok": True, "question": str(args.get("question", "")),
                       "options": args.get("options") or []}
+        elif name in ("save_artifact", "check_artifact") and ctx.catalog is None:
+            await _catalog(ctx)
         elif name == "load_artifact":
             result = _load_artifact(ctx, args)
         elif name == "save_artifact":
@@ -482,6 +624,12 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
         result = {"ok": False, "error": "TOOL_ERROR", "message": str(error)[:200]}
     if name == "read_product_evidence" and result.get("ok"):
         ctx.evidence_read = True
+        existing = dict(ctx.last_search or {})
+        existing["evidence"] = result.get("facts") or []
+        if not existing.get("products"):
+            existing["products"] = [{"product_id": result.get("product_id"),
+                                     "model": result.get("model")}]
+        ctx.last_search = existing
     duration = int((time.monotonic() - started) * 1000)
     ctx.db.add(models.AgentToolExecution(run_id=ctx.run.id, tool_name=name,
                                          args_summary=_summary(args),
@@ -511,6 +659,32 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     db.flush()
     _event(run, "message", role="user", content=text)
     ctx = ToolContext(db=db, conversation=conversation, run=run)
+    existing = _load_artifact(ctx, {})
+    if existing.get("ok") and _is_edit_request(text):
+        await _catalog(ctx)
+        product_id = str((existing.get("content") or {}).get("product_id") or "")
+        if product_id:
+            await execute_tool(ctx, "read_product_evidence", {"product_id": product_id})
+        edited = await asyncio.to_thread(_edit_artifact, ctx, text, model)
+        if edited and edited.get("ok"):
+            reply = str(edited.get("reply") or "").strip()
+            if not reply:
+                reply = "已更新交付物 v" + str(edited["revision"]) + "，只修改了你指定的范围。"
+            note = _request_mismatch_note(text, (ctx.last_search or {}).get("evidence") or [],
+                                          reply)
+            if note and note not in reply:
+                reply = reply + "\n\n" + note
+            status = "completed"
+            run.status = status
+            run.usage = {"input_tokens": 0, "output_tokens": 0, "models": []}
+            run.finished_at = _now()
+            db.add(models.AgentMessage(conversation_id=conversation.id, role="assistant",
+                                       content=reply, seq=base_seq + 90))
+            _event(run, "artifact_updated", artifact_id=edited["artifact_id"],
+                   revision=edited["revision"])
+            _event(run, "run_finished", status=status, stop_reason="")
+            db.flush()
+            return run_payload(db, run)
     reply = ""
     status = "completed"
     stop_reason = ""
@@ -535,9 +709,21 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                                      "tool_calls": packed.get("tool_calls") or []})
                 else:
                     messages.append({"role": item.role, "content": item.content})
+            loaded = _load_artifact(ctx, {})
+            if loaded.get("ok"):
+                messages.append({"role": "user", "content":
+                    "当前交付物 v" + str(loaded.get("revision")) + "（修改时基于此版本，保留未指定的页）：" +
+                    json.dumps(loaded.get("content") or {}, ensure_ascii=False)[:12000]})
+            if ctx.evidence_read:
+                messages.append({"role": "user", "content":
+                    "产品证据已经读取。现在请直接创作文案并调用 save_artifact 保存"
+                    "（content 含 title/body/tags/pages，页数按用户要求）；不要再调用 search_products 或 read_product_evidence。"})
+            elif ctx.last_search:
+                messages.append({"role": "user", "content":
+                    "已找到产品。下一步调用 read_product_evidence 读取第一条产品的证据。"})
             try:
                 message, meta = await asyncio.to_thread(chat_tools, SYSTEM_PROMPT, messages,
-                                                        TOOL_SPECS, model=model)
+                                                        NATIVE_TOOL_SPECS, model=model)
             except ModelError as native_error:
                 if "HTTP 400" not in str(native_error) and "HTTP 404" not in str(native_error):
                     raise
@@ -608,6 +794,25 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                                                seq=base_seq + 3 + step * 4 + call_index))
                 if status == "waiting_user":
                     break
+                if ctx.evidence_read and not ctx.compose_attempted:
+                    ctx.compose_attempted = True
+                    composed = await asyncio.to_thread(_compose_after_evidence, ctx, text, model)
+                    if composed and composed[0].get("ok"):
+                        ctx.last_artifact = composed[0]
+                        reply = str(composed[0].get("reply") or "").strip()
+                        if not reply:
+                            reply = "已保存交付物 v" + str(composed[0]["revision"]) + "。"
+                        note = _request_mismatch_note(text, (ctx.last_search or {}).get("evidence") or [],
+                                                      reply)
+                        if note and note not in reply:
+                            reply = reply + "\n\n" + note
+                        break
+                    if composed:
+                        errors = (composed[0].get("check") or {}).get("errors") or []
+                        reply = "交付物未通过检查：" + str(composed[0].get("message", ""))
+                        if errors:
+                            reply += "；" + "；".join(item.get("message", "") for item in errors[:2])
+                        break
                 continue
             reply = content.strip()
             try:
@@ -622,7 +827,12 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                                              "content": candidate.get("content")})
                 if saved.get("ok"):
                     ctx.last_artifact = saved
-                    reply = "已保存交付物 v" + str(saved["revision"]) + "。"
+                    reply = str(candidate.get("reply") or "").strip() or (
+                        "已保存交付物 v" + str(saved["revision"]) + "。")
+                    note = _request_mismatch_note(text, (ctx.last_search or {}).get("evidence") or [],
+                                                  reply)
+                    if note and note not in reply:
+                        reply = reply + "\n\n" + note
                 else:
                     reply = "交付物未通过检查：" + str(saved.get("message", ""))
             break

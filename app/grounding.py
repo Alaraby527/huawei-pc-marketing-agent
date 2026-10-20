@@ -51,6 +51,13 @@ _CLAIM_RE = re.compile(r"(?P<number>" + _NUMBER + r")\s*(?P<unit>" + _UNIT_PATTE
 _QUALIFIERS = ("约", "大约", "最高", "至高", "选配", "仅", "支持", "最长", "最低", "起")
 _FIELD_HINTS = ("内存", "存储", "硬盘", "重量", "屏幕", "尺寸", "电池", "容量", "分辨率",
                 "刷新率", "接口", "续航", "处理器", "显卡", "摄像头", "厚度")
+_FIELD_ALIASES = {
+    "厚度": "尺寸与重量", "重量": "尺寸与重量", "尺寸": "尺寸与重量",
+    "刷新率": "屏幕", "分辨率": "屏幕", "屏幕": "屏幕",
+    "电池": "电池", "续航": "电池", "容量": "电池",
+    "存储": "存储", "硬盘": "存储", "内存": "内存", "接口": "接口",
+    "处理器": "处理器", "显卡": "显卡", "摄像头": "摄像头",
+}
 
 
 @dataclass
@@ -113,17 +120,18 @@ def records_from_facts(facts: Iterable, product_id: str = "", variant_id: str = 
         parts = re.split(r"[：:]", text, maxsplit=1)
         label = parts[0].strip()
         value = parts[1].strip() if len(parts) > 1 else text.strip()
-        qualifier = next((word for word in _QUALIFIERS if word in value), "")
         matches = list(_CLAIM_RE.finditer(value))
-        if not matches:
-            continue
-        number = matches[0].group("number")
-        unit = matches[0].group("unit")
-        records.append(FactRecord(fact_id=fact_id, product_id=product_id, variant_id=variant_id,
-                                  field=label, value=number, unit=unit, qualifier=qualifier,
-                                  conditions=conditions, source_id=source_title,
-                                  source_revision=str(getattr(fact, "source_revision", "") or ""),
-                                  source_locator=locator, raw_text=text))
+        for match in matches:
+            context = value[max(0, match.start() - 10):min(len(value), match.end() + 18)]
+            qualifier = next((word for word in _QUALIFIERS if word in context), "")
+            extra = re.findall(r"[（(]([^）)]{1,30})[）)]", context)
+            records.append(FactRecord(fact_id=fact_id, product_id=product_id, variant_id=variant_id,
+                                      field=label, value=match.group("number"),
+                                      unit=match.group("unit"), qualifier=qualifier,
+                                      conditions=list(dict.fromkeys(conditions + extra)),
+                                      source_id=source_title,
+                                      source_revision=str(getattr(fact, "source_revision", "") or ""),
+                                      source_locator=locator, raw_text=text))
     return records
 
 
@@ -193,14 +201,10 @@ def check_text(text: str, records: list[FactRecord], *, strict_qualifier: bool =
             continue
         hint = _field_hint(_clause(text, claim.start, claim.end))
         if hint:
-            hinted = [record for record in exact if hint in record.field]
-            if not hinted:
-                errors.append({"code": "FIELD_MISMATCH",
-                               "message": f"{claim.text} 的证据字段与上下文“{hint}”不一致",
-                               "claim": claim.text, "span": [claim.start, claim.end],
-                               "fields": sorted({record.field for record in exact})})
-                continue
-            exact = hinted
+            alias = _FIELD_ALIASES.get(hint, hint)
+            hinted = [record for record in exact if alias in record.field]
+            if hinted:
+                exact = hinted
         record = exact[0]
         if record.qualifier in ("约", "大约") and record.qualifier not in claim.context:
             message = f"{claim.text} 来自“{record.raw_text}”，原文含“{record.qualifier}”，请保留限定"
