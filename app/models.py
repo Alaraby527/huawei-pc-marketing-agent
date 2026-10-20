@@ -331,3 +331,73 @@ class MetricValue(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     precision_note: Mapped[str] = mapped_column(String(200), default="")
+
+
+class AgentConversation(Base):
+    __tablename__ = "agent_conversations"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    runner_version: Mapped[str] = mapped_column(String(40), default="v2")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentMessage(Base):
+    __tablename__ = "agent_messages"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="user")
+    content: Mapped[str] = mapped_column(Text, default="")
+    tool_call_id: Mapped[str] = mapped_column(String(80), default="")
+    seq: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_agent_run_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="running")
+    model: Mapped[str] = mapped_column(String(80), default="")
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, default=None)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    stop_reason: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentArtifact(Base):
+    __tablename__ = "agent_artifacts"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(40), default="post")
+    latest_revision: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentArtifactRevision(Base):
+    __tablename__ = "agent_artifact_revisions"
+    __table_args__ = (UniqueConstraint("artifact_id", "revision", name="uq_artifact_revision"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    artifact_id: Mapped[str] = mapped_column(String(32), index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    check_status: Mapped[dict] = mapped_column(JSON, default=dict)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentToolExecution(Base):
+    __tablename__ = "agent_tool_executions"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    tool_name: Mapped[str] = mapped_column(String(60), default="")
+    args_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str] = mapped_column(String(300), default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

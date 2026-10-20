@@ -311,3 +311,87 @@ def generate_cover_image(prompt):
     if item.get("url"):
         return _download_generated(item["url"], allow_any_https=True)
     raise ModelError("生图服务未返回图片数据")
+
+
+def chat_json_messages(system, messages, *, schema_hint="", model=None):
+    """Chat with real role messages and parse a JSON object from the reply.
+
+    Unlike complete_json (which serialises the payload into one user message),
+    this keeps assistant/tool turns as real chat roles so the model can follow
+    a multi-step tool loop.
+    """
+    if model and model not in allowed_models():
+        raise ModelError("该模型未在服务端允许列表；请在 LLM_MODELS_JSON 中配置")
+    settings = _settings(model)
+    if not all([settings["base_url"], settings["api_key"], settings["model"]]):
+        raise ModelError("请先配置模型端点与密钥")
+    _check_https(settings["base_url"])
+    hint = "输出必须是严格 JSON，不要代码围栏。" + (schema_hint or "")
+    body_data = {
+        "model": settings["model"],
+        "messages": [{"role": "system", "content": system + "\n" + hint}, *messages],
+        "stream": False,
+        "temperature": 0.4,
+        "max_tokens": settings["max_tokens"],
+        "response_format": {"type": "json_object"},
+    }
+    body_data.update(settings.get("extra_body") or {})
+    request = urllib.request.Request(
+        settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
+                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
+            raw = response.read(4 * 1024 * 1024)
+    except urllib.error.HTTPError as exc:
+        raise ModelError("模型服务 HTTP " + str(exc.code)) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
+    try:
+        result = json.loads(raw)
+        content = result["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise ValueError("content 不是字符串")
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        parsed = json.loads(content)
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise ModelError("模型没有返回有效的 JSON 结构") from None
+    return parsed, {"provider": "openai-next-compatible", "model": settings["model"],
+                    "usage": result.get("usage", {})}
+
+
+def chat_tools(system, messages, tools, *, model=None):
+    """Native OpenAI-style tool calling with real assistant/tool messages."""
+    if model and model not in allowed_models():
+        raise ModelError("该模型未在服务端允许列表；请在 LLM_MODELS_JSON 中配置")
+    settings = _settings(model)
+    if not all([settings["base_url"], settings["api_key"], settings["model"]]):
+        raise ModelError("请先配置模型端点与密钥")
+    _check_https(settings["base_url"])
+    body_data = {
+        "model": settings["model"],
+        "messages": [{"role": "system", "content": system}, *messages],
+        "tools": tools,
+        "tool_choice": "auto",
+        "stream": False,
+        "temperature": 0.4,
+        "max_tokens": settings["max_tokens"],
+    }
+    body_data.update(settings.get("extra_body") or {})
+    request = urllib.request.Request(
+        settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
+                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
+            result = json.loads(response.read(4 * 1024 * 1024))
+    except urllib.error.HTTPError as exc:
+        raise ModelError("模型服务 HTTP " + str(exc.code)) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
+    try:
+        message = result["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        raise ModelError("模型没有返回有效消息") from None
+    return message, {"provider": "openai-next-compatible", "model": settings["model"],
+                     "usage": result.get("usage", {})}

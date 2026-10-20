@@ -253,14 +253,89 @@
     }
   }
 
+  function eventTrace(events) {
+    const rows = (events || []).filter(item => item.type === 'tool_finished');
+    if (!rows.length) return '';
+    return '<div class="tool-trace">' + rows.map(item =>
+      '<span class="trace-step ' + (item.ok ? 'done' : 'warn') + '">tool · ' +
+      escapeHtml(item.tool || '') + ' · ' + escapeHtml(item.summary || '') + '</span>').join('') + '</div>';
+  }
+
+  function renderV2Artifact(conversation) {
+    const artifacts = (conversation && conversation.artifacts) || [];
+    const artifact = artifacts[0];
+    if (!artifact || !artifact.content) return;
+    const content = artifact.content;
+    const card = $('draft-card');
+    $('plan-empty').hidden = true;
+    $('candidate-board').hidden = true;
+    card.hidden = false;
+    $('draft-eyebrow').textContent = '交付物 · v' + artifact.latest_revision;
+    $('draft-title').textContent = content.title || '';
+    $('draft-meta').textContent = content.product_id ? '产品证据已绑定' : '创意内容（未绑定产品事实）';
+    $('draft-body').textContent = content.body || '';
+    $('draft-cta').textContent = content.cta ? '行动引导：' + content.cta : '';
+    $('draft-tags').innerHTML = (content.tags || []).map(tag =>
+      '<span>#' + escapeHtml(tag) + '</span>').join('');
+    const check = artifact.check || {};
+    $('draft-state').textContent = check.passed ? '已通过检查' : '有待处理问题';
+    $('draft-state').className = 'draft-state' + (check.passed ? ' ready' : '');
+    const pages = content.pages || [];
+    $('pages-empty').hidden = pages.length > 0;
+    $('pages-grid').hidden = pages.length === 0;
+    $('pages-grid').innerHTML = pages.map((page, index) =>
+      '<article class="page-card"><div class="page-card-head"><span class="page-role">' +
+      escapeHtml(ROLE_NAMES[page.role] || page.role || '页面') + '</span><span class="page-number">' +
+      String(index + 1).padStart(2, '0') + ' / ' + String(pages.length).padStart(2, '0') +
+      '</span></div><h4 class="page-title">' + escapeHtml(page.title || '') +
+      '</h4><p class="page-text">' + escapeHtml(page.text || '') + '</p>' +
+      ((page.fact_ids || []).length ? '<div class="page-facts">' + page.fact_ids.map(id =>
+        '<span class="fact-chip">' + escapeHtml(id) + '</span>').join('') + '</div>' : '') +
+      '</article>').join('');
+    switchTab('plan');
+    saveTask();
+  }
+
+  async function sendV2(message) {
+    if (turnInFlight) return;
+    turnInFlight = true;
+    setBusy(true);
+    if (message && message.trim()) lastUserText = message.trim();
+    try {
+      if (!sessionId) {
+        const created = await fetch('/api/v2/conversations', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        const conversation = await created.json();
+        sessionId = conversation.conversation_id;
+      }
+      const response = await fetch('/api/v2/conversations/' + sessionId + '/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: message || '', model: selectedModel,
+                               idempotency_key: (crypto.randomUUID && crypto.randomUUID()) ||
+                                 String(Date.now()) + Math.random() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        addMessage('assistant', '<p>' + escapeHtml(data.message || '任务执行失败') + '</p>');
+        return;
+      }
+      addMessage('assistant', '<p>' + escapeHtml(data.reply || '已完成') + '</p>' + eventTrace(data.events));
+      const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
+      renderV2Artifact(conversation);
+    } catch (error) {
+      addMessage('assistant', '<p>网络错误，请稍后重试。</p>');
+    } finally {
+      turnInFlight = false;
+      setBusy(false);
+      sendBtn.disabled = !input.value.trim();
+    }
+  }
+
   function send(message, slotUpdates) {
     if (turnInFlight) return;
-    if (message && message.trim()) lastUserText = message.trim();
-    if (selectedEngine === 'agent') return agentTurn(message || '');
-    const payload = { session_id: sessionId, message: message || '', engine: selectedEngine };
-    if (selectedEngine === 'llm' && selectedModel) payload.model = selectedModel;
-    if (slotUpdates) payload.slot_updates = slotUpdates;
-    return requestTurn(payload);
+    return sendV2(message || '');
   }
 
   function render(result) {
@@ -613,11 +688,10 @@
       const select = $('model-select');
       const textModels = (data.models || (data.text || []).map(model => ({ id: model, label: model })));
       const defaultModel = data.default || (textModels[0] && textModels[0].id) || null;
-      select.innerHTML = '<option value="agent">自主 Agent（工具调用）</option>' + textModels.map(item =>
+      select.innerHTML = textModels.map(item =>
         '<option value="llm:' + escapeHtml(item.id) + '">' +
         (item.id === defaultModel ? '默认模型 · ' : '') + escapeHtml(item.label || item.id) +
         (item.context ? ' · ' + escapeHtml(item.context) : '') + '</option>').join('') +
-        '<option value="rule">规则引擎</option>' +
         '<option value="custom" disabled>更多模型（待配置）</option>';
       if (defaultModel) {
         selectedEngine = 'llm';

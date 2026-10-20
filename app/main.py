@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -21,8 +22,10 @@ from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_t
 from .model import image_configured, generate_cover_image, ModelError, allowed_models, default_model, model_catalog
 from .posters import pages_for, render_page, zip_bytes
 from . import db as db_layer
+from . import models
 from . import rednote
 from .agent import AgentTurn, run_agent
+from . import agent_runtime
 from . import design_library
 from . import image_edit
 from . import image_channel
@@ -115,7 +118,7 @@ async def questions():
     return {"core": {key: ask(key) for key in ("audience", "budget", "scenario")}}
 
 @app.get("/api/v1/models")
-async def models():
+async def model_options():
     text_models = allowed_models()
     return {"rule": True, "text": text_models, "models": model_catalog(),
             "default": default_model() if text_models else None,
@@ -680,3 +683,86 @@ def studio_host():
         "<code>app/static/studio/</code> 后，本页会直接加载它。</p>"
         "<p>在此之前，工作区“设计文档”提供 JSON 往返与 PNG 样张导出，不会假装编辑器已接通。</p>"
         "<p><a href=\"/\">返回工作台</a></p></body></html>")
+
+
+# ---------------------------------------------------------------- V2 autonomous assistant
+
+def v2_db():
+    if not db_layer.configured():
+        raise HTTPException(status_code=503, detail={"code": "CAPABILITY_DISABLED",
+                                                     "message": "V2 会话需要 DATABASE_URL；请先配置数据库"})
+    global _workspace_db_ready
+    if not _workspace_db_ready:
+        db_layer.init_db()
+        _workspace_db_ready = True
+    session = db_layer.session_factory()()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@app.post("/api/v2/conversations")
+def v2_create_conversation(payload: dict | None = None, db=Depends(v2_db)):
+    payload = payload or {}
+    conversation = models.AgentConversation(workspace_id=str(payload.get("workspace_id") or "default"))
+    db.add(conversation)
+    db.flush()
+    return {"conversation_id": conversation.id, "workspace_id": conversation.workspace_id}
+
+
+@app.post("/api/v2/conversations/{conversation_id}/messages")
+async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn, db=Depends(v2_db)):
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    return await agent_runtime.run_turn(db, conversation, payload.message,
+                                        model=payload.model,
+                                        idempotency_key=payload.idempotency_key)
+
+
+@app.get("/api/v2/runs/{run_id}/events")
+def v2_run_events(run_id: str, db=Depends(v2_db)):
+    run = db.get(models.AgentRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND", "message": "运行不存在"})
+    return {"run_id": run.id, "status": run.status, "events": run.events or [],
+            "usage": run.usage or {}, "stop_reason": run.stop_reason}
+
+
+@app.get("/api/v2/conversations/{conversation_id}")
+def v2_get_conversation(conversation_id: str, db=Depends(v2_db)):
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    return agent_runtime.conversation_payload(db, conversation)
+
+
+@app.post("/api/v2/runs/{run_id}/cancel")
+def v2_cancel_run(run_id: str, db=Depends(v2_db)):
+    run = db.get(models.AgentRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND", "message": "运行不存在"})
+    if run.status == "running":
+        run.status = "cancelled"
+        run.stop_reason = "user_cancelled"
+        db.flush()
+    return {"run_id": run.id, "status": run.status}
+
+
+@app.get("/api/v2/artifacts/{artifact_id}/revisions/{revision}")
+def v2_artifact_revision(artifact_id: str, revision: int, db=Depends(v2_db)):
+    row = db.scalars(select(models.AgentArtifactRevision).where(
+        models.AgentArtifactRevision.artifact_id == artifact_id,
+        models.AgentArtifactRevision.revision == revision)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": "版本不存在"})
+    return {"artifact_id": artifact_id, "revision": row.revision, "content": row.content,
+            "content_hash": row.content_hash, "check": row.check_status,
+            "created_at": row.created_at.isoformat()}
