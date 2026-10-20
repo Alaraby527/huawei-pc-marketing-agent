@@ -1363,8 +1363,9 @@ async def _guided_intake(ctx: ToolContext, state, data: dict, needs: dict, text:
     _guided_usage_add(usage, meta)
     needs = _merge_needs(needs, extracted)
     data["needs"] = needs
-    intent = str(extracted.get("intent") or "unknown")
-    if intent == "chat" and not needs.get("product_hint"):
+    is_greeting = bool(_GREETING_RE.match(text or ""))
+    if is_greeting and not needs.get("audience") and not needs.get("scenario") \
+            and not needs.get("product_hint"):
         _save_guided(state, "intake", data, ctx.db)
         return _guided_finish(
             ctx.db, ctx.conversation, ctx.run, base_seq,

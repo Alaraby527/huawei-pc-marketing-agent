@@ -341,7 +341,9 @@ def test_guided_flow_from_greeting_to_artifact(monkeypatch):
         if "需求分析器" in system:
             if "最新用户消息：你好" in user:
                 return {"intent": "chat"}, {"model": "stub", "usage": {}}
-            return {"intent": "create", "audience": "大学生", "scenario": "校园学习",
+            # The model may label a direct answer as "chat"; the runtime must
+            # still use the extracted audience/scenario instead of greeting again.
+            return {"intent": "chat", "audience": "大学生", "scenario": "校园学习",
                     "tone": "轻松种草", "page_count": 6}, {"model": "stub", "usage": {}}
         payload = {"artifact_type": "pages", "reply": "文案和原图都好了。",
                    "content": {"product_id": "P-a", "title": "校园选本",
