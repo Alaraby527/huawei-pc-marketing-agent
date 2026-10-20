@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import create_engine
@@ -23,6 +24,35 @@ class Base(DeclarativeBase):
 
 def database_url() -> str:
     return (os.getenv("DATABASE_URL") or "").strip()
+
+
+def default_sqlite_path() -> str:
+    """File-backed fallback for single-instance demos (never in-memory)."""
+    configured_path = (os.getenv("AGENT_DB_PATH") or "").strip()
+    if configured_path:
+        return configured_path
+    if os.path.isdir("/app/data"):
+        return "/app/data/agent_v2.db"
+    return os.path.join(os.getcwd(), "data", "agent_v2.db")
+
+
+def ensure_configured() -> bool:
+    """Use DATABASE_URL, or create a file-backed SQLite DB for a demo instance.
+
+    The fallback keeps v2 conversations across requests and process restarts on
+    one machine. It is not a substitute for the Postgres deployment and never
+    falls back to an in-process dictionary.
+    """
+    if configured():
+        return True
+    path = default_sqlite_path()
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        os.environ["DATABASE_URL"] = "sqlite:///" + path
+        init_db()
+    except (OSError, RuntimeError):
+        return False
+    return True
 
 
 def configured() -> bool:

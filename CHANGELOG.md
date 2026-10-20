@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.0 — 2026-10-20
+
+### Added
+
+- **V2 autonomous assistant** (default chat entry): persistent conversations, runs, messages, tool executions and versioned artifacts; native OpenAI-compatible tool calling with a JSON fallback; `ask_user` pause/resume; local artifact patches; variable page counts.
+- **Field-level grounding** (`app/grounding.py`): each numeric claim is bound to product / field / value / unit / qualifier / conditions; prices and unsupported values are rejected; non-product numbers are ignored.
+- **Honest fact repair**: when the model insists on a value absent from the evidence, the runtime retries twice, then replaces only that value with the field's real values, re-checks and discloses the change. Unsupported page counts are never saved.
+- **Model wall-clock limits**: total request deadline plus per-run budget (`LLM_TIMEOUT`, `AGENT_RUN_BUDGET_SECONDS`), including protection against gateways that trickle bytes.
+- **Demo database fallback**: v2 uses `DATABASE_URL`; when it is absent, a file-backed SQLite DB is created at `AGENT_DB_PATH` (or `/app/data/agent_v2.db`) instead of an in-memory store.
+
+### Changed
+
+- Product search matches model-defining tokens (14, pro, fold, x…) instead of any brand word, so an unknown model such as “MateBook X Pro 2027” returns no hit instead of the wrong product.
+- Delivery replies come from the model and explain corrections; a deterministic guard adds the real values when the model omits them.
+- DeepSeek v4.1 flash remains the default model. qwen-plus showed long gateway stalls in testing and is not treated as a validated fallback.
+
 ## 0.13.1 — 2026-10-20
 
 ### Changed

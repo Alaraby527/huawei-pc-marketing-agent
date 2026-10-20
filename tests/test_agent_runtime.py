@@ -299,7 +299,17 @@ def test_compose_sanitizes_after_two_failed_retries(monkeypatch):
     session.close()
 
 
-def test_v2_requires_database(monkeypatch):
+def test_v2_uses_file_sqlite_when_database_url_missing(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "fallback.db"))
+    response = client.post("/api/v2/conversations", json={})
+    assert response.status_code == 200
+    assert response.json()["conversation_id"]
+    assert (tmp_path / "fallback.db").exists()
+
+
+def test_v2_reports_unwritable_database(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AGENT_DB_PATH", "/dev/null/agent.db")
     response = client.post("/api/v2/conversations", json={})
     assert response.status_code == 503

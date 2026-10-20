@@ -688,9 +688,9 @@ def studio_host():
 # ---------------------------------------------------------------- V2 autonomous assistant
 
 def v2_db():
-    if not db_layer.configured():
+    if not db_layer.configured() and not db_layer.ensure_configured():
         raise HTTPException(status_code=503, detail={"code": "CAPABILITY_DISABLED",
-                                                     "message": "V2 会话需要 DATABASE_URL；请先配置数据库"})
+                                                     "message": "V2 会话需要数据库；请配置 DATABASE_URL 或可写的 AGENT_DB_PATH"})
     global _workspace_db_ready
     if not _workspace_db_ready:
         db_layer.init_db()
