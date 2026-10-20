@@ -1170,6 +1170,8 @@ def _keyword_needs(text: str, old: dict) -> dict:
     if match:
         needs["product_hint"] = match.group(1).strip()
     topic = re.search(r"(?:热点|话题)[：:是]?\s*([^\n，。；]{2,30})", text)
+    if not topic:
+        topic = re.search(r"(?:结合|围绕|蹭)\s*([^\n，。；]{2,20})\s*的?热点", text)
     if topic:
         needs["topic"] = topic.group(1).strip()
     return {"intent": intent, **needs}
@@ -1472,6 +1474,10 @@ async def _guided_generate(ctx: ToolContext, state, data: dict, needs: dict,
     request = (f"给 {product.model} 写一篇小红书，面向{audience}，场景{scenario}，{tone}，"
                f"{pages} 页，不写价格。只挑 3–6 条与叙事最相关的参数，不要把全部参数塞进文案；"
                "每个数字必须与知识库事实一致，保留“约/选配/仅某版本”等限定。")
+    topic = str(needs.get("topic") or "").strip()
+    if topic:
+        request += (f"结合热点/话题“{topic}”做场景化开场或切入，但热点只是创作线索，"
+                    "不能写成产品事实或实测结论。")
     if extra:
         request += " " + extra
     composed_result = await asyncio.to_thread(_compose_after_evidence, ctx, request, model)
