@@ -29,22 +29,82 @@ def _env_int(name, default, low, high):
     return min(high, max(low, value))
 
 
+def model_registry():
+    """Return configured text providers.
+
+    LLM_MODELS_JSON (server-side only) supports multiple providers, e.g.
+    [{"id":"deepseek-v4.1-flash","label":"DeepSeek v4.1 flash","base_url":"…",
+      "api_key":"…","model":"deepseek-v4.1-flash","context":"1M","default":true}]
+    Without it we fall back to the original single-provider LLM_* variables.
+    """
+    raw = (os.getenv("LLM_MODELS_JSON") or "").strip()
+    if raw:
+        try:
+            items = json.loads(raw)
+        except ValueError:
+            items = []
+        registry = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or item.get("model") or "").strip()
+            base = str(item.get("base_url") or "").strip().rstrip("/")
+            key = str(item.get("api_key") or "").strip()
+            if not model_id or not base or not key:
+                continue
+            registry.append({
+                "id": model_id,
+                "label": str(item.get("label") or model_id),
+                "base_url": base,
+                "api_key": key,
+                "model": str(item.get("model") or model_id),
+                "context": str(item.get("context") or ""),
+                "default": bool(item.get("default")),
+                "max_tokens": item.get("max_tokens"),
+            })
+        if registry:
+            return registry
+    base = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    key = os.getenv("LLM_API_KEY", "")
+    default = os.getenv("LLM_MODEL", "deepseek-v4.1-flash")
+    ids = [default] + [item.strip() for item in os.getenv("LLM_ALLOWED_MODELS", "").split(",") if item.strip()]
+    registry = []
+    for model_id in dict.fromkeys(ids):
+        registry.append({"id": model_id, "label": model_id, "base_url": base, "api_key": key,
+                         "model": model_id, "context": "", "default": model_id == default,
+                         "max_tokens": None})
+    return registry
+
+
+def default_model():
+    registry = model_registry()
+    entry = next((item for item in registry if item.get("default")), registry[0])
+    return entry["id"]
+
+
 def allowed_models():
-    default = os.getenv("LLM_MODEL", "").strip()
-    configured = [item.strip() for item in os.getenv("LLM_ALLOWED_MODELS", "").split(",") if item.strip()]
-    if default:
-        configured.insert(0, default)
-    return list(dict.fromkeys(configured))
+    return [item["id"] for item in model_registry()]
+
+
+def model_catalog():
+    """Safe model list for the browser: no keys or URLs."""
+    return [{"id": item["id"], "label": item["label"], "context": item.get("context", ""),
+             "default": item["id"] == default_model()}
+            for item in model_registry()]
 
 
 def _settings(model=None):
-    base = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    registry = model_registry()
+    entry = next((item for item in registry if item["id"] == (model or default_model())), None)
+    if entry is None:
+        raise ModelError("该模型未在服务端配置")
+    max_tokens = entry.get("max_tokens")
     return {
-        "base_url": base,
-        "api_key": os.getenv("LLM_API_KEY", ""),
-        "model": model or os.getenv("LLM_MODEL", "deepseek-v4.1-flash"),
-        "timeout": _env_int("LLM_TIMEOUT", 90, 10, 170),
-        "max_tokens": _env_int("LLM_MAX_TOKENS", 4000, 500, 8000),
+        "base_url": entry["base_url"],
+        "api_key": entry["api_key"],
+        "model": entry["model"],
+        "timeout": _env_int("LLM_TIMEOUT", 120, 10, 170),
+        "max_tokens": int(max_tokens) if max_tokens else _env_int("LLM_MAX_TOKENS", 6000, 500, 8000),
     }
 
 

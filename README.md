@@ -5,7 +5,7 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.12.5（已在魔搭公开部署，个人库联调）**
+> **当前版本：v0.13.0（已在魔搭公开部署，个人库联调）**
 >
 > 已实现：左侧任务栏（新建任务 / 热点搜索 / 任务列表）、热点搜索独立视图（小红书榜单、热点详情、使用热点带入对话）、可折叠右侧工作栏、自由输入优先（先理解需求，缺什么问什么）、WorkBuddy 式逐题选项卡片、工具/技能调用轨迹、多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、输入区内模型选择与服务端白名单、**六页小红书图文方案**、**六页 1080×1440 PNG 导出**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感与内容目标步骤可选热点、HarmonyOS 风格 PC 工作台。
 >
@@ -81,15 +81,15 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 7860
 ### Docker
 
 ```bash
-docker build -t huawei-pc-marketing-agent:0.12.5 .
+docker build -t huawei-pc-marketing-agent:0.13.0 .
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  huawei-pc-marketing-agent:0.12.5
+  huawei-pc-marketing-agent:0.13.0
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  huawei-pc-marketing-agent:0.12.5
+  huawei-pc-marketing-agent:0.13.0
 ```
 
 镜像以非 root 用户运行，包含 Node 运行时、健康检查和 `vendor/ima-skill` 只读调用脚本。推送到 `main` 后，GitHub Actions 会自动构建并发布 `ghcr.io/cangyuyi/huawei-pc-marketing-agent:latest`。
@@ -109,7 +109,8 @@ docker run --rm -p 7860:7860 \
 | `IMA_NODE_BIN` | 否 | Node 绝对路径；PATH 中已有 `node` 时不需要 |
 | `LLM_BASE_URL` | 否 | OpenAI 兼容服务地址，必须 HTTPS（本机地址可用 HTTP） |
 | `LLM_API_KEY` | 否 | 模型密钥；规则引擎不需要 |
-| `LLM_MODEL` | 否 | 文本模型名称；也是模型选择的默认值 |
+| `LLM_MODEL` | 否 | 单模型模式下的文本模型名称；也是默认值 |
+| `LLM_MODELS_JSON` | 否 | 多供应商文本模型注册表（JSON 数组，服务端保存 base_url/api_key/model/context/default）；设置后优先于单模型配置，密钥不下发前端 |
 | `LLM_ALLOWED_MODELS` | 否 | 逗号分隔的可选模型白名单；UI 只能选择这里列出的模型 |
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` | 否 | 超时与输出上限，自动限制在安全范围 |
 | `ENABLE_AI_COVER` | 否 | `1` 才启用 AI 氛围封面；只生成背景，不生成产品外观 |
@@ -257,8 +258,8 @@ python -m pytest -q
 docker run --rm -p 7860:7860 \
   -e IMA_OPENAPI_CLIENTID -e IMA_OPENAPI_APIKEY -e IMA_KB_NAME \
   -e LLM_BASE_URL -e LLM_API_KEY -e LLM_MODEL -e ENABLE_AI_COVER=1 \
-  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.12.5
-  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.12.5
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.13.0
+  ghcr.io/cangyuyi/huawei-pc-marketing-agent:0.13.0
 ```
 
 要得到可访问的完整实例，需要容器托管环境（ModelScope 创空间、Render、Fly.io、Railway、云服务器等）并配置 ima/模型凭证。当前实例已按 ModelScope Docker SDK 部署在 7860 端口；重建步骤见 [`docs/10_ModelScope部署.md`](docs/10_ModelScope部署.md)。

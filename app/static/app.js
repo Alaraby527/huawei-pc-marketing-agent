@@ -611,11 +611,12 @@
       const response = await fetch('/api/v1/models');
       const data = await response.json();
       const select = $('model-select');
-      const textModels = data.text || [];
-      const defaultModel = data.default || textModels[0] || null;
-      select.innerHTML = '<option value="agent">自主 Agent（工具调用）</option>' + textModels.map(model =>
-        '<option value="llm:' + escapeHtml(model) + '">' +
-        (model === defaultModel ? '默认模型 · ' : '') + escapeHtml(model) + '</option>').join('') +
+      const textModels = (data.models || (data.text || []).map(model => ({ id: model, label: model })));
+      const defaultModel = data.default || (textModels[0] && textModels[0].id) || null;
+      select.innerHTML = '<option value="agent">自主 Agent（工具调用）</option>' + textModels.map(item =>
+        '<option value="llm:' + escapeHtml(item.id) + '">' +
+        (item.id === defaultModel ? '默认模型 · ' : '') + escapeHtml(item.label || item.id) +
+        (item.context ? ' · ' + escapeHtml(item.context) : '') + '</option>').join('') +
         '<option value="rule">规则引擎</option>' +
         '<option value="custom" disabled>更多模型（待配置）</option>';
       if (defaultModel) {

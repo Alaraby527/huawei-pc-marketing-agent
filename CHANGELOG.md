@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0 — 2026-10-20
+
+### Added
+
+- **Multi-provider text models**: `LLM_MODELS_JSON` registers several OpenAI-compatible providers (id, label, base_url, api_key, model, context, default). The model picker shows each label and context window; keys stay server-side and `/api/v1/models` never returns them.
+- **DeepSeek v4.1 flash as the default conversation model**: 1M context, JSON mode verified end-to-end (six-page draft generated with `engine_meta.model=deepseek-v4.1-flash`); qwen-plus / qwen-max remain selectable through the same gateway.
+
+
 ## 0.12.5 — 2026-10-19
 ## 0.12.4 — 2026-10-19
 

@@ -18,7 +18,7 @@ from .local_kb import default_client, kb_source, local_kb_ready
 from .conversation import Turn, service, DialogueError, ask
 from .hotspot import related_hot_terms, related_hot_topics
 from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
-from .model import image_configured, generate_cover_image, ModelError, allowed_models
+from .model import image_configured, generate_cover_image, ModelError, allowed_models, default_model, model_catalog
 from .posters import pages_for, render_page, zip_bytes
 from . import db as db_layer
 from . import rednote
