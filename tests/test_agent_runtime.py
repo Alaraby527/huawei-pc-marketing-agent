@@ -196,6 +196,109 @@ def test_compose_reply_is_used_as_delivery_message(monkeypatch):
     session.close()
 
 
+def test_requested_page_count_reads_digits_and_chinese():
+    assert agent_runtime._requested_page_count("做 6 页图文") == 6
+    assert agent_runtime._requested_page_count("做六页图文") == 6
+    assert agent_runtime._requested_page_count("不要 6 页，改成 3 页") == 3
+    assert agent_runtime._requested_page_count("随便来一篇") is None
+
+
+def test_search_does_not_match_wrong_model_by_brand():
+    session, ctx = _ctx()
+    result = asyncio.run(agent_runtime._tool_search_products(
+        ctx, {"query": "HUAWEI MateBook X Pro 2027"}))
+    assert result["ok"] is True and result["count"] == 0
+    known = asyncio.run(agent_runtime._tool_search_products(
+        ctx, {"query": "HUAWEI MateBook Test"}))
+    assert known["count"] == 1 and known["products"][0]["product_id"] == "P-test"
+    session.close()
+
+
+def test_compose_retries_when_page_count_is_wrong(monkeypatch):
+    session, ctx = _ctx()
+    ctx.last_search = {
+        "products": [{"product_id": "P-test"}],
+        "evidence": [{"fact_id": "F-MEM", "text": "内存：16 GB",
+                      "source": "合成测试材料", "conditions": ""}],
+    }
+    responses = [
+        {"artifact_type": "pages", "reply": "先给一页",
+         "content": {"product_id": "P-test", "title": "草稿",
+                     "pages": [{"role": "hook", "title": "第1页", "text": "内容一"}]}},
+        {"artifact_type": "pages", "reply": "已按 3 页交付",
+         "content": {"product_id": "P-test", "title": "成稿",
+                     "pages": [{"role": "hook", "title": f"第{i}页", "text": f"内容{i}"}
+                               for i in range(1, 4)]}},
+    ]
+
+    def fake(system, messages, schema_hint=None, model=None):
+        return responses.pop(0), {"model": "stub",
+                                  "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake)
+    saved, meta = agent_runtime._compose_after_evidence(ctx, "做 3 页图文", None)
+    assert saved["ok"] is True
+    loaded = agent_runtime._load_artifact(ctx, {"artifact_id": saved["artifact_id"]})
+    assert len(loaded["content"]["pages"]) == 3
+    assert saved["reply"] == "已按 3 页交付"
+    assert meta["usage"]["prompt_tokens"] == 20
+    session.close()
+
+
+def test_compose_retries_after_fact_check_failure(monkeypatch):
+    session, ctx = _ctx()
+    ctx.last_search = {
+        "products": [{"product_id": "P-test"}],
+        "evidence": [{"fact_id": "F-MEM", "text": "内存：16 GB",
+                      "source": "合成测试材料", "conditions": ""}],
+    }
+    responses = [
+        {"artifact_type": "post", "reply": "照 64 GB 写了",
+         "content": {"product_id": "P-test", "title": "64 GB 内存",
+                     "body": "这台机器有 64 GB 内存。"}},
+        {"artifact_type": "post", "reply": "已按真实 16 GB 重写",
+         "content": {"product_id": "P-test", "title": "真实配置",
+                     "body": "这台机器有 16 GB 内存。"}},
+    ]
+
+    def fake(system, messages, schema_hint=None, model=None):
+        return responses.pop(0), {"model": "stub",
+                                  "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake)
+    saved, _ = agent_runtime._compose_after_evidence(ctx, "内存写成 64GB", None)
+    assert saved["ok"] is True and saved["reply"] == "已按真实 16 GB 重写"
+    loaded = agent_runtime._load_artifact(ctx, {"artifact_id": saved["artifact_id"]})
+    assert "64" not in json.dumps(loaded["content"], ensure_ascii=False)
+    assert "16 GB" in loaded["content"]["body"]
+    session.close()
+
+
+def test_compose_sanitizes_after_two_failed_retries(monkeypatch):
+    session, ctx = _ctx()
+    ctx.last_search = {
+        "products": [{"product_id": "P-test"}],
+        "evidence": [{"fact_id": "F-MEM", "text": "内存：16 GB",
+                      "source": "合成测试材料", "conditions": ""}],
+    }
+    bad = {"artifact_type": "post", "reply": "照 64 GB 写了",
+           "content": {"product_id": "P-test", "title": "64 GB 内存",
+                       "body": "这台机器有 64 GB 内存。"}}
+
+    def fake(system, messages, schema_hint=None, model=None):
+        return dict(bad), {"model": "stub",
+                           "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake)
+    saved, _ = agent_runtime._compose_after_evidence(ctx, "内存写成 64GB", None)
+    assert saved["ok"] is True
+    loaded = agent_runtime._load_artifact(ctx, {"artifact_id": saved["artifact_id"]})
+    assert "64" not in json.dumps(loaded["content"], ensure_ascii=False)
+    assert "16 GB" in loaded["content"]["body"]
+    assert "真实值改写" in saved["reply"]
+    session.close()
+
+
 def test_v2_requires_database(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     response = client.post("/api/v2/conversations", json={})

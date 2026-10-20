@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
-from app.grounding import check_artifact, check_text, extract_claims, records_from_facts
+from app.grounding import (check_artifact, check_text, extract_claims, records_from_facts,
+                           sanitize_artifact, sanitize_text)
 
 
 @dataclass
@@ -103,3 +104,26 @@ def test_artifact_checks_all_text_surfaces_and_reports_paths():
 def test_claim_extraction_handles_case_and_spacing():
     claims = extract_claims("16GB / 512 gb / 70WH")
     assert len(claims) == 3
+
+
+def test_sanitize_replaces_unsupported_value_with_real_field_values():
+    cleaned = sanitize_text("这台机器有 64 GB 内存，还有 1 TB 存储。", _records())
+    assert "64" not in cleaned
+    assert "16 GB" in cleaned
+    assert "512 GB" in cleaned
+    assert check_text(cleaned, _records())["passed"] is True
+
+
+def test_sanitize_removes_clause_when_no_real_value_exists():
+    cleaned = sanitize_text("机身 1 kg，屏幕 100 英寸。", _records())
+    assert "100" not in cleaned
+    assert "机身" in cleaned
+
+
+def test_sanitize_artifact_covers_nested_pages_and_title():
+    content = {"title": "64 GB 内存的 MateBook", "pages": [
+        {"text": "内存 64 GB，存储 512 GB"}]}
+    cleaned = sanitize_artifact(content, _records())
+    assert "64" not in str(cleaned)
+    assert "16 GB" in cleaned["pages"][0]["text"]
+    assert check_artifact(cleaned, _records())["passed"] is True

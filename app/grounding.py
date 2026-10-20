@@ -221,6 +221,78 @@ def check_text(text: str, records: list[FactRecord], *, strict_qualifier: bool =
             "checked": len(claims)}
 
 
+def _clause_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    separators = "，。；、,;\n"
+    left = max((text.rfind(char, 0, start) for char in separators), default=-1) + 1
+    rights = [position for position in (text.find(char, end) for char in separators)
+              if position != -1]
+    right = min(rights) if rights else len(text)
+    return left, right
+
+
+def _replacement_values(text: str, claim: Claim, records: list[FactRecord]) -> str:
+    normalized = _normalized(claim.number, claim.unit)
+    if normalized is None:
+        return ""
+    _, family = normalized
+    candidates = [record for record in records
+                  if _normalized(record.value, record.unit) and
+                  _normalized(record.value, record.unit)[1] == family]
+    hint = _field_hint(_clause(text, claim.start, claim.end))
+    if hint:
+        field = _FIELD_ALIASES.get(hint, hint)
+        filtered = [record for record in candidates if field in record.field]
+        if filtered:
+            candidates = filtered
+    values: list[str] = []
+    for record in candidates[:4]:
+        token = f"{record.value} {record.unit}"
+        if token not in values:
+            values.append(token)
+    return " / ".join(values)
+
+
+def sanitize_text(text: str, records: list[FactRecord]) -> str:
+    """Replace unsupported numeric claims with real values for the same field.
+
+    This is the last-resort repair after the model failed to fix its own copy.
+    Only values that do not exist in the evidence are touched; if no real value
+    exists, the containing clause is removed rather than left as a false claim.
+    """
+    report = check_text(text, records)
+    errors = [item for item in report["errors"] if item.get("code") == "FACT_NOT_FOUND"]
+    for error in sorted(errors, key=lambda item: item["span"][0], reverse=True):
+        start, end = error["span"]
+        claims = extract_claims(text[start:end])
+        if not claims:
+            continue
+        claim = claims[0]
+        absolute = Claim(text=claim.text, number=claim.number, unit=claim.unit,
+                         start=start + claim.start, end=start + claim.end,
+                         context=claim.context)
+        replacement = _replacement_values(text, absolute, records)
+        if replacement:
+            text = text[:start] + replacement + text[end:]
+        else:
+            left, right = _clause_bounds(text, start, end)
+            text = text[:left] + text[right:]
+    return text
+
+
+def sanitize_artifact(content: dict, records: list[FactRecord]) -> dict:
+    """Apply :func:`sanitize_text` to every text surface of an artifact."""
+    def walk(value):
+        if isinstance(value, str):
+            return sanitize_text(value, records)
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, dict):
+            return {key: (item if key in ("fact_ids", "image_id", "revision_hash", "engine")
+                          else walk(item)) for key, item in value.items()}
+        return value
+    return walk(content)
+
+
 def check_artifact(content: dict, records: list[FactRecord], *, strict_qualifier: bool = False) -> dict:
     """Check every text surface of an artifact (title/body/pages/tags)."""
     surfaces: list[tuple[str, str]] = []

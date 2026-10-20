@@ -29,6 +29,28 @@ def _env_int(name, default, low, high):
     return min(high, max(low, value))
 
 
+def _read_with_deadline(response, deadline, limit):
+    """Read a response with a wall-clock cap, not just a per-socket timeout.
+
+    Some gateways keep the connection alive with tiny writes; a socket timeout
+    alone can then wait indefinitely. This loop checks elapsed time between
+    reads and also bounds the response size.
+    """
+    chunks = []
+    total = 0
+    while True:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("模型响应超过总时限")
+        chunk = response.read(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise ModelError("模型响应超过单次读取上限")
+    return b"".join(chunks)
+
+
 def model_registry():
     """Return configured text providers.
 
@@ -163,11 +185,14 @@ def complete_json(system, payload, *, schema_hint="", model=None):
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
                  "User-Agent": "huawei-pc-marketing-agent/" + __version__},
         method="POST")
+    deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(req, timeout=settings["timeout"]) as response:
-            raw = response.read(4 * 1024 * 1024)
+        with urllib.request.urlopen(req, timeout=min(30, settings["timeout"])) as response:
+            raw = _read_with_deadline(response, deadline, 4 * 1024 * 1024)
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None
+    except ModelError:
+        raise
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
     try:
@@ -340,11 +365,14 @@ def chat_json_messages(system, messages, *, schema_hint="", model=None):
         settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
                  "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
+    deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
-            raw = response.read(4 * 1024 * 1024)
+        with urllib.request.urlopen(request, timeout=min(30, settings["timeout"])) as response:
+            raw = _read_with_deadline(response, deadline, 4 * 1024 * 1024)
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None
+    except ModelError:
+        raise
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
     try:
@@ -382,11 +410,14 @@ def chat_tools(system, messages, tools, *, model=None):
         settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
                  "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
+    deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
-            result = json.loads(response.read(4 * 1024 * 1024))
+        with urllib.request.urlopen(request, timeout=min(30, settings["timeout"])) as response:
+            result = json.loads(_read_with_deadline(response, deadline, 4 * 1024 * 1024))
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None
+    except ModelError:
+        raise
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
     try:

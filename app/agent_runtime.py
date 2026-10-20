@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from . import models
 from .contracts import Fact, Platform
 from .evidence import load_catalog, verified_images
 from .grounding import (_FIELD_ALIASES, _field_hint, _normalized, check_artifact,
-                        extract_claims, records_from_facts)
+                        extract_claims, records_from_facts, sanitize_artifact)
 from .model import ModelError, chat_json_messages, chat_tools
 from .posters import render_page
 from .retrieval import get_asset, store_asset
@@ -201,6 +202,41 @@ def _request_mismatch_note(user_text: str, facts: list, reply: str = "") -> str:
     return " ".join(dict.fromkeys(notes))
 
 
+_CN_NUMBERS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+               "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _requested_page_count(text: str) -> int | None:
+    matches = re.findall(r"(\d+)\s*页", text or "")
+    if matches:
+        return int(matches[-1])
+    matches = re.findall(r"([一二两三四五六七八九十])\s*页", text or "")
+    if matches:
+        return _CN_NUMBERS[matches[-1]]
+    return None
+
+
+def _merge_meta(first, second):
+    if not isinstance(second, dict):
+        return first
+    if not isinstance(first, dict):
+        return second
+    merged = dict(second)
+    usage_one = first.get("usage") or {}
+    usage_two = second.get("usage") or {}
+    usage = {}
+    for key in set(usage_one) | set(usage_two):
+        one, two = usage_one.get(key), usage_two.get(key)
+        if isinstance(one, (int, float)) and isinstance(two, (int, float)):
+            usage[key] = one + two
+        elif key in usage_two:
+            usage[key] = two
+        else:
+            usage[key] = one
+    merged["usage"] = usage
+    return merged
+
+
 def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None):
     """One dedicated writing call after evidence is available.
 
@@ -219,7 +255,8 @@ def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None)
               "reply 要说明实际交付了什么；如果用户要求写入的参数与事实不符，reply 必须直接说明未照做并给出真实值，"
               "不能只说“已保存”。")
     user = ("用户需求：" + user_text + "\n产品证据：" + json.dumps(facts, ensure_ascii=False) +
-            "\n请按用户要求的页数直接创作；不要调用工具，不要写价格。")
+            "\n请按用户要求的页数直接创作；用户明确页数时 pages 数组长度必须完全一致，禁止用一页概括多页；"
+            "不要调用工具，不要写价格。")
     try:
         result, meta = chat_json_messages(system, [{"role": "user", "content": user}],
                                           schema_hint="只输出交付物 JSON", model=model)
@@ -229,10 +266,78 @@ def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None)
     if not isinstance(content, dict):
         return None
     reply = str(result.get("reply") or "").strip() if isinstance(result, dict) else ""
+    requested = _requested_page_count(user_text)
+    actual = len(content.get("pages") or []) if isinstance(content.get("pages"), list) else 0
+    if requested and actual != requested:
+        retry_user = (user + f"\n上次输出 pages 数量为 {actual}，不符合用户要求的 {requested} 页。"
+                      f"请重新输出完整 JSON，pages 必须恰好包含 {requested} 个元素，每页独立。")
+        try:
+            retry, retry_meta = chat_json_messages(system, [{"role": "user", "content": retry_user}],
+                                                   schema_hint="只输出交付物 JSON", model=model)
+        except ModelError:
+            return {"ok": False, "error": "PAGE_COUNT_MISMATCH",
+                    "message": f"你要求 {requested} 页，模型只生成 {actual} 页，未保存"}, meta
+        retry_content = retry.get("content") if isinstance(retry, dict) else None
+        retry_pages = retry_content.get("pages") if isinstance(retry_content, dict) else None
+        if not isinstance(retry_pages, list) or len(retry_pages) != requested:
+            return {"ok": False, "error": "PAGE_COUNT_MISMATCH",
+                    "message": f"你要求 {requested} 页，模型两次都没按页数交付，未保存"}, meta
+        content = retry_content
+        reply = str(retry.get("reply") or reply or "").strip()
+        meta = _merge_meta(meta, retry_meta)
     content.setdefault("product_id", product_id)
     saved = _save_artifact(ctx, {"artifact_type": result.get("artifact_type") or "pages",
                                  "product_id": content.get("product_id") or product_id,
                                  "content": content})
+    if isinstance(saved, dict) and not saved.get("ok") and saved.get("error") == "FACT_CHECK_FAILED":
+        current = saved
+        for _attempt in range(2):
+            errors = (current.get("check") or {}).get("errors") or []
+            forbidden = "；".join(str(item.get("claim", "")) for item in errors[:4])
+            fix_user = (user + "\n上次内容未通过事实检查：" +
+                        "；".join(str(item.get("message", "")) for item in errors[:4]) +
+                        f"\n不要在任何标题、正文、页面或标签中出现这些值：{forbidden}；"
+                        "必须改用证据中的真实值，重新输出完整 JSON。")
+            fixed = None
+            fixed_meta = None
+            try:
+                fixed, fixed_meta = chat_json_messages(system, [{"role": "user", "content": fix_user}],
+                                                       schema_hint="只输出交付物 JSON", model=model)
+            except ModelError:
+                break
+            meta = _merge_meta(meta, fixed_meta)
+            fixed_content = fixed.get("content") if isinstance(fixed, dict) else None
+            if not isinstance(fixed_content, dict):
+                break
+            fixed_content.setdefault("product_id", product_id)
+            content = fixed_content
+            current = _save_artifact(ctx, {
+                "artifact_type": fixed.get("artifact_type") or "pages",
+                "product_id": fixed_content.get("product_id") or product_id,
+                "content": fixed_content})
+            if isinstance(current, dict):
+                current["reply"] = str(fixed.get("reply") or "").strip()
+            if isinstance(current, dict) and current.get("ok"):
+                ctx.last_artifact = current
+                return current, meta
+            if not isinstance(current, dict) or current.get("error") != "FACT_CHECK_FAILED":
+                break
+        saved = current
+        if isinstance(saved, dict) and saved.get("error") == "FACT_CHECK_FAILED":
+            product = _resolve_product(ctx.catalog, product_id, ctx)
+            if product:
+                records = records_from_facts(product.facts, product.product_id, "model-level")
+                sanitized = sanitize_artifact(content, records)
+                if sanitized != content:
+                    cleaned = _save_artifact(ctx, {
+                        "artifact_type": result.get("artifact_type") or "pages",
+                        "product_id": sanitized.get("product_id") or product_id,
+                        "content": sanitized})
+                    if isinstance(cleaned, dict) and cleaned.get("ok"):
+                        cleaned["reply"] = ((str(cleaned.get("reply") or reply or "").strip()) +
+                                            " 未证实的参数已按知识库真实值改写。").strip()
+                        ctx.last_artifact = cleaned
+                        return cleaned, meta
     if isinstance(saved, dict):
         saved["reply"] = reply
     return saved, meta
@@ -332,16 +437,22 @@ def _resolve_product(catalog, value: str, ctx=None):
 async def _tool_search_products(ctx, args):
     catalog = await _catalog(ctx)
     query = str(args.get("query", "")).strip().lower()
-    terms = [term for term in query.split() if term]
+    # Match model-defining tokens (14, pro, fold, x...), not just the brand:
+    # otherwise "MateBook X Pro 2027" matches every MateBook and the agent
+    # starts writing about the wrong product.
+    terms = re.findall(r"[a-z]+|\d+", query)
+    distinctive = [term for term in terms if term not in {"huawei", "honor", "matebook", "magicbook"}]
+    required = distinctive or terms
     rows = []
     for product in catalog.products:
         haystack = product.model.lower()
-        if terms and not any(term in haystack for term in terms):
+        if required and not all(term in haystack for term in required):
             continue
         rows.append({"product_id": product.product_id, "model": product.model,
                      "facts_count": len(product.facts), "issues": product.issues[:3]})
     result = {"ok": True, "products": rows[:8], "count": len(rows),
-              "note": "搜索命中不是身份验证；写稿前仍需读取事实并核对配置"}
+              "note": ("搜索命中不是身份验证；写稿前仍需读取事实并核对配置" if rows else
+                       "知识库没有匹配型号；不要编造参数，说明缺少资料并建议已有型号或追问")}
     ctx.last_search = result
     if rows:
         product = _product(catalog, product_id=rows[0]["product_id"])
@@ -691,7 +802,17 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     usage = {"input_tokens": 0, "output_tokens": 0, "models": []}
     seen_calls: dict[str, int] = {}
     try:
+        budget = min(600, max(30, int(os.getenv("AGENT_RUN_BUDGET_SECONDS", "180"))))
+    except ValueError:
+        budget = 180
+    deadline = time.monotonic() + budget
+    try:
         for step in range(12):
+            if time.monotonic() > deadline:
+                status = "completed"
+                stop_reason = "time_budget"
+                reply = reply or "已达到本轮时间上限，先交付已完成部分。"
+                break
             history = db.scalars(select(models.AgentMessage).where(
                 models.AgentMessage.conversation_id == conversation.id).order_by(
                 models.AgentMessage.seq)).all()[-24:]
@@ -718,9 +839,13 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                 messages.append({"role": "user", "content":
                     "产品证据已经读取。现在请直接创作文案并调用 save_artifact 保存"
                     "（content 含 title/body/tags/pages，页数按用户要求）；不要再调用 search_products 或 read_product_evidence。"})
-            elif ctx.last_search:
+            elif ctx.last_search and (ctx.last_search.get("products") or []):
                 messages.append({"role": "user", "content":
                     "已找到产品。下一步调用 read_product_evidence 读取第一条产品的证据。"})
+            elif ctx.last_search:
+                messages.append({"role": "user", "content":
+                    "知识库没有匹配型号。不要编造参数或实测结论；请说明资料缺口，"
+                    "并可建议知识库中已有的型号或追问用户要写哪一款。"})
             try:
                 message, meta = await asyncio.to_thread(chat_tools, SYSTEM_PROMPT, messages,
                                                         NATIVE_TOOL_SPECS, model=model)
@@ -808,10 +933,17 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                             reply = reply + "\n\n" + note
                         break
                     if composed:
-                        errors = (composed[0].get("check") or {}).get("errors") or []
-                        reply = "交付物未通过检查：" + str(composed[0].get("message", ""))
-                        if errors:
-                            reply += "；" + "；".join(item.get("message", "") for item in errors[:2])
+                        error = composed[0].get("error")
+                        if error == "PAGE_COUNT_MISMATCH":
+                            reply = str(composed[0].get("message") or "页数不符合要求，未保存。")
+                        elif error == "FACT_CHECK_FAILED":
+                            errors = (composed[0].get("check") or {}).get("errors") or []
+                            reply = "内容含知识库未证实的参数，未保存。"
+                            if errors:
+                                reply += "问题：" + "；".join(item.get("message", "") for item in errors[:2])
+                            reply += " 可以改用真实配置，或让我按知识库现有参数重写。"
+                        else:
+                            reply = "交付物未通过检查：" + str(composed[0].get("message", ""))
                         break
                 continue
             reply = content.strip()
