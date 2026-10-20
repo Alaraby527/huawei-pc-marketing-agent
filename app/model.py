@@ -196,7 +196,7 @@ def complete_json(system, payload, *, schema_hint="", model=None):
         method="POST")
     deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(req, timeout=min(30, settings["timeout"])) as response:
+        with urllib.request.urlopen(req, timeout=settings["timeout"]) as response:
             raw = _read_with_deadline(response, deadline, 4 * 1024 * 1024)
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None
@@ -376,7 +376,7 @@ def chat_json_messages(system, messages, *, schema_hint="", model=None):
                  "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
     deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(request, timeout=min(30, settings["timeout"])) as response:
+        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
             raw = _read_with_deadline(response, deadline, 4 * 1024 * 1024)
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None
@@ -421,7 +421,7 @@ def chat_tools(system, messages, tools, *, model=None):
                  "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
     deadline = time.monotonic() + settings["timeout"]
     try:
-        with urllib.request.urlopen(request, timeout=min(30, settings["timeout"])) as response:
+        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
             result = json.loads(_read_with_deadline(response, deadline, 4 * 1024 * 1024))
     except urllib.error.HTTPError as exc:
         raise ModelError("模型服务 HTTP " + str(exc.code)) from None

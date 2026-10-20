@@ -149,7 +149,26 @@ def _normalize_message(message: dict) -> dict:
                                                             "arguments": json.dumps({"question": obj.get("question", ""),
                                                                                         "options": obj.get("options") or []},
                                                                                        ensure_ascii=False)}}]}
+    if obj.get("action") == "reply" or isinstance(obj.get("reply"), str):
+        return {"content": str(obj.get("reply") or obj.get("content") or ""), "tool_calls": []}
     return message
+
+
+def _clean_reply(text: str) -> str:
+    """Never show a raw decision JSON object to the user."""
+    value = str(text or "").strip()
+    if not value.startswith("{"):
+        return value
+    try:
+        obj = json.loads(value)
+    except ValueError:
+        return value
+    if not isinstance(obj, dict):
+        return value
+    for key in ("reply", "content", "message", "text"):
+        if isinstance(obj.get(key), str) and obj[key].strip():
+            return obj[key].strip()
+    return value
 
 
 def _request_mismatch_note(user_text: str, facts: list, reply: str = "") -> str:
@@ -260,11 +279,18 @@ def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None)
     try:
         result, meta = chat_json_messages(system, [{"role": "user", "content": user}],
                                           schema_hint="只输出交付物 JSON", model=model)
-    except ModelError:
-        return None
+    except ModelError as error:
+        return {"ok": False, "error": "COMPOSE_MODEL_ERROR",
+                "message": "模型没有返回可用的交付物 JSON：" + str(error)[:120]}, None
     content = result.get("content") if isinstance(result, dict) else None
+    if not isinstance(content, dict) and isinstance(result, dict) and any(
+            key in result for key in ("pages", "body", "title")):
+        # Some models return the artifact object without the {"content": …}
+        # wrapper despite the schema hint.
+        content = result
     if not isinstance(content, dict):
-        return None
+        return {"ok": False, "error": "COMPOSE_BAD_SHAPE",
+                "message": "模型没有按 title/body/pages 结构返回，未保存"}, meta
     reply = str(result.get("reply") or "").strip() if isinstance(result, dict) else ""
     requested = _requested_page_count(user_text)
     actual = len(content.get("pages") or []) if isinstance(content.get("pages"), list) else 0
@@ -285,7 +311,10 @@ def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None)
         content = retry_content
         reply = str(retry.get("reply") or reply or "").strip()
         meta = _merge_meta(meta, retry_meta)
-    content.setdefault("product_id", product_id)
+    if product_id:
+        content["product_id"] = product_id
+    else:
+        content.setdefault("product_id", "")
     saved = _save_artifact(ctx, {"artifact_type": result.get("artifact_type") or "pages",
                                  "product_id": content.get("product_id") or product_id,
                                  "content": content})
@@ -309,7 +338,10 @@ def _compose_after_evidence(ctx: ToolContext, user_text: str, model: str | None)
             fixed_content = fixed.get("content") if isinstance(fixed, dict) else None
             if not isinstance(fixed_content, dict):
                 break
-            fixed_content.setdefault("product_id", product_id)
+            if product_id:
+                fixed_content["product_id"] = product_id
+            else:
+                fixed_content.setdefault("product_id", "")
             content = fixed_content
             current = _save_artifact(ctx, {
                 "artifact_type": fixed.get("artifact_type") or "pages",
@@ -511,8 +543,10 @@ async def _tool_images(ctx, args):
                                                ["屏幕", "接口", "尺寸与重量", "电池"])
     except Exception as error:
         return {"ok": False, "error": "IMAGE_READ_FAILED", "message": str(error)[:160]}
-    return {"ok": True, "images": [{"image_id": image.image_id, "caption": image.caption,
-                                    "access_url": image.access_url} for image in images[:6]],
+    return {"ok": True, "images": [{"image_id": _image_field(image, "image_id"),
+                                    "caption": _image_field(image, "caption"),
+                                    "access_url": _image_field(image, "access_url")}
+                                   for image in images[:6]],
             "issues": issues[:3]}
 
 
@@ -588,7 +622,10 @@ def _save_artifact(ctx, args):
             models.AgentArtifact.conversation_id == ctx.conversation.id,
             models.AgentArtifact.artifact_type == str(args.get("artifact_type") or "post")
         ).order_by(models.AgentArtifact.created_at.desc())).first()
-        revision_no = 1
+        latest = db.scalars(select(models.AgentArtifactRevision).where(
+            models.AgentArtifactRevision.artifact_id == artifact.id).order_by(
+            models.AgentArtifactRevision.revision.desc())).first() if artifact else None
+        revision_no = (latest.revision if latest else 0) + 1 if artifact else 1
     product_id = str(args.get("product_id") or content.get("product_id") or "")
     check = {"passed": True, "errors": [], "warnings": [], "checked": 0,
              "note": "未绑定产品事实，仅做创意内容交付"}
@@ -684,7 +721,8 @@ async def _render(ctx, args):
         except Exception:
             images = []
         facts = [{"fact_id": fact.fact_id, "text": fact.text} for fact in product.facts]
-    handoff = {"images": [{"image_id": item.image_id, "access_url": item.access_url}
+    handoff = {"images": [{"image_id": _image_field(item, "image_id"),
+                           "access_url": _image_field(item, "access_url")}
                           for item in (images or [])],
                "facts": facts,
                "product_identity": {"model_name": product.model if product else ""}}
@@ -769,6 +807,8 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     db.add(run)
     db.flush()
     _event(run, "message", role="user", content=text)
+    if conversation.runner_version == "guided":
+        return await _guided_turn(db, conversation, run, text, model, base_seq)
     ctx = ToolContext(db=db, conversation=conversation, run=run)
     existing = _load_artifact(ctx, {})
     if existing.get("ok") and _is_edit_request(text):
@@ -934,6 +974,11 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                         break
                     if composed:
                         error = composed[0].get("error")
+                        if error in ("COMPOSE_MODEL_ERROR", "COMPOSE_BAD_SHAPE"):
+                            # The model still has a chance to answer or retry in
+                            # the normal tool loop; keep its own reply.
+                            reply = ""
+                            continue
                         if error == "PAGE_COUNT_MISMATCH":
                             reply = str(composed[0].get("message") or "页数不符合要求，未保存。")
                         elif error == "FACT_CHECK_FAILED":
@@ -946,7 +991,7 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                             reply = "交付物未通过检查：" + str(composed[0].get("message", ""))
                         break
                 continue
-            reply = content.strip()
+            reply = _clean_reply(content)
             try:
                 candidate = json.loads(reply) if reply.startswith("{") else None
             except ValueError:
@@ -993,15 +1038,661 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     return run_payload(db, run)
 
 
+# ---------------------------------------------------------------- guided flow
+# The conversation is a soft, model-assisted flow: understand the need, suggest
+# a few real products, let the user pick and confirm a plan, then produce copy
+# with original KB images and ask what to redo. It is a guide, not a locked
+# funnel: any turn may answer a question, change product, or skip ahead.
+
+_GREETING_RE = re.compile(r"^\s*(你好|您好|hi|hello|嗨|在吗|在么)[!！。.\s]*$", re.I)
+_START_RE = re.compile(r"开始|生成|做吧|可以|行|好|确认|继续|没问题|ok", re.I)
+_APPROVE_RE = re.compile(r"都(可以|行|保留|要)|没问题|定稿|就这样|满意|可以了|通过|挺好", re.I)
+_USER_DECIDES_RE = re.compile(r"你定|随便|都行|你来|看着办|先给一版")
+
+_GUIDED_NEEDS_SYSTEM = """你是华为 PC 内容助手的前台需求分析器。只提取，不编造。
+输出 JSON：
+{"intent":"chat|create|recommend|edit|unknown",
+ "audience":"大学生/职场办公/创作者/家庭用户/其他，未提及留空",
+ "scenario":"校园学习/移动办公/内容创作/游戏娱乐/长续航/轻薄便携等，未提及留空",
+ "budget":"用户明确说出的预算，未提及留空",
+ "tone":"轻松种草/专业稳重/真实分享，未提及留空",
+ "page_count":用户明确要求的页数，未提及填 0,
+ "product_hint":"用户点名的型号，未提及留空",
+ "topic":"想结合的热点或话题，未提及留空",
+ "platform":"小红书"}
+规则：问候/闲聊 intent=chat；要写内容 intent=create；要挑产品 intent=recommend；
+要改已有内容 intent=edit。不要因为缺少信息就拒绝，也不要替用户假设。"""
+
+
+def _guided_usage_add(usage: dict, meta) -> None:
+    tokens = (meta or {}).get("usage") or {}
+    usage["input_tokens"] += int(tokens.get("prompt_tokens") or 0)
+    usage["output_tokens"] += int(tokens.get("completion_tokens") or 0)
+    if isinstance(meta, dict) and meta.get("model"):
+        usage["models"].append(meta["model"])
+
+
+def _task_state(db: Session, conversation: models.AgentConversation) -> models.AgentTaskState:
+    state = db.get(models.AgentTaskState, conversation.id)
+    if state is None:
+        state = models.AgentTaskState(conversation_id=conversation.id, stage="intake", data={})
+        db.add(state)
+        db.flush()
+    return state
+
+
+def _save_guided(state: models.AgentTaskState, stage: str, data: dict, db: Session) -> None:
+    state.stage = stage
+    state.data = data
+    db.flush()
+
+
+def _guided_finish(db: Session, conversation, run, base_seq: int, reply: str, *, stage: str,
+                   status: str = "completed", stop_reason: str = "", usage=None,
+                   **extra) -> dict:
+    run.status = status
+    run.stop_reason = stop_reason
+    run.usage = usage or {"input_tokens": 0, "output_tokens": 0, "models": []}
+    run.finished_at = _now()
+    db.add(models.AgentMessage(conversation_id=conversation.id, role="assistant",
+                               content=reply, seq=base_seq + 90))
+    _event(run, "message", role="assistant", content=reply)
+    _event(run, "run_result", stage=stage, **extra)
+    _event(run, "run_finished", status=status, stop_reason=stop_reason)
+    db.flush()
+    return run_payload(db, run)
+
+
+def _recent_history(db: Session, conversation, limit: int = 8) -> str:
+    rows = db.scalars(select(models.AgentMessage).where(
+        models.AgentMessage.conversation_id == conversation.id).order_by(
+        models.AgentMessage.seq)).all()[-limit:]
+    lines = []
+    for item in rows:
+        if item.role in ("user", "assistant"):
+            text = _clean_reply(item.content)
+            if text:
+                lines.append(("用户：" if item.role == "user" else "助手：") + text[:500])
+    return "\n".join(lines)
+
+
+def _merge_needs(old: dict, new: dict) -> dict:
+    merged = dict(old or {})
+    for key in ("audience", "scenario", "budget", "tone", "product_hint", "topic", "platform"):
+        value = str((new or {}).get(key) or "").strip()
+        if value:
+            merged[key] = value
+    try:
+        pages = int((new or {}).get("page_count") or 0)
+        if 1 <= pages <= 12:
+            merged["page_count"] = pages
+    except (TypeError, ValueError):
+        pass
+    return merged
+
+
+def _keyword_needs(text: str, old: dict) -> dict:
+    text = text or ""
+    needs = dict(old or {})
+    intent = "chat" if _GREETING_RE.match(text) else "create"
+    if re.search(r"推荐|挑|哪款|选哪|适合|有什么", text):
+        intent = "recommend"
+    if re.search(r"改|调整|重写|换一版|重新", text) and not re.search(r"写一篇|做一套|生成", text):
+        intent = "edit"
+    if re.search(r"大学生|学生|校园|新生|考研|宿舍", text):
+        needs["audience"] = "大学生"
+    elif re.search(r"职场|办公|商务|白领|出差|会议", text):
+        needs["audience"] = "职场办公"
+    elif re.search(r"创作|设计|剪辑|修图|视频|摄影", text):
+        needs["audience"] = "创作者"
+    elif re.search(r"宝妈|家庭|家长|孩子", text):
+        needs["audience"] = "家庭用户"
+    if re.search(r"上课|论文|网课|图书馆|校园", text):
+        needs["scenario"] = "校园学习"
+    elif re.search(r"出差|会议|办公|通勤", text):
+        needs["scenario"] = "移动办公"
+    elif re.search(r"剪辑|设计|修图|视频", text):
+        needs["scenario"] = "内容创作"
+    elif re.search(r"续航|电池", text):
+        needs["scenario"] = "长续航"
+    elif re.search(r"轻薄|便携|重量", text):
+        needs["scenario"] = "轻薄便携"
+    if re.search(r"轻松|活泼|日常|种草", text):
+        needs["tone"] = "轻松种草"
+    elif re.search(r"专业|商务|稳重", text):
+        needs["tone"] = "专业稳重"
+    elif re.search(r"真实|分享|真诚", text):
+        needs["tone"] = "真实分享"
+    pages = _requested_page_count(text)
+    if pages:
+        needs["page_count"] = pages
+    match = re.search(r"(MateBook[^\s，。！？,;；]{0,24})", text, re.I)
+    if match:
+        needs["product_hint"] = match.group(1).strip()
+    topic = re.search(r"(?:热点|话题)[：:是]?\s*([^\n，。；]{2,30})", text)
+    if topic:
+        needs["topic"] = topic.group(1).strip()
+    return {"intent": intent, **needs}
+
+
+async def _guided_needs(text: str, history: str, old: dict, model: str | None):
+    prompt = ("已有需求：" + json.dumps(old or {}, ensure_ascii=False) +
+              "\n最近对话：\n" + (history or "（无）") +
+              "\n最新用户消息：" + text)
+    try:
+        result, meta = await asyncio.to_thread(
+            chat_json_messages, _GUIDED_NEEDS_SYSTEM,
+            [{"role": "user", "content": prompt}],
+            schema_hint="只输出需求 JSON", model=model)
+    except ModelError:
+        return _keyword_needs(text, old), {}
+    if not isinstance(result, dict):
+        return _keyword_needs(text, old), meta
+    merged = dict(old or {})
+    merged.update({key: result.get(key) for key in ("audience", "scenario", "budget", "tone",
+                                                     "product_hint", "topic", "platform")
+                   if result.get(key)})
+    try:
+        pages = int(result.get("page_count") or 0)
+        if 1 <= pages <= 12:
+            merged["page_count"] = pages
+    except (TypeError, ValueError):
+        pass
+    merged["intent"] = str(result.get("intent") or "unknown")
+    return merged, meta
+
+
+def _fact_text(product, label: str) -> str:
+    for fact in product.facts:
+        head, _, value = fact.text.partition("：")
+        if label in head:
+            return value.strip()
+    return ""
+
+
+def _number(value: str, pattern: str):
+    match = re.search(pattern, value or "")
+    try:
+        return float(match.group(1)) if match else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _product_metrics(product) -> dict:
+    weight_text = _fact_text(product, "尺寸与重量") or _fact_text(product, "重量")
+    screen_text = _fact_text(product, "屏幕") or _fact_text(product, "分辨率")
+    battery_text = _fact_text(product, "电池") or _fact_text(product, "续航")
+    memory_text = _fact_text(product, "内存")
+    storage_text = _fact_text(product, "存储")
+    processor_text = _fact_text(product, "处理器")
+    port_text = _fact_text(product, "接口")
+    return {
+        "weight": _number(weight_text, r"([\d.]+)\s*kg"),
+        "screen": _number(screen_text, r"([\d.]+)\s*英寸"),
+        "battery": _number(battery_text, r"(\d+(?:\.\d+)?)\s*Wh"),
+        "memory": _number(memory_text, r"(\d+)\s*GB"),
+        "storage": _number(storage_text, r"(\d+)\s*(?:GB|TB)"),
+        "processor": processor_text,
+        "ports": port_text,
+        "screen_text": screen_text,
+        "weight_text": weight_text,
+        "battery_text": battery_text,
+        "memory_text": memory_text,
+        "storage_text": storage_text,
+    }
+
+
+def _candidate_reason(product, needs: dict) -> tuple[str, list[str]]:
+    metrics = _product_metrics(product)
+    audience = needs.get("audience") or ""
+    scenario = needs.get("scenario") or ""
+    facts: list[str] = []
+    if metrics["weight"]:
+        facts.append(f"约 {metrics['weight']:g} kg")
+    if metrics["battery"]:
+        facts.append(f"{metrics['battery']:g} Wh 电池")
+    if metrics["screen"]:
+        facts.append(f"{metrics['screen']:g} 英寸屏幕")
+    if "创作" in audience or "创作" in scenario:
+        if metrics["memory"]:
+            facts.append(f"{metrics['memory']:g} GB 内存起")
+    elif "职场" in audience or "办公" in scenario:
+        if "HDMI" in metrics["ports"] or "USB-C" in metrics["ports"]:
+            facts.append("接口齐全")
+    else:
+        if metrics["storage"]:
+            facts.append(f"{metrics['storage']:g} GB 存储起")
+    facts = list(dict.fromkeys(facts))[:3]
+    return "，".join(facts) or "知识库现有型号", facts
+
+
+def _rank_products(catalog, needs: dict) -> list[dict]:
+    audience = needs.get("audience") or ""
+    scenario = needs.get("scenario") or ""
+    rows = []
+    for product in catalog.products:
+        metrics = _product_metrics(product)
+        score = 0.0
+        if "学生" in audience or "校园" in scenario:
+            if metrics["weight"] and metrics["weight"] <= 1.5:
+                score += 3
+            if metrics["battery"] and metrics["battery"] >= 60:
+                score += 2
+            if metrics["screen"] and 13.5 <= metrics["screen"] <= 16.5:
+                score += 1
+            if metrics["storage"] and metrics["storage"] >= 512:
+                score += 1
+            if "MateBook 14" in product.model:
+                score += 1
+        elif "职场" in audience or "办公" in scenario:
+            if metrics["weight"] and metrics["weight"] <= 1.5:
+                score += 2
+            if "HDMI" in metrics["ports"] or "USB-C" in metrics["ports"]:
+                score += 2
+            if metrics["battery"] and metrics["battery"] >= 60:
+                score += 1
+        elif "创作" in audience or "创作" in scenario:
+            if re.search(r"2K|3K|3120|2880|OLED", metrics["screen_text"], re.I):
+                score += 2
+            if metrics["memory"] and metrics["memory"] >= 32:
+                score += 2
+            if re.search(r"Ultra|麒麟|i7|i9", metrics["processor"], re.I):
+                score += 1
+        else:
+            score += 1
+        reason, facts = _candidate_reason(product, needs)
+        rows.append({"product_id": product.product_id, "model": product.model,
+                     "reason": reason, "facts": facts, "score": round(score, 1)})
+    rows.sort(key=lambda item: (-item["score"], item["model"]))
+    return rows[:3]
+
+
+def _match_candidate(text: str, candidates: list[dict]) -> dict | None:
+    lowered = (text or "").lower()
+    index_match = re.search(r"(?:第\s*)?([1-9])\s*(?:个|款|台)?", lowered)
+    if index_match:
+        index = int(index_match.group(1)) - 1
+        if 0 <= index < len(candidates):
+            return candidates[index]
+    best = None
+    for candidate in candidates:
+        model = candidate["model"].lower()
+        if model in lowered:
+            if best is None or len(model) > len(best["model"]):
+                best = candidate
+    if best:
+        return best
+    tokens = [token for token in re.findall(r"[a-z]+|\d+", lowered)
+              if token not in {"huawei", "matebook", "选", "写", "第", "款"}]
+    for candidate in candidates:
+        haystack = candidate["model"].lower()
+        if tokens and all(token in haystack for token in tokens):
+            return candidate
+    return None
+
+
+def _image_field(image, key: str) -> str:
+    if isinstance(image, dict):
+        return str(image.get(key) or "")
+    return str(getattr(image, key, "") or "")
+
+
+def _product_brief(product) -> dict:
+    return {"product_id": product.product_id, "model": product.model}
+
+
+async def _guided_images(ctx: ToolContext, product, offset: int = 0) -> list[dict]:
+    try:
+        images, _ = await verified_images(ctx.catalog, product, Platform.XIAOHONGSHU,
+                                          ["屏幕", "接口", "尺寸与重量", "电池"])
+    except Exception:
+        return []
+    rows = [{"image_id": _image_field(item, "image_id"),
+             "caption": _image_field(item, "caption"),
+             "access_url": _image_field(item, "access_url")} for item in images]
+    if rows and offset:
+        offset %= len(rows)
+        rows = rows[offset:] + rows[:offset]
+    return rows[:6]
+
+
+async def _guided_intake(ctx: ToolContext, state, data: dict, needs: dict, text: str,
+                         model, usage: dict, base_seq: int):
+    history = _recent_history(ctx.db, ctx.conversation)
+    extracted, meta = await _guided_needs(text, history, needs, model)
+    _guided_usage_add(usage, meta)
+    needs = _merge_needs(needs, extracted)
+    data["needs"] = needs
+    intent = str(extracted.get("intent") or "unknown")
+    if intent == "chat" and not needs.get("product_hint"):
+        _save_guided(state, "intake", data, ctx.db)
+        return _guided_finish(
+            ctx.db, ctx.conversation, ctx.run, base_seq,
+            "你好，我是华为 PC 内容助手。先告诉我：这篇内容主要想给谁看？"
+            "你可以直接说人群和用途，比如“大学生，上课和写论文”。",
+            stage="intake", usage=usage,
+            actions=["大学生", "职场办公", "创作者", "其他"])
+    if needs.get("product_hint"):
+        product = _resolve_product(ctx.catalog, needs["product_hint"], ctx)
+        if product:
+            data["selected"] = _product_brief(product)
+            return await _guided_plan(ctx, state, data, needs, text, model, usage, base_seq)
+    if not needs.get("audience") and not _USER_DECIDES_RE.search(text):
+        _save_guided(state, "intake", data, ctx.db)
+        return _guided_finish(
+            ctx.db, ctx.conversation, ctx.run, base_seq,
+            "先定一下读者：这篇内容主要给谁看？选一个方向就行，也可以直接描述。",
+            stage="intake", usage=usage,
+            actions=["大学生", "职场办公", "创作者", "家庭用户"])
+    if not needs.get("scenario") and not _USER_DECIDES_RE.search(text):
+        _save_guided(state, "intake", data, ctx.db)
+        return _guided_finish(
+            ctx.db, ctx.conversation, ctx.run, base_seq,
+            "那主要用在什么场景？比如上课/论文、出差开会、剪辑设计，或者你最想突出续航、轻薄。",
+            stage="intake", usage=usage,
+            actions=["校园学习", "移动办公", "内容创作", "长续航"])
+    return await _guided_recommend(ctx, state, data, needs, model, usage, base_seq)
+
+
+async def _guided_recommend(ctx: ToolContext, state, data: dict, needs: dict,
+                            model, usage: dict, base_seq: int):
+    candidates = _rank_products(ctx.catalog, needs)
+    if not candidates:
+        _save_guided(state, "intake", data, ctx.db)
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                              "知识库里暂时没有可推荐的型号；可以换个用途描述，或直接告诉我型号。",
+                              stage="intake", usage=usage,
+                              actions=["换一个用途描述", "直接说型号"])
+    data["candidates"] = candidates
+    _save_guided(state, "select_product", data, ctx.db)
+    lines = [f"{index + 1}. {item['model']}：{item['reason']}"
+             for index, item in enumerate(candidates)]
+    reply = ("按现在了解到的需求，我从知识库里挑了这几款，都是可查证的真实型号：\n\n" +
+             "\n".join(lines) + "\n\n你想先写哪一款？选一个，或者直接说型号。")
+    return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq, reply,
+                          stage="select_product", usage=usage, candidates=candidates,
+                          actions=[item["model"] for item in candidates])
+
+
+async def _guided_plan(ctx: ToolContext, state, data: dict, needs: dict, text: str,
+                       model, usage: dict, base_seq: int):
+    selected = data.get("selected") or {}
+    pages = int(needs.get("page_count") or data.get("plan", {}).get("page_count") or 6)
+    plan = {"platform": "小红书", "page_count": pages,
+            "tone": needs.get("tone") or "轻松种草", "images": "知识库原图"}
+    data["plan"] = plan
+    _save_guided(state, "confirm_plan", data, ctx.db)
+    audience = needs.get("audience") or "目标读者"
+    reply = (f"我想这样写：{selected.get('model', '这款')}，面向{audience}，"
+             f"{plan['tone']}，{pages} 页，配知识库原图，不写价格。"
+             "可以开始吗？页数或风格想改也可以直接说。")
+    return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq, reply,
+                          stage="confirm_plan", usage=usage, plan=plan, selected=selected,
+                          actions=["开始生成", "改成 3 页", "改成 6 页", "换个风格"])
+
+
+async def _guided_select(ctx: ToolContext, state, data: dict, needs: dict, text: str,
+                         model, usage: dict, base_seq: int):
+    candidates = data.get("candidates") or []
+    choice = _match_candidate(text, candidates)
+    if not choice:
+        _save_guided(state, "select_product", data, ctx.db)
+        return _guided_finish(
+            ctx.db, ctx.conversation, ctx.run, base_seq,
+            "我没确定你指的是哪一款。直接说型号，或者说“第 1 款/第 2 款”就行。",
+            stage="select_product", usage=usage, candidates=candidates,
+            actions=[item["model"] for item in candidates])
+    data["selected"] = choice
+    return await _guided_plan(ctx, state, data, needs, text, model, usage, base_seq)
+
+
+async def _guided_generate(ctx: ToolContext, state, data: dict, needs: dict,
+                           model, usage: dict, base_seq: int, extra: str = ""):
+    selected = data.get("selected") or {}
+    product = _resolve_product(ctx.catalog, selected.get("product_id") or selected.get("model", ""), ctx)
+    if not product:
+        _save_guided(state, "confirm_plan", data, ctx.db)
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                              "这个型号的证据读不到了，请重新选一款。",
+                              stage="select_product", usage=usage,
+                              candidates=data.get("candidates") or [])
+    plan = data.get("plan") or {}
+    pages = int(plan.get("page_count") or needs.get("page_count") or 6)
+    audience = needs.get("audience") or "目标读者"
+    scenario = needs.get("scenario") or "日常使用"
+    tone = plan.get("tone") or "轻松种草"
+    ctx.last_search = {
+        "products": [{"product_id": product.product_id, "model": product.model}],
+        "evidence": [{"fact_id": fact.fact_id, "text": fact.text,
+                      "source": getattr(fact.source, "title", ""),
+                      "conditions": getattr(fact, "conditions", "")}
+                     for fact in product.facts]}
+    ctx.evidence_read = True
+    request = (f"给 {product.model} 写一篇小红书，面向{audience}，场景{scenario}，{tone}，"
+               f"{pages} 页，不写价格。只挑 3–6 条与叙事最相关的参数，不要把全部参数塞进文案；"
+               "每个数字必须与知识库事实一致，保留“约/选配/仅某版本”等限定。")
+    if extra:
+        request += " " + extra
+    composed_result = await asyncio.to_thread(_compose_after_evidence, ctx, request, model)
+    if isinstance(composed_result, tuple):
+        composed, meta = composed_result
+    else:
+        composed, meta = composed_result, None
+    _guided_usage_add(usage, meta)
+    if not composed or not composed.get("ok"):
+        _save_guided(state, "confirm_plan", data, ctx.db)
+        message = "文案没有通过事实检查，先不保存。"
+        if composed:
+            message += str(composed.get("message") or "")
+            errors = (composed.get("check") or {}).get("errors") or []
+            if errors:
+                message += " " + "；".join(str(item.get("message", "")) for item in errors[:2])
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                              message + " 可以换个说法或让我按真实参数重写。",
+                              stage="confirm_plan", usage=usage,
+                              actions=["重新生成文案", "换个风格", "换一款产品"])
+    images = await _guided_images(ctx, product, int(data.get("image_offset") or 0))
+    data["images"] = images
+    data["artifact_id"] = composed.get("artifact_id")
+    data["copy_revision"] = composed.get("revision")
+    _save_guided(state, "review", data, ctx.db)
+    reply = str(composed.get("reply") or "文案已生成。").strip()
+    if images:
+        reply += (f"\n\n配图用的是知识库里 {product.model} 的原图，共 {len(images)} 张，"
+                  "没有重画产品外观。")
+    else:
+        reply += "\n\n知识库里暂时没有这款的可用原图，我先交付文案；可以换一款有原图的型号。"
+    reply += "\n你看这样可以吗？要重新生成文案、重新生成图片，还是都保留？"
+    actions = ["都保留", "重新生成文案", "重新生成图片", "改某一页"]
+    if not images:
+        actions = ["都保留", "重新生成文案", "换一款产品"]
+    return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq, reply,
+                          stage="review", usage=usage,
+                          artifact={"artifact_id": composed.get("artifact_id"),
+                                    "revision": composed.get("revision"),
+                                    "check": composed.get("check")},
+                          images=images, actions=actions, plan=plan,
+                          selected=_product_brief(product))
+
+
+async def _guided_review(ctx: ToolContext, state, data: dict, needs: dict, text: str,
+                         model, usage: dict, base_seq: int):
+    lowered = (text or "").lower()
+    selected = data.get("selected") or {}
+    product = _resolve_product(ctx.catalog, selected.get("product_id") or selected.get("model", ""), ctx)
+    if re.search(r"开始新任务|新任务|重新开始", text):
+        state.data = {"needs": {}, "stage": "intake"}
+        state.stage = "intake"
+        ctx.db.flush()
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                              "好，开个新任务。这篇内容主要想给谁看？",
+                              stage="intake", usage=usage,
+                              actions=["大学生", "职场办公", "创作者", "家庭用户"])
+    if re.search(r"改某一页|改一页|改第.*页", text) and not re.search(r"第\s*[1-9一二三四五六七八九]", text):
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                              "要改第几页？想怎么改？比如“第二页更口语一点”。",
+                              stage="review", usage=usage, images=data.get("images") or [],
+                              actions=["第二页更口语一点", "标题短一点", "都保留"])
+    if re.search(r"换(一)?款|换产品|重新选|别的型号", text):
+        if data.get("candidates"):
+            _save_guided(state, "select_product", data, ctx.db)
+            return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                                  "可以，重新选一款：",
+                                  stage="select_product", usage=usage,
+                                  candidates=data["candidates"],
+                                  actions=[item["model"] for item in data["candidates"]])
+        data.pop("selected", None)
+        return await _guided_intake(ctx, state, data, needs, "想换一款产品", model, usage, base_seq)
+    if re.search(r"(重新|再|换).*(图|图片|配图)|换一组图", text):
+        if not product:
+            return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq,
+                                  "产品信息丢了，请重新选一款。",
+                                  stage="select_product", usage=usage)
+        offset = int(data.get("image_offset") or 0) + 1
+        data["image_offset"] = offset
+        images = await _guided_images(ctx, product, offset)
+        data["images"] = images
+        _save_guided(state, "review", data, ctx.db)
+        reply = (f"已换成另一组知识库原图（{len(images)} 张），产品没有重画。"
+                 if images else "知识库里没有更多可用原图了，可以换一款产品。")
+        reply += "\n文案保持不变。还要再换图、改文案，还是都保留？"
+        return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq, reply,
+                              stage="review", usage=usage, images=images,
+                              actions=["都保留", "重新生成文案", "重新生成图片"],
+                              artifact=data.get("artifact_id") and {"artifact_id": data["artifact_id"]})
+    if re.search(r"(重新|再|换).*(文案|正文|标题)|文案.*(不行|换|改)", text) or "重新生成文案" in text:
+        data["plan"] = dict(data.get("plan") or {})
+        return await _guided_generate(ctx, state, data, needs, model, usage, base_seq,
+                                      extra="换一个标题和开头角度，事实和页数保持不变。")
+    if _is_edit_request(text) and data.get("artifact_id"):
+        loaded = _load_artifact(ctx, {"artifact_id": data["artifact_id"]})
+        if loaded.get("ok"):
+            edited = await asyncio.to_thread(_edit_artifact, ctx, text, model)
+            if edited and edited.get("ok"):
+                data["copy_revision"] = edited.get("revision")
+                _save_guided(state, "review", data, ctx.db)
+                reply = str(edited.get("reply") or "已按你的要求改了指定位置。")
+                reply += "\n其他页和事实保持不变。还要改文案、换图，还是都保留？"
+                return _guided_finish(ctx.db, ctx.conversation, ctx.run, base_seq, reply,
+                                      stage="review", usage=usage,
+                                      artifact={"artifact_id": edited.get("artifact_id"),
+                                                "revision": edited.get("revision"),
+                                                "check": edited.get("check")},
+                                      images=data.get("images") or [],
+                                      actions=["都保留", "重新生成文案", "重新生成图片"])
+    if _APPROVE_RE.search(text) or _START_RE.search(text) and not re.search(r"改|换|重新", text):
+        _save_guided(state, "done", data, ctx.db)
+        return _guided_finish(
+            ctx.db, ctx.conversation, ctx.run, base_seq,
+            "好，已按当前版本定稿：文案和知识库原图都保留。可以复制或导出；"
+            "想再来一版，告诉我改文案还是换图。",
+            stage="done", usage=usage, images=data.get("images") or [],
+            actions=["重新生成文案", "重新生成图片", "开始新任务"])
+    _save_guided(state, "review", data, ctx.db)
+    return _guided_finish(
+        ctx.db, ctx.conversation, ctx.run, base_seq,
+        "你是想改文案、换一组图，还是都保留？直接说就行。",
+        stage="review", usage=usage, images=data.get("images") or [],
+        actions=["都保留", "重新生成文案", "重新生成图片", "改某一页"])
+
+
+async def _guided_turn(db: Session, conversation, run, text: str, model, base_seq: int) -> dict:
+    state = _task_state(db, conversation)
+    data = dict(state.data or {})
+    needs = dict(data.get("needs") or {})
+    usage = {"input_tokens": 0, "output_tokens": 0, "models": []}
+    ctx = ToolContext(db=db, conversation=conversation, run=run)
+    stage = state.stage or "intake"
+    try:
+        await _catalog(ctx)
+        if stage == "select_product" and data.get("candidates"):
+            return await _guided_select(ctx, state, data, needs, text, model, usage, base_seq)
+        if stage == "confirm_plan" and data.get("selected"):
+            plan = dict(data.get("plan") or {})
+            pages = _requested_page_count(text)
+            if pages:
+                plan["page_count"] = pages
+                data["plan"] = plan
+                _save_guided(state, "confirm_plan", data, db)
+                return _guided_finish(
+                    db, conversation, run, base_seq,
+                    f"好，改成 {pages} 页。可以开始生成了吗？",
+                    stage="confirm_plan", usage=usage, plan=plan,
+                    selected=data.get("selected"),
+                    actions=["开始生成", "换个风格", "换一款产品"])
+            if re.search(r"换.*风格|风格.*换", text):
+                _save_guided(state, "confirm_plan", data, db)
+                return _guided_finish(
+                    db, conversation, run, base_seq,
+                    "想要哪种风格？轻松种草、专业稳重，还是像朋友真实分享？",
+                    stage="confirm_plan", usage=usage, plan=plan,
+                    selected=data.get("selected"),
+                    actions=["轻松种草", "专业稳重", "真实分享", "你定"])
+            if re.search(r"轻松|专业|稳重|真实|分享", text):
+                for tone in ("轻松种草", "专业稳重", "真实分享"):
+                    if any(word in text for word in tone[:2]):
+                        plan["tone"] = tone
+                data["plan"] = plan
+                needs["tone"] = plan["tone"]
+                data["needs"] = needs
+                _save_guided(state, "confirm_plan", data, db)
+                return _guided_finish(
+                    db, conversation, run, base_seq,
+                    f"风格定为“{plan['tone']}”。可以开始生成了吗？",
+                    stage="confirm_plan", usage=usage, plan=plan,
+                    selected=data.get("selected"),
+                    actions=["开始生成", "改成 3 页", "改成 6 页", "换一款产品"])
+            if re.search(r"换(一)?款|换产品|重新选", text):
+                if data.get("candidates"):
+                    _save_guided(state, "select_product", data, db)
+                    return _guided_finish(db, conversation, run, base_seq,
+                                          "可以，重新选一款：", stage="select_product",
+                                          usage=usage, candidates=data["candidates"],
+                                          actions=[item["model"] for item in data["candidates"]])
+                return await _guided_intake(ctx, state, data, needs, text, model, usage, base_seq)
+            if _START_RE.search(text) or _USER_DECIDES_RE.search(text):
+                return await _guided_generate(ctx, state, data, needs, model, usage, base_seq)
+            _save_guided(state, "confirm_plan", data, db)
+            return _guided_finish(
+                db, conversation, run, base_seq,
+                "回复“开始生成”就开工；也可以改成 3 页/6 页、换风格，或换一款产品。",
+                stage="confirm_plan", usage=usage, plan=plan,
+                selected=data.get("selected"),
+                actions=["开始生成", "改成 3 页", "改成 6 页", "换一款产品"])
+        if stage == "review":
+            return await _guided_review(ctx, state, data, needs, text, model, usage, base_seq)
+        if stage == "done":
+            data = {"needs": {}, "stage": "intake"}
+            state.data = data
+            state.stage = "intake"
+            db.flush()
+            needs = {}
+        return await _guided_intake(ctx, state, data, needs, text, model, usage, base_seq)
+    except ModelError as error:
+        return _guided_finish(db, conversation, run, base_seq,
+                              "主模型当前不可用：" + str(error) +
+                              "。本轮没有改用固定模板冒充成功，可以稍后重试。",
+                              stage=stage, status="failed", stop_reason=str(error)[:160],
+                              usage=usage)
+    except Exception as error:
+        return _guided_finish(db, conversation, run, base_seq,
+                              "本轮执行失败，已保留已有材料：" + str(error)[:120],
+                              stage=stage, status="failed", stop_reason=str(error)[:160],
+                              usage=usage)
+
+
 def run_payload(db: Session, run: models.AgentRun) -> dict:
     messages = db.scalars(select(models.AgentMessage).where(
         models.AgentMessage.conversation_id == run.conversation_id).order_by(
         models.AgentMessage.seq)).all()
     assistant = next((item for item in reversed(messages) if item.role == "assistant"), None)
+    result = next((item for item in reversed(run.events or [])
+                   if item.get("type") == "run_result"), {})
+    result = {key: value for key, value in result.items() if key not in ("type", "at")}
     return {"run_id": run.id, "conversation_id": run.conversation_id,
             "status": run.status, "stop_reason": run.stop_reason,
-            "reply": assistant.content if assistant else "",
-            "events": run.events or [], "usage": run.usage or {}}
+            "reply": _clean_reply(assistant.content) if assistant else "",
+            "events": run.events or [], "usage": run.usage or {}, **result}
 
 
 def conversation_payload(db: Session, conversation: models.AgentConversation) -> dict:
@@ -1021,7 +1712,12 @@ def conversation_payload(db: Session, conversation: models.AgentConversation) ->
                               "content": latest.content if latest else None,
                               "check": latest.check_status if latest else None,
                               "content_hash": latest.content_hash if latest else ""})
+    state = db.get(models.AgentTaskState, conversation.id)
     return {"conversation_id": conversation.id, "revision": conversation.revision,
-            "messages": [{"role": item.role, "content": item.content, "seq": item.seq}
+            "stage": state.stage if state else "intake",
+            "task": state.data if state else {},
+            "messages": [{"role": item.role,
+                          "content": _clean_reply(item.content) if item.role == "assistant" else item.content,
+                          "seq": item.seq}
                          for item in messages],
             "artifacts": artifact_rows}

@@ -64,7 +64,8 @@ def _call(name, args, call_id="c1"):
 
 
 def _conversation():
-    return client.post("/api/v2/conversations", json={}).json()["conversation_id"]
+    return client.post("/api/v2/conversations",
+                       json={"mode": "autonomous"}).json()["conversation_id"]
 
 
 def test_tool_roundtrip_is_persisted(monkeypatch):
@@ -297,6 +298,86 @@ def test_compose_sanitizes_after_two_failed_retries(monkeypatch):
     assert "16 GB" in loaded["content"]["body"]
     assert "真实值改写" in saved["reply"]
     session.close()
+
+
+class GuidedProduct:
+    def __init__(self, pid, model):
+        self.product_id = pid
+        self.model = model
+        self.issues = []
+        self.docs = []
+        self.facts = [_fact(pid + "-MEM", "内存：16 GB"),
+                      _fact(pid + "-SCREEN", "屏幕：14.2 英寸"),
+                      _fact(pid + "-WEIGHT", "尺寸与重量：约 1.33 kg"),
+                      _fact(pid + "-BAT", "电池：70 Wh")]
+
+
+class GuidedCatalog:
+    products = [GuidedProduct("P-a", "HUAWEI MateBook Test 14"),
+                GuidedProduct("P-b", "HUAWEI MateBook Test Pro"),
+                GuidedProduct("P-c", "HUAWEI MateBook Test Fold")]
+    entries = []
+    image_index = []
+
+
+class FakeImage:
+    image_id = "IMG-1"
+    caption = "HUAWEI MateBook Test 14 官方产品图"
+    access_url = "/api/v1/assets/IMG-1"
+
+
+def test_guided_flow_from_greeting_to_artifact(monkeypatch):
+    async def guided_catalog(*args, **kwargs):
+        return GuidedCatalog()
+
+    async def guided_images(*args, **kwargs):
+        return [FakeImage()], []
+
+    monkeypatch.setattr("app.agent_runtime.load_catalog", guided_catalog)
+    monkeypatch.setattr("app.agent_runtime.verified_images", guided_images)
+
+    def fake_json(system, messages, schema_hint=None, model=None):
+        user = messages[-1]["content"] if messages else ""
+        if "需求分析器" in system:
+            if "最新用户消息：你好" in user:
+                return {"intent": "chat"}, {"model": "stub", "usage": {}}
+            return {"intent": "create", "audience": "大学生", "scenario": "校园学习",
+                    "tone": "轻松种草", "page_count": 6}, {"model": "stub", "usage": {}}
+        payload = {"artifact_type": "pages", "reply": "文案和原图都好了。",
+                   "content": {"product_id": "P-a", "title": "校园选本",
+                               "body": "内存 16 GB，屏幕 14.2 英寸。",
+                               "tags": ["校园"],
+                               "pages": [{"role": "hook", "title": f"第{i}页",
+                                          "text": f"内存 16 GB，第{i}页内容"} for i in range(1, 7)]}}
+        return payload, {"model": "stub", "usage": {}}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake_json)
+    conversation_id = client.post("/api/v2/conversations",
+                                  json={"mode": "guided"}).json()["conversation_id"]
+
+    first = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                        json={"message": "你好"}).json()
+    assert first["stage"] == "intake" and first["actions"]
+
+    second = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                         json={"message": "大学生，上课和写论文"}).json()
+    assert second["stage"] == "select_product"
+    assert len(second["candidates"]) == 3
+
+    third = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                        json={"message": "第 1 款"}).json()
+    assert third["stage"] == "confirm_plan"
+    assert third["plan"]["page_count"] == 6
+
+    fourth = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                         json={"message": "开始生成"}).json()
+    assert fourth["stage"] == "review"
+    assert fourth["artifact"]["revision"] == 1
+    assert fourth["images"] and fourth["actions"]
+
+    fifth = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                        json={"message": "都保留"}).json()
+    assert fifth["stage"] == "done"
 
 
 def test_v2_uses_file_sqlite_when_database_url_missing(monkeypatch, tmp_path):

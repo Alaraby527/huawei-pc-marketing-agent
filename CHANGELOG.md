@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.15.0 — 2026-10-20
+
+### Added
+
+- **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.
+- **Candidate cards and action chips** in the web UI, plus an original-image gallery and review buttons.
+- **Soft task state** (`agent_task_states`): needs, candidates, selected product, plan and images survive turns and restarts.
+- **Parameter budget in copy**: the prompt asks for 3–6 facts relevant to the narrative instead of dumping every spec; grounding still verifies every number.
+
+### Fixed
+
+- Raw decision JSON (`{"action":"reply",...}`) is no longer shown in chat; reply text is extracted and cleaned.
+- Deterministic answer when the user asks for a non-existent value (for example 64 GB): the copy uses the real values and says so.
+- Repeated artifact saves no longer collide on revision 1; a new revision is appended.
+- KB image records (dicts) are handled consistently instead of assuming object attributes.
+- Source/provenance boilerplate is no longer treated as a product applicability condition, removing warning floods from grounding.
+
 ## 0.14.0 — 2026-10-20
 
 ### Added

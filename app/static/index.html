@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.14.0-1">
+<link rel="stylesheet" href="/static/style.css?v=0.15.0-1">
 </head>
 <body>
 <div class="app-shell">
@@ -23,7 +23,7 @@
       <span class="badge" id="kb-badge">知识库：检测中…</span>
       <button type="button" class="chip xhs-login" id="xhs-login">连接小红书</button>
       <button type="button" class="icon-btn" id="work-toggle" title="展开或收起工作栏" aria-label="展开或收起工作栏">▤</button>
-      <span class="version-tag">v0.14.0</span>
+      <span class="version-tag">v0.15.0</span>
     </div>
   </header>
 
@@ -161,21 +161,21 @@
         </div>
         <div class="tabs" role="tablist" id="work-tabs">
           <button class="tab active" data-tab="plan" role="tab">图文方案</button>
-          <button class="tab" data-tab="pages" role="tab">六页图文</button>
+          <button class="tab" data-tab="pages" role="tab">页面图文</button>
           <button class="tab" data-tab="verify" role="tab">核验结果</button>
           <button class="tab" data-tab="evidence" role="tab">证据</button>
-          <button class="tab" data-tab="sample" role="tab">六页样稿</button>
+          <button class="tab" data-tab="sample" role="tab">页面样稿</button>
         </div>
       </div>
 
       <div class="tab-panel" id="panel-plan" role="tabpanel">
         <div class="empty-state" id="plan-empty">
           <div class="empty-icon">✦</div>
-          <h3>先完成需求澄清</h3>
-          <p>补齐画像、预算和用途后，这里会出现可比较的候选型号；确认型号后生成图文方案。</p>
+          <h3>先说说写给谁</h3>
+          <p>告诉我人群和用途，我会从知识库推荐几款真实型号；你选一款、确认方案后，再生成推文和原图。</p>
           <div class="empty-actions">
-            <button class="chip" data-example="大学新生，预算不限，主要写论文、上网课，偏好轻薄">用示例开始</button>
-            <button class="chip" data-example="职场办公，预算不限，经常出差开会，重视便携和接口">职场办公示例</button>
+            <button class="chip" data-example="大学新生，上课和写论文，偏好轻薄">用示例开始</button>
+            <button class="chip" data-example="职场办公，经常出差开会，重视便携和接口">职场办公示例</button>
           </div>
         </div>
         <div class="candidate-board" id="candidate-board" hidden></div>
@@ -214,7 +214,7 @@
             <img id="cover-image" alt="AI 生成的封面氛围图">
             <p class="hint">AI 氛围图只做背景装饰，不是产品实拍，也不能用来证明产品外观。</p>
           </div>
-          <p class="draft-footnote">六页图文结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
+          <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
         </article>
       </div>
 
@@ -222,10 +222,10 @@
         <div class="empty-state" id="pages-empty">
           <div class="empty-icon">▤</div>
           <h3>还没有六页方案</h3>
-          <p>确认产品并生成图文后，这里会按封面、场景、事实、细节、决策、收尾六页展开。</p>
+          <p>确认产品并生成图文后，这里会按实际页数展开，不再固定六页。</p>
         </div>
         <div class="pages-tools" id="pages-tools" hidden>
-          <span>1080 × 1440 PNG · 六页</span>
+          <span>1080 × 1440 PNG · 按实际页数</span>
           <a id="posters-link-pages" class="btn-secondary" href="#" download>下载六页图片 ZIP</a>
         </div>
         <div class="pages-grid" id="pages-grid" hidden></div>
@@ -308,7 +308,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.14.0-1" defer></script>
-<script src="/static/workspace.js?v=0.14.0-1" defer></script>
+<script src="/static/app.js?v=0.15.0-1" defer></script>
+<script src="/static/workspace.js?v=0.15.0-1" defer></script>
 </body>
 </html>

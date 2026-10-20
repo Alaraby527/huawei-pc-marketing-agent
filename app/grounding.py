@@ -98,6 +98,29 @@ def _normalized(value: str, unit: str) -> tuple[float, str] | None:
     return number * factor, family
 
 
+def _clean_conditions(value) -> list[str]:
+    """Keep applicability conditions, drop source/provenance boilerplate."""
+    if isinstance(value, (list, tuple)):
+        parts = [str(item) for item in value]
+    else:
+        parts = re.split(r"[；;。\n]", str(value or ""))
+    keep: list[str] = []
+    for part in parts:
+        text = part.strip()
+        if not text:
+            continue
+        if any(marker in text for marker in ("来源：", "抓取日期", "官网", "http://", "https://")):
+            continue
+        if any(marker in text for marker in ("配置可能因销售版本而异", "以实际销售版本为准",
+                                             "配置因销售版本而异", "不同模式", "实际可视区域")):
+            continue
+        if any(marker in text for marker in ("仅", "版本", "配置", "电池", "键盘", "支持",
+                                             "默认", "选配", "适用", "条件", "最高")):
+            if text not in keep:
+                keep.append(text)
+    return keep
+
+
 def records_from_facts(facts: Iterable, product_id: str = "", variant_id: str = "") -> list[FactRecord]:
     """Convert the existing Fact objects (text + source + conditions) into records.
 
@@ -112,11 +135,7 @@ def records_from_facts(facts: Iterable, product_id: str = "", variant_id: str = 
         source_title = str(getattr(source, "title", "") or (source.get("title") if isinstance(source, dict) else ""))
         locator = str(getattr(source, "locator", "") or (source.get("locator") if isinstance(source, dict) else ""))
         raw_conditions = getattr(fact, "conditions", "") or (fact.get("conditions") if isinstance(fact, dict) else "") or ""
-        if isinstance(raw_conditions, str):
-            conditions = [raw_conditions] if raw_conditions.strip() else []
-        else:
-            conditions = [str(item.get("text", item)) if isinstance(item, dict) else str(item)
-                          for item in raw_conditions]
+        conditions = _clean_conditions(raw_conditions)
         parts = re.split(r"[：:]", text, maxsplit=1)
         label = parts[0].strip()
         value = parts[1].strip() if len(parts) > 1 else text.strip()

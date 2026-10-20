@@ -126,6 +126,8 @@
     $('candidate-board').hidden = true;
     $('draft-card').hidden = true;
     $('plan-empty').hidden = false;
+    $('image-results').hidden = true;
+    $('image-results').innerHTML = '';
     $('cover-result').hidden = true;
     $('publish-state').textContent = '尚未通过核验，不可发布';
     $('publish-state').className = '';
@@ -265,6 +267,8 @@
     const artifacts = (conversation && conversation.artifacts) || [];
     const artifact = artifacts[0];
     if (!artifact || !artifact.content) return;
+    $('image-results').hidden = true;
+    $('image-results').innerHTML = '';
     const content = artifact.content;
     const card = $('draft-card');
     $('plan-empty').hidden = true;
@@ -296,6 +300,71 @@
     saveTask();
   }
 
+  function renderV2Candidates(candidates) {
+    const board = $('candidate-board');
+    if (!candidates || !candidates.length) { board.hidden = true; return; }
+    $('plan-empty').hidden = true;
+    $('draft-card').hidden = true;
+    board.hidden = false;
+    board.innerHTML = candidates.map((candidate, index) =>
+      '<article class="candidate-card">' +
+      '<div class="candidate-head"><span class="candidate-rank">' + (index + 1) + '</span>' +
+      '<div class="candidate-name">' + escapeHtml(candidate.model || '') + '</div></div>' +
+      '<div class="candidate-meta">' + escapeHtml(candidate.reason || '知识库现有型号') + '</div>' +
+      '<div class="candidate-reasons">' + (candidate.facts || []).map(fact =>
+        '<span class="fact-chip">' + escapeHtml(fact) + '</span>').join('') + '</div>' +
+      '<div class="candidate-actions"><button type="button" class="btn-primary" data-pick="' +
+      escapeHtml(candidate.model || '') + '">选这款</button></div></article>').join('');
+  }
+
+  function renderV2Plan(plan, selected) {
+    if (!plan) return;
+    $('plan-empty').hidden = true;
+    $('candidate-board').hidden = true;
+    const card = $('draft-card');
+    card.hidden = false;
+    $('draft-eyebrow').textContent = '方案确认';
+    $('draft-title').textContent = (selected && selected.model) || '内容方案';
+    $('draft-meta').textContent = '小红书 · ' + (plan.page_count || 6) + ' 页 · ' +
+      (plan.tone || '轻松种草') + ' · ' + (plan.images || '知识库原图');
+    $('draft-body').textContent = '确认后开始生成文案，配图直接使用知识库里的产品原图。';
+    $('draft-cta').textContent = '';
+    $('draft-tags').innerHTML = '';
+    $('draft-state').textContent = '待确认';
+    $('draft-state').className = 'draft-state';
+    $('pages-empty').hidden = false;
+    $('pages-grid').hidden = true;
+    switchTab('plan');
+  }
+
+  function renderV2Images(images) {
+    const host = $('image-results');
+    if (!images || !images.length) { host.hidden = true; return; }
+    host.hidden = false;
+    host.innerHTML = images.map(image =>
+      '<figure><img src="' + escapeHtml(image.access_url || '') + '" alt="' +
+      escapeHtml(image.caption || '知识库产品原图') + '" loading="lazy"><figcaption>' +
+      escapeHtml(image.caption || '知识库原图') + '</figcaption></figure>').join('');
+  }
+
+  function renderV2Actions(messageEl, actions) {
+    if (!messageEl || !actions || !actions.length) return;
+    const row = document.createElement('div');
+    row.className = 'v2-actions';
+    row.innerHTML = actions.map(action =>
+      '<button type="button" class="chip" data-action="' + escapeHtml(action) + '">' +
+      escapeHtml(action) + '</button>').join('');
+    messageEl.appendChild(row);
+    row.addEventListener('click', event => {
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const text = button.getAttribute('data-action');
+      addMessage('operator', '<p>' + escapeHtml(text) + '</p>');
+      send(text);
+    });
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
   async function sendV2(message) {
     if (turnInFlight) return;
     turnInFlight = true;
@@ -304,7 +373,8 @@
     try {
       if (!sessionId) {
         const created = await fetch('/api/v2/conversations', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'guided' }),
         });
         const conversation = await created.json();
         sessionId = conversation.conversation_id;
@@ -321,9 +391,21 @@
         addMessage('assistant', '<p>' + escapeHtml(data.message || '任务执行失败') + '</p>');
         return;
       }
-      addMessage('assistant', '<p>' + escapeHtml(data.reply || '已完成') + '</p>' + eventTrace(data.events));
-      const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
-      renderV2Artifact(conversation);
+      const messageEl = addMessage('assistant', '<p>' +
+        escapeHtml(data.reply || '已完成').replace(/\n/g, '<br>') + '</p>' + eventTrace(data.events));
+      renderV2Actions(messageEl, data.actions);
+      if (data.candidates && data.candidates.length) {
+        renderV2Candidates(data.candidates);
+      } else {
+        const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
+        if (conversation.artifacts && conversation.artifacts.length) {
+          renderV2Artifact(conversation);
+        } else if (data.plan) {
+          renderV2Plan(data.plan, data.selected);
+        }
+      }
+      if (data.images) renderV2Images(data.images);
+      chatLog.scrollTop = chatLog.scrollHeight;
     } catch (error) {
       addMessage('assistant', '<p>网络错误，请稍后重试。</p>');
     } finally {
@@ -1092,6 +1174,13 @@
   });
 
   $('candidate-board').addEventListener('click', (event) => {
+    const pick = event.target.closest('button[data-pick]');
+    if (pick) {
+      const text = pick.getAttribute('data-pick');
+      addMessage('operator', '<p>' + escapeHtml(text) + '</p>');
+      send(text);
+      return;
+    }
     const button = event.target.closest('button[data-select]');
     if (!button) return;
     const text = '选' + button.dataset.select;

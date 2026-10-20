@@ -709,10 +709,15 @@ def v2_db():
 @app.post("/api/v2/conversations")
 def v2_create_conversation(payload: dict | None = None, db=Depends(v2_db)):
     payload = payload or {}
-    conversation = models.AgentConversation(workspace_id=str(payload.get("workspace_id") or "default"))
+    mode = str(payload.get("mode") or "guided")
+    if mode not in {"guided", "autonomous"}:
+        mode = "guided"
+    conversation = models.AgentConversation(workspace_id=str(payload.get("workspace_id") or "default"),
+                                            runner_version=mode)
     db.add(conversation)
     db.flush()
-    return {"conversation_id": conversation.id, "workspace_id": conversation.workspace_id}
+    return {"conversation_id": conversation.id, "workspace_id": conversation.workspace_id,
+            "mode": mode}
 
 
 @app.post("/api/v2/conversations/{conversation_id}/messages")

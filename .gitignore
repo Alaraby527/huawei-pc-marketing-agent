@@ -10,4 +10,7 @@ __pycache__/
 
 data/*.zip
 
+# the official library ZIP is tracked only in the ModelScope studio checkout
+!data/official-kb-v7.zip
+
 # built editor bundle (see scripts/build_studio.sh)

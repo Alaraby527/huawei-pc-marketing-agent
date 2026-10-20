@@ -342,6 +342,20 @@ class AgentConversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AgentTaskState(Base):
+    """Guided-flow hints: needs, candidates, selected product and plan.
+
+    This is deliberately a soft state, not a rigid funnel: later turns may skip,
+    repeat or revise any step when the conversation calls for it.
+    """
+    __tablename__ = "agent_task_states"
+    conversation_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(30), default="intake")
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now,
+                                                 onupdate=_now)
+
+
 class AgentMessage(Base):
     __tablename__ = "agent_messages"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
