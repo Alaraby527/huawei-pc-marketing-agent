@@ -1124,21 +1124,40 @@
 
   async function loadKnowledgeBase() {
     const badge = $('kb-badge');
+    const pillText = $('kb-pill-text');
+    const pillDot = $('kb-dot');
+    const ctxText = $('kb-ctx-text');
+    const paint = (label, state, ctxLabel, title) => {
+      if (pillText) pillText.textContent = label;
+      if (pillDot) pillDot.className = 'status-dot' + (state ? ' ' + state : '');
+      if (ctxText) ctxText.textContent = ctxLabel;
+      if (pillDot && title) pillDot.parentElement.title = title;
+    };
     try {
       const response = await fetch('/api/v1/knowledge/connection');
       const data = await response.json();
-      if (response.ok) {
+      if (response.ok && data.status === 'ok') {
         const name = data.knowledge_base_name || '';
-        badge.textContent = name.includes('本地官方') ? '知识库：本地官方库 v7' : '知识库：已连接 · ' + name;
+        const local = name.includes('本地官方');
+        badge.textContent = local ? '知识库：本地官方库 v7' : '知识库：已连接 · ' + name;
         badge.title = name;
         badge.className = 'badge ok';
+        // 只有后端明确返回 status=ok 才显示已连接；其余一律如实显示未连接。
+        paint(local ? '本地官方库 v7' : '已连接', 'ok',
+              '已连接 · 只读检索产品事实', '知识库：' + name);
       } else {
+        // 面向用户只说"未连接"这一类结论；后端 reason 可能含服务端配置提示，
+        // 那是给管理员的，不放进界面 tooltip。
         badge.textContent = '知识库：暂不可用';
+        badge.title = '知识库未连接：当前无法核验产品事实';
         badge.className = 'badge err';
+        paint('知识库：未连接', 'err', '未连接 · 无法核验产品事实',
+              '知识库未连接：当前无法核验产品事实');
       }
     } catch (error) {
       badge.textContent = '知识库：检测失败';
       badge.className = 'badge err';
+      paint('知识库：检测失败', 'err', '检测失败 · 无法核验产品事实', '知识库状态检测失败');
     }
   }
 

@@ -75,7 +75,7 @@
             <div class="composer-bar">
               <div class="composer-left">
                 <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
-                <span class="context-pill"><span class="status-dot"></span>官方知识库</span>
+                <span class="context-pill" id="kb-pill" title="知识库状态"><span class="status-dot" id="kb-dot"></span><span id="kb-pill-text">知识库：检测中…</span></span>
               </div>
               <div class="composer-right">
                 <label class="model-pick" title="选择生成模型">
@@ -90,7 +90,7 @@
           </div>
         </form>
         <div class="ctx-menu" id="ctx-menu" hidden>
-          <button type="button" data-ctx="kb"><strong>官方知识库</strong><span>已连接 · 只读检索产品事实</span></button>
+          <button type="button" data-ctx="kb"><strong>官方知识库</strong><span id="kb-ctx-text">检测中…</span></button>
           <button type="button" data-ctx="hot"><strong>热点搜索</strong><span>打开小红书热点榜单并带入对话</span></button>
         </div>
         <div class="quick-actions" id="quick-actions" hidden>

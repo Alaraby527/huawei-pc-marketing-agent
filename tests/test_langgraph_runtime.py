@@ -59,6 +59,12 @@ def runtime_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.agent_runtime.load_catalog", fake_catalog)
     yield
+    # aiosqlite's worker thread is non-daemon: an unclosed checkpoint connection keeps
+    # the interpreter alive at exit, which shows up as the whole test file hanging.
+    try:
+        asyncio.run(lg_runner.close_saver())
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _script(monkeypatch, results):
@@ -713,6 +719,96 @@ def test_event_stream_replays_persisted_events_with_a_cursor(monkeypatch):
 def test_event_stream_rejects_unknown_run():
     response = client.get("/api/v2/runs/does-not-exist/events/stream")
     assert response.status_code == 404
+
+
+def test_model_call_that_never_returns_ends_the_run(monkeypatch):
+    """The worker path is bounded by the caller-side cap.
+
+    This exercises ``execute_run`` directly, which is how the async worker runs it.
+    The blocking HTTP path is instead bounded inside the transport
+    (``app.model._post_chat_completions``), because the app's BaseHTTPMiddleware uses an
+    anyio task group that waits for an abandoned task on the way out — see
+    tests/test_model_deadline.py for that guarantee.
+    """
+    monkeypatch.setenv("LG_MODEL_CALL_TIMEOUT", "1")
+    import time as _time
+
+    def hang(system, messages, tools, model=None):
+        _time.sleep(6)
+        return {"content": "太晚了", "tool_calls": []}, {"model": "stub", "usage": {}}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_tools", hang)
+
+    session = db_layer.session_factory()()
+    conversation = models.AgentConversation(workspace_id="default",
+                                           runner_version=RUNNER_VERSION)
+    session.add(conversation)
+    session.flush()
+    run = models.AgentRun(conversation_id=conversation.id, status="running")
+    session.add(run)
+    session.flush()
+    conversation_id, run_id = conversation.id, run.id
+    session.commit()
+    session.close()
+
+    async def drive():
+        session = db_layer.session_factory()()
+        conv = session.get(models.AgentConversation, conversation_id)
+        row = session.get(models.AgentRun, run_id)
+        started = _time.monotonic()
+        payload = await lg_runner.execute_run(session, conv, row, "写个标题", None)
+        # Measured inside the coroutine: asyncio.run() then waits at shutdown for the
+        # abandoned worker thread, which is a separate (and bounded) cost.
+        elapsed = _time.monotonic() - started
+        session.commit()
+        session.close()
+        return payload, elapsed
+
+    payload, elapsed = asyncio.run(drive())
+    assert elapsed < 4, f"the run was not bounded (took {elapsed:.1f}s)"
+    assert payload["status"] == "failed"
+    assert "模型" in payload["reply"]
+
+
+def test_client_disconnect_does_not_leave_a_running_run(monkeypatch):
+    """CancelledError is a BaseException; it must still terminate the run."""
+    session = db_layer.session_factory()()
+    conversation = models.AgentConversation(workspace_id="default",
+                                           runner_version=RUNNER_VERSION)
+    session.add(conversation)
+    session.flush()
+    run = models.AgentRun(conversation_id=conversation.id, status="running")
+    session.add(run)
+    session.flush()
+    conversation_id, run_id = conversation.id, run.id
+    session.commit()
+    session.close()
+
+    class StubGraph:
+        async def aget_state(self, config):
+            return type("S", (), {"next": ()})()
+
+        async def ainvoke(self, *args, **kwargs):
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr("app.runtime.runner.build_graph", lambda saver, ctx: StubGraph())
+
+    async def drive():
+        session = db_layer.session_factory()()
+        conv = session.get(models.AgentConversation, conversation_id)
+        row = session.get(models.AgentRun, run_id)
+        with pytest.raises(asyncio.CancelledError):
+            await lg_runner.execute_run(session, conv, row, "写个标题", None)
+        session.commit()
+        session.close()
+
+    asyncio.run(drive())
+
+    session = db_layer.session_factory()()
+    row = session.get(models.AgentRun, run_id)
+    assert row.status == "needs_reconciliation"
+    assert row.stop_reason == "client_disconnected"
+    session.close()
 
 
 # ---------------------------------------------------------------- checkpoint privacy

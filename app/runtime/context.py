@@ -39,6 +39,7 @@ class RuntimeContext:
     max_decisions: int
     cancel_check: Callable[[], bool]
     budget_seconds: int = 180
+    model_call_timeout: int = 140
     started_at: float = 0.0
 
     @property
@@ -80,5 +81,10 @@ def build_context(db: Session, conversation: models.AgentConversation, run: mode
         max_decisions=_env_int("LG_MAX_MODEL_CALLS", 12, 1, 40),
         cancel_check=cancelled,
         budget_seconds=_env_int("AGENT_RUN_BUDGET_SECONDS", 180, 30, 600),
+        # A second net above the transport-level deadline in app/model.py: even if a
+        # blocking call cannot be interrupted on this platform, the graph still moves on.
+        # LG_MODEL_CALL_TIMEOUT exists so tests can use a small value.
+        model_call_timeout=_env_int("LG_MODEL_CALL_TIMEOUT",
+                                    _env_int("LLM_TIMEOUT", 120, 10, 170) + 20, 1, 600),
         started_at=time.monotonic(),
     )

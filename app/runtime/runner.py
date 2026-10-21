@@ -234,6 +234,23 @@ async def execute_run(db: Session, conversation: models.AgentConversation,
             reply = str((result.get("output_candidate") or {}).get("reply") or "")
             telemetry = str(result.get("stop_reason") or "")
             final_state = dict(result or {})
+    except asyncio.CancelledError:
+        # Starlette's BaseHTTPMiddleware cancels the downstream task when the client
+        # disconnects. CancelledError inherits from BaseException, so a plain
+        # `except Exception` misses it and the run would sit in `running` forever.
+        # A run must always reach a terminal state, and its outcome is unknown here.
+        status = STATUS_NEEDS_RECONCILIATION
+        telemetry = "client_disconnected"
+        final_state = {}
+        if not reply:
+            reply = "连接已断开，本轮结果未知，需要重新确认后再继续。"
+        _finish_run(db, conversation, run, status, reply, telemetry, ctx, final_state)
+        # The request dependency will not commit a cancelled task, so persist here.
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 - nothing more can be done at this point
+            db.rollback()
+        raise
     except Exception as error:  # noqa: BLE001 - reported honestly, never faked as success
         status = STATUS_FAILED
         telemetry = error_marker(str(error) or type(error).__name__)

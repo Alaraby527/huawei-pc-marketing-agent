@@ -59,11 +59,27 @@ def build_graph(saver, ctx: RuntimeContext):
         # surfaces as one tool error the model can react to — instead of killing the
         # whole turn before the first sentence is ever written.
         messages = list(state.get("messages") or [])
-        decision, error = await asyncio.to_thread(
+        call = asyncio.create_task(asyncio.to_thread(
             ctx.gateway.decide, messages, agent_runtime.NATIVE_TOOL_SPECS,
-            decision_index=index)
+            decision_index=index))
+        done, _pending = await asyncio.wait({call}, timeout=ctx.model_call_timeout)
+        if done:
+            try:
+                decision, error = call.result()
+            except Exception as exc:  # noqa: BLE001 - reported as a failed decision
+                decision, error = None, str(exc)
+        else:
+            # asyncio.wait (unlike asyncio.wait_for) does not wait for the cancelled
+            # task, so the run stays bounded even when a blocked blocking-call thread
+            # cannot be interrupted. The thread finishes on its own and its result is
+            # discarded; its failure is swallowed so it cannot surface later.
+            call.cancel()
+            call.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None)
+            decision, error = None, "模型调用超过总时限"
 
-        if error:
+        if error or decision is None:
+            error = error or "模型调用超过总时限"
             return {"status": STATUS_FAILED, "pending_calls": [], "decision_index": index,
                     "stop_reason": error_marker(error),
                     "output_candidate": {"reply": public_error(error)}}

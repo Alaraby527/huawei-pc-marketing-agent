@@ -6,9 +6,13 @@ photography always comes from ima (see app/evidence.py, app/retrieval.py).
 Credentials are read from environment variables only and never logged.
 """
 import base64
+import http.client
 import json
 import os
 import re
+import socket
+import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -222,6 +226,87 @@ def image_configured():
     return settings["enabled"] and all([settings["base_url"], settings["api_key"], settings["model"]])
 
 
+def _post_chat_completions(url, body_data, api_key, timeout, limit=4 * 1024 * 1024):
+    """POST to an OpenAI-compatible endpoint with a *total* wall-clock deadline.
+
+    ``urllib``'s ``timeout`` applies per socket operation, so a gateway that trickles
+    bytes inside that window resets it indefinitely; and the previous body reader
+    (``_read_with_deadline``) only starts once the response headers have arrived,
+    leaving connect + header phase unbounded. That combination was observed in
+    practice: a call hung for 500+ seconds with ``LLM_TIMEOUT=120``.
+
+    Here a watchdog closes the connection at the deadline, which makes the blocked
+    read fail, so the deadline covers connect, headers and body alike. The watchdog is
+    a daemon thread and is always stopped.
+    """
+    parts = urlsplit(url)
+    local = parts.hostname in {"127.0.0.1", "localhost", "::1"}
+    if parts.scheme != "https" and not (parts.scheme == "http" and local):
+        raise ModelError("模型服务地址需为 HTTPS；仅本机地址允许 HTTP")
+    budget = max(1.0, float(timeout))
+    deadline = time.monotonic() + budget
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    payload = json.dumps(body_data, ensure_ascii=False).encode()
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + api_key,
+               "Content-Length": str(len(payload)),
+               "User-Agent": "huawei-pc-marketing-agent/" + __version__}
+    if parts.scheme == "https":
+        connection = http.client.HTTPSConnection(parts.hostname, parts.port or 443,
+                                                 timeout=budget,
+                                                 context=ssl.create_default_context())
+    else:
+        connection = http.client.HTTPConnection(parts.hostname, parts.port or 80,
+                                                timeout=budget)
+    stop = threading.Event()
+
+    def _watchdog():
+        while not stop.wait(0.25):
+            if time.monotonic() >= deadline:
+                sock = getattr(connection, "sock", None)
+                # shutdown() wakes a thread blocked in recv; close() alone does not
+                # reliably interrupt a blocked read on macOS.
+                try:
+                    if sock is not None:
+                        sock.shutdown(socket.SHUT_RDWR)
+                except Exception:  # noqa: BLE001 - already closed or never connected
+                    pass
+                try:
+                    connection.close()
+                except Exception:  # noqa: BLE001 - the read will fail on its own
+                    pass
+                return
+
+    watchdog = threading.Thread(target=_watchdog, name="model-deadline", daemon=True)
+    watchdog.start()
+    try:
+        connection.request("POST", path, body=payload, headers=headers)
+        response = connection.getresponse()
+        raw = _read_with_deadline(response, deadline, limit)
+        status = int(response.status)
+    except ModelError:
+        raise
+    except (TimeoutError, OSError, ssl.SSLError,
+            http.client.HTTPException) as exc:
+        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
+    finally:
+        stop.set()
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if status >= 400:
+        # The gateway's own error body is not echoed anywhere; only the status is kept
+        # (and the JSON-compatibility fallback keys off "HTTP 400"/"HTTP 404").
+        raise ModelError("模型服务 HTTP " + str(status))
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise ModelError("模型没有返回有效的 JSON 结构") from None
+
+
 def _post_json(url, body, settings, extra_headers=None):
     request = urllib.request.Request(
         url, data=json.dumps(body, ensure_ascii=False).encode(),
@@ -370,22 +455,9 @@ def chat_json_messages(system, messages, *, schema_hint="", model=None):
         "response_format": {"type": "json_object"},
     }
     body_data.update(settings.get("extra_body") or {})
-    request = urllib.request.Request(
-        settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
-                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
-    deadline = time.monotonic() + settings["timeout"]
+    result = _post_chat_completions(settings["base_url"] + "/chat/completions",
+                                    body_data, settings["api_key"], settings["timeout"])
     try:
-        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
-            raw = _read_with_deadline(response, deadline, 4 * 1024 * 1024)
-    except urllib.error.HTTPError as exc:
-        raise ModelError("模型服务 HTTP " + str(exc.code)) from None
-    except ModelError:
-        raise
-    except (urllib.error.URLError, TimeoutError, OSError):
-        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
-    try:
-        result = json.loads(raw)
         content = result["choices"][0]["message"]["content"]
         if not isinstance(content, str):
             raise ValueError("content 不是字符串")
@@ -415,20 +487,8 @@ def chat_tools(system, messages, tools, *, model=None):
         "max_tokens": settings["max_tokens"],
     }
     body_data.update(settings.get("extra_body") or {})
-    request = urllib.request.Request(
-        settings["base_url"] + "/chat/completions", data=json.dumps(body_data).encode(),
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + settings["api_key"],
-                 "User-Agent": "huawei-pc-marketing-agent/" + __version__}, method="POST")
-    deadline = time.monotonic() + settings["timeout"]
-    try:
-        with urllib.request.urlopen(request, timeout=settings["timeout"]) as response:
-            result = json.loads(_read_with_deadline(response, deadline, 4 * 1024 * 1024))
-    except urllib.error.HTTPError as exc:
-        raise ModelError("模型服务 HTTP " + str(exc.code)) from None
-    except ModelError:
-        raise
-    except (urllib.error.URLError, TimeoutError, OSError):
-        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
+    result = _post_chat_completions(settings["base_url"] + "/chat/completions",
+                                    body_data, settings["api_key"], settings["timeout"])
     try:
         message = result["choices"][0]["message"]
     except (KeyError, IndexError, TypeError):

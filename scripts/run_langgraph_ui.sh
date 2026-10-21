@@ -19,7 +19,7 @@ echo "=== 华为 PC 营销工作台 · LangGraph 本地启动 ==="
 echo
 
 # ---------- 1. 环境 ----------
-[ -x "$PY" ] || fail "找不到 $PY。请先执行：
+[ -x "$PY" ] || fail "找不到 ${PY}。请先执行：
     python3.12 -m venv .venv
     .venv/bin/python -m pip install -r requirements-dev.txt"
 ok "Python $($PY --version 2>&1 | awk '{print $2}')"
@@ -48,7 +48,7 @@ if [ -n "$MODEL_MISSING" ]; then
     read -rs -p 'LLM_API_KEY: ' LLM_API_KEY && export LLM_API_KEY && echo
 TIP
 else
-  ok "主模型：$LLM_MODEL @ $LLM_BASE_URL（密钥已注入，长度 ${#LLM_API_KEY}）"
+  ok "主模型：${LLM_MODEL} @ ${LLM_BASE_URL}（密钥已注入，长度 ${#LLM_API_KEY}）"
 fi
 
 # ---------- 3. 知识库 ----------
@@ -62,7 +62,7 @@ if [ "$SOURCE" = "local" ]; then
     warn "没有知识库时，选品/参数/原图相关请求会如实说明资料缺口，不会编造型号。"
   fi
 elif [ -n "${IMA_OPENAPI_CLIENTID:-}" ] && [ -n "${IMA_OPENAPI_APIKEY:-}" ]; then
-  ok "知识库：ima 实时接口（KB=$SOURCE）"
+  ok "知识库：ima 实时接口（KB=${SOURCE}）"
 else
   warn "没有可用知识库（KB_SOURCE=${SOURCE:-未设置}，也未见 ima 凭证）"
   warn "可以体验：标题/创意类任务、任务历史、取消、计量。"
