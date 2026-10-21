@@ -415,3 +415,62 @@ class AgentToolExecution(Base):
     error: Mapped[str] = mapped_column(String(300), default="")
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ---------------------------------------------------------------- LangGraph runtime ledgers
+# NEW tables only. No existing table is altered, so a deployed SQLite file needs no ALTER
+# migration: create_all() simply adds these alongside the current tables.
+
+class AgentRequestRecord(Base):
+    """Request-scoped idempotency: (conversation_id, key) + normalized payload hash.
+
+    Replaces the earlier global-only AgentRun.idempotency_key lookup, which allowed the
+    same key to collide across conversations and never checked the payload.
+    """
+    __tablename__ = "agent_request_records"
+    __table_args__ = (UniqueConstraint("conversation_id", "request_key", name="uq_request_scope_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    request_key: Mapped[str] = mapped_column(String(120))
+    payload_hash: Mapped[str] = mapped_column(String(64), default="")
+    run_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentModelAttempt(Base):
+    """One real model request. Missing usage is recorded as unknown, never as zero."""
+    __tablename__ = "agent_model_attempts"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    decision_index: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(40), default="decide")
+    model_id: Mapped[str] = mapped_column(String(80), default="")
+    protocol_mode: Mapped[str] = mapped_column(String(20), default="native_tools")
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    usage_certainty: Mapped[str] = mapped_column(String(20), default="unknown")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AgentEffect(Base):
+    """Side-effect ledger so a replayed tool call does not duplicate a business write.
+
+    state: pending | completed | sent_outcome_unknown | failed
+    """
+    __tablename__ = "agent_effects"
+    __table_args__ = (UniqueConstraint("call_uid", name="uq_effect_call_uid"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    call_uid: Mapped[str] = mapped_column(String(120))
+    tool_name: Mapped[str] = mapped_column(String(60), default="")
+    payload_hash: Mapped[str] = mapped_column(String(64), default="")
+    state: Mapped[str] = mapped_column(String(30), default="pending")
+    outcome: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now,
+                                                 onupdate=_now)

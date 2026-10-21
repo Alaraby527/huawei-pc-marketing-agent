@@ -14,3 +14,6 @@ data/*.zip
 !data/official-kb-v7.zip
 
 # built editor bundle (see scripts/build_studio.sh)
+
+# LangGraph runtime checkpoints (local execution store, never committed)
+agent_checkpoints.sqlite

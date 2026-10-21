@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi import Depends, Header, HTTPException
@@ -26,6 +27,8 @@ from . import models
 from . import rednote
 from .agent import AgentTurn, run_agent
 from . import agent_runtime
+from .runtime import RUNNER_VERSION as LG_RUNNER_VERSION
+from .runtime import runner as lg_runner
 from . import design_library
 from . import image_edit
 from . import image_channel
@@ -34,7 +37,17 @@ from .rednote import WorkspaceContext, WorkspaceError
 service.client_factory=default_client
 _workspace_db_ready=False
 
-app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # The LangGraph checkpoint connection is process-wide: opened once here and closed
+    # once on shutdown, never re-created per request.
+    await lg_runner.init_saver()
+    yield
+    await lg_runner.close_saver()
+
+
+app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -714,15 +727,18 @@ def v2_list_conversations(limit: int = 50, db=Depends(v2_db)):
 @app.post("/api/v2/conversations")
 def v2_create_conversation(payload: dict | None = None, db=Depends(v2_db)):
     payload = payload or {}
-    mode = str(payload.get("mode") or "guided")
-    if mode not in {"guided", "autonomous"}:
-        mode = "guided"
+    # New conversations default to the LangGraph autonomous runner. The legacy runners
+    # stay available explicitly, and existing conversations keep the version they were
+    # created with (no silent rewrite of history).
+    mode = str(payload.get("mode") or LG_RUNNER_VERSION)
+    if mode not in {LG_RUNNER_VERSION, "guided", "autonomous"}:
+        mode = LG_RUNNER_VERSION
     conversation = models.AgentConversation(workspace_id=str(payload.get("workspace_id") or "default"),
                                             runner_version=mode)
     db.add(conversation)
     db.flush()
     return {"conversation_id": conversation.id, "workspace_id": conversation.workspace_id,
-            "mode": mode}
+            "mode": mode, "runner_version": mode}
 
 
 @app.post("/api/v2/conversations/{conversation_id}/messages")
@@ -731,6 +747,15 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
     if not conversation:
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
+    if conversation.runner_version == LG_RUNNER_VERSION:
+        try:
+            return await lg_runner.run_turn(db, conversation, payload.message,
+                                            model=payload.model,
+                                            idempotency_key=payload.idempotency_key)
+        except lg_runner.RunnerError as error:
+            raise HTTPException(status_code=error.status,
+                                detail={"code": "REQUEST_CONFLICT",
+                                        "message": error.message}) from None
     return await agent_runtime.run_turn(db, conversation, payload.message,
                                         model=payload.model,
                                         idempotency_key=payload.idempotency_key)
@@ -769,13 +794,21 @@ def _update_conversation(conversation_id: str, payload: dict | None, db):
         pinned=payload.get("pinned") if "pinned" in payload else None)
 
 
-def _delete_conversation(conversation_id: str, db):
+async def _delete_conversation(conversation_id: str, db):
     conversation = db.get(models.AgentConversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
+    runner_version = conversation.runner_version
+    thread_id = f"{conversation.id}:{runner_version}"
+    # Ledger rows and the checkpoint thread are part of the conversation's footprint;
+    # deleting only the business tables would leave a resumable orphan checkpoint.
+    lg_runner.delete_ledgers(db, conversation.id)
     agent_runtime.delete_conversation(db, conversation)
-    return {"deleted": conversation_id}
+    if runner_version == LG_RUNNER_VERSION:
+        db.commit()
+        await lg_runner.purge_thread(thread_id)
+    return {"deleted": conversation_id, "checkpoint_purged": runner_version == LG_RUNNER_VERSION}
 
 
 @app.patch("/api/v2/conversations/{conversation_id}")
@@ -790,14 +823,24 @@ def v2_update_conversation_post(conversation_id: str, payload: dict | None = Non
 
 
 @app.delete("/api/v2/conversations/{conversation_id}")
-def v2_delete_conversation(conversation_id: str, db=Depends(v2_db)):
-    return _delete_conversation(conversation_id, db)
+async def v2_delete_conversation(conversation_id: str, db=Depends(v2_db)):
+    return await _delete_conversation(conversation_id, db)
 
 
 @app.post("/api/v2/conversations/{conversation_id}/delete")
-def v2_delete_conversation_post(conversation_id: str, db=Depends(v2_db)):
+async def v2_delete_conversation_post(conversation_id: str, db=Depends(v2_db)):
     """POST alias for gateways that block DELETE."""
-    return _delete_conversation(conversation_id, db)
+    return await _delete_conversation(conversation_id, db)
+
+
+@app.get("/api/v2/conversations/{conversation_id}/runtime")
+def v2_conversation_runtime(conversation_id: str, db=Depends(v2_db)):
+    """Redacted runner state for the manager surface — never the raw graph state."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    return lg_runner.state_view(db, conversation)
 
 
 @app.post("/api/v2/runs/{run_id}/cancel")

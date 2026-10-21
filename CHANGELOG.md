@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.17.0 — 2026-10-21
+
+### Added
+
+- **LangGraph autonomous runner** (`langgraph_autonomous_v1`) as the default for new
+  conversations: one generic loop (`decide → execute_tools | wait_for_user → decide →
+  finalize`) where the main model decides whether to ask, query, write, revise or
+  deliver. There is no intake/recommend/plan stage and no fixed step count, and the
+  legacy `_guided_turn` is not wrapped in a node nor the old 12-step loop wrapped in an
+  outer graph. Existing conversations keep the runner version they were created with.
+- **Metered model gateway** (`app/runtime/model_gateway.py`): every real model request —
+  decision, writing, editing and repair alike — is recorded in `agent_model_attempts`.
+  Missing usage is stored as *unknown* (NULL), never as a measured zero. This fixes the
+  edit fast path that spent tokens and recorded `input_tokens: 0`.
+- **Request-scoped idempotency** (`agent_request_records`): keyed by
+  `(conversation_id, key)` plus a normalized payload hash. Same key with different
+  content is a `409`, and the same key in a different conversation is independent. The
+  previous global `agent_runs.idempotency_key` lookup could collide across conversations
+  and never compared payloads.
+- **Effect ledger** (`agent_effects`): a `save_artifact` replayed after a crash returns
+  the stored outcome instead of creating a duplicate artifact revision. An upstream call
+  whose outcome cannot be confirmed becomes `needs_reconciliation` rather than being
+  retried blindly.
+- **Checkpointing** via `AsyncSqliteSaver` on its own file (`LG_CHECKPOINT_PATH`,
+  default `agent_checkpoints.sqlite` beside the business database). The saver is opened
+  once per process (application lifespan), `thread_id` is derived server-side from the
+  conversation and runner version, and pause/resume uses `interrupt`/`Command(resume=…)`
+  with the validated user text only — no arbitrary client state patch.
+- `GET /api/v2/conversations/{id}/runtime` — a redacted runner view (status, stop reason,
+  usage totals); it never returns raw graph state.
+
+### Changed
+
+- New conversations default to `langgraph_autonomous_v1`; `guided` and `autonomous`
+  remain selectable for explicit calls and old conversations.
+- **Cancellation actually stops the loop.** The cancel intent is now read on its own
+  short transaction, because reading it through the request session's identity map
+  returned a stale `running` status and the run continued. A cancelled run can no longer
+  be rewritten as `completed`.
+- **Budget exhaustion is `partial`, not `completed`**, so a spent budget cannot be
+  counted as success in management metrics.
+- **Message sequence** uses a monotonic server-side counter. The old per-batch formula
+  (`base_seq + 2 + step*4` vs `base_seq + 3 + step*4 + call_index`) produced duplicate
+  `seq` values between a batch's last tool result and the next assistant turn.
+- **Errors shown to users are sanitized**: the knowledge base is no longer loaded before
+  every decision, so a KB outage degrades to one tool error the model can react to
+  instead of aborting the turn; and user-facing text never contains a credential name, an
+  environment variable or a filesystem path.
+- Deleting a conversation also purges its ledger rows and its checkpoint thread, so no
+  resumable orphan checkpoint is left behind.
+
 ## 0.16.1 — 2026-10-21
 
 ### Fixed
