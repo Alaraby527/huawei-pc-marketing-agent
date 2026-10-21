@@ -43,7 +43,38 @@
   `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
   so it is neither retried blindly nor reported as a success.
 
+### Added
+
+- **The two product-selection paths now have knowledge-base backing.**
+  - The library adapter previously indexed only `产品事实.md` and six scene cards, so the
+    per-model cards and the cross-model matrices were unreachable (85 → 160 entries).
+  - `read_product_fit` returns a named model's own audience/scenario conclusion
+    (检索结论 / 适用任务 / 不适用或需先验证的任务 / 限定条件 / 待核验项). A user who names a model
+    is no longer asked to describe an audience the library has already concluded on.
+  - `read_field_matrix` returns the cross-model field matrices (14 of them) for matching
+    several candidates on one consistent scale.
+  - The system prompt states the flow: a vague need collects the few facts that change the
+    answer, then offers 2–4 real candidates and **waits** for the user to choose before
+    writing; a named model goes straight to its fit card and facts. It is the default
+    order, not a fixed pipeline, and a user who already specified everything gets output
+    directly.
+
 ### Fixed
+
+- **Rendered images never reached the client.** `render_visuals` returns asset URLs while
+  `find_product_images` returns image records; the state update required dicts, so a
+  successful render produced no gallery while the reply said the cards were rendered.
+- A connection failure is no longer reported as a timeout. A 7 ms failure and a 22 s
+  upstream `RemoteDisconnected` were both described as "连接或读取超时", which sends
+  whoever reads the log after the wrong cause. The exception class is kept, the deadline
+  is checked separately, and one retry is allowed **only** for failures that prove nothing
+  was sent (DNS, connection refused) — an ambiguous failure is never repeated.
+- Tool results replayed into the transcript are marked when cut, not silently truncated.
+- `read_product_fit` no longer repeats the fact section that `read_product_evidence`
+  already returns: one call carried ~7.1 K characters, four calls ~28 KB. It now returns
+  ~600 characters.
+- Numbers a reply explicitly refuses ("没写 14 寸") are no longer flagged as unverified.
+
 
 - **The model deadline now bounds the whole exchange.** `urllib`'s timeout is per socket
   operation, so a gateway that trickles bytes inside that window reset it forever, and

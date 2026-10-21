@@ -36,8 +36,13 @@ from .tool_gateway import parse_tool_arguments
 
 # Tools whose outcome must be reflected back into state for later steps.
 EVIDENCE_TOOLS = frozenset({"read_product_evidence", "search_products", "compare_products",
-                            "find_product_images"})
+                            "find_product_images", "read_product_fit", "read_field_matrix"})
 ARTIFACT_TOOLS = frozenset({"save_artifact"})
+
+# Per-tool-result cap on what is replayed into the transcript. Several bulky results
+# previously pushed a decide step past 8.7 K prompt tokens, and the gateway then closed
+# the connection without a response. Cuts are marked, never silent.
+TOOL_RESULT_LIMIT = 12000
 
 
 def build_graph(saver, ctx: RuntimeContext):
@@ -140,9 +145,15 @@ def build_graph(saver, ctx: RuntimeContext):
             arguments = parse_tool_arguments(call["arguments"])
             outcome = await ctx.tools.run(name, arguments, call_uid=call["call_uid"])
             observations.append({"tool": name, "call_uid": call["call_uid"], **outcome})
+            serialized = json.dumps(outcome, ensure_ascii=False, default=str)
+            if len(serialized) > TOOL_RESULT_LIMIT:
+                # Mark the cut: a silently truncated tool result reads as complete and
+                # made the model reason from a partial document.
+                serialized = (serialized[:TOOL_RESULT_LIMIT] +
+                              "…[工具结果已截断，原文 " + str(len(serialized)) +
+                              " 字符]")
             messages.append({"role": "tool", "tool_call_id": call["call_uid"],
-                             "content": json.dumps(outcome, ensure_ascii=False,
-                                                   default=str)[:12000]})
+                             "content": serialized})
 
             if outcome.get("status") == STATUS_NEEDS_RECONCILIATION or \
                     outcome.get("error") == "OUTCOME_UNKNOWN":
@@ -185,8 +196,19 @@ def build_graph(saver, ctx: RuntimeContext):
 
             if name in ("find_product_images", "render_visuals") and outcome.get("ok"):
                 rows = outcome.get("images") or []
-                if rows and isinstance(rows[0], dict):
-                    images = rows[:6]
+                # find_product_images returns image records; render_visuals returns bare
+                # asset URLs. Requiring dicts meant a successful render never reached the
+                # payload, so the UI showed no gallery while the reply said the cards
+                # were rendered.
+                normalized = []
+                for row in rows[:6]:
+                    if isinstance(row, dict):
+                        normalized.append(row)
+                    elif isinstance(row, str) and row:
+                        normalized.append({"image_id": "", "caption": "",
+                                           "access_url": row, "rendered": True})
+                if normalized:
+                    images = normalized
 
         if status == STATUS_NEEDS_RECONCILIATION:
             return {"messages": messages, "evidence_refs": evidence_refs,

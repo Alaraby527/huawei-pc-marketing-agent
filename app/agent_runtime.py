@@ -59,6 +59,16 @@ TOOL_SPECS = [
     {"name": "read_product_evidence", "description": "读取某型号的知识库事实原文与来源",
      "parameters": {"type": "object", "properties": {"product_id": {"type": "string"},
                                                       "model": {"type": "string"}}}},
+    {"name": "read_product_fit",
+     "description": "读取某型号在知识库里的人群与场景适配结论（适用任务、不适用或需先验证的任务）；用户已点名型号时用这个，不要反问用户适用人群。不含参数原文，那用 read_product_evidence",
+     "parameters": {"type": "object", "properties": {
+         "product_id": {"type": "string"},
+         "model": {"type": "string"},
+         "include_identity": {"type": "boolean",
+                              "description": "默认 false；仅在需要该型号的定位与身份表述时设为 true"}}}},
+    {"name": "read_field_matrix",
+     "description": "读取跨型号字段矩阵（尺寸重量/内存/存储/屏幕/接口/电池等），用于按同一口径匹配多款候选或做对比；不做综合排名",
+     "parameters": {"type": "object", "properties": {"field": {"type": "string"}}}},
     {"name": "compare_products", "description": "按同一字段口径比较若干型号，不生成综合排名",
      "parameters": {"type": "object", "properties": {"product_ids": {"type": "array", "items": {"type": "string"}}},
                     "required": ["product_ids"]}},
@@ -489,7 +499,10 @@ async def _tool_search_products(ctx, args):
         rows.append({"product_id": product.product_id, "model": product.model,
                      "facts_count": len(product.facts), "issues": product.issues[:3]})
     result = {"ok": True, "products": rows[:8], "count": len(rows),
-              "note": ("搜索命中不是身份验证；写稿前仍需读取事实并核对配置" if rows else
+              "note": ("搜索命中不是身份验证。若用户还没点明型号，先把其中 2–4 款作为候选"
+                       "列给用户并问要哪一款，不要替用户定完就直接写整篇稿；"
+                       "用户点名了型号则直接用 read_product_fit 读适用人群与限制、"
+                       "read_product_evidence 读事实后再写" if rows else
                        "知识库没有匹配型号；不要编造参数，说明缺少资料并建议已有型号或追问")}
     ctx.last_search = result
     if rows:
@@ -747,6 +760,143 @@ async def _render(ctx, args):
             "note": "使用产品原图与本地排版；未重画产品外观"}
 
 
+def _bounded(text: str, limit: int) -> tuple[str, bool]:
+    """Truncate explicitly: silently cutting a document hides that content is missing."""
+    body = str(text or "")
+    if len(body) <= limit:
+        return body, False
+    return (body[:limit] + f"\n\n[已截断：原文 {len(body)} 字符，此处为前 {limit} 字符；"
+                           "需要其余部分请说明要哪一小节]", True)
+
+
+# Sections of a model card that belong to this tool. "已确认事实" is deliberately absent:
+# the same figures come from read_product_evidence, and repeating them doubled the
+# transcript (four calls carried ~28 KB, enough to push a decide step over 8.7 K prompt
+# tokens, after which the gateway closed the connection without a response).
+_FIT_SECTIONS = ("检索结论", "限定条件", "适用任务", "不适用或需先验证", "待核验项")
+
+
+def _extract_sections(markdown: str, headings) -> str:
+    """Keep only the requested markdown sections, matched on their heading text."""
+    kept: list[str] = []
+    keep = False
+    for line in str(markdown or "").splitlines():
+        if line.startswith("#"):
+            title = line.lstrip("#").strip()
+            keep = any(heading in title for heading in headings)
+            if keep:
+                kept.append(line)
+            continue
+        if keep:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _model_key(text) -> str:
+    return re.sub(r"[\s（）()·、\-_/]+", "", str(text or "")).lower()
+
+
+def _card_model_dirs(catalog) -> list[str]:
+    seen = []
+    for entry in getattr(catalog, "entries", []) or []:
+        name = entry.get("_card_model")
+        if name and name not in seen:
+            seen.append(name)
+    return seen
+
+
+def _match_card_dir(catalog, model: str) -> str:
+    """Match a product to its own 检索卡 directory (names differ slightly)."""
+    target = _model_key(model)
+    best = ""
+    for name in _card_model_dirs(catalog):
+        key = _model_key(name)
+        if not key:
+            continue
+        if key == target:
+            return name
+        if (key in target or target in key) and len(key) > len(_model_key(best)):
+            best = name
+    return best
+
+
+async def _tool_product_fit(ctx, args):
+    """Who a named model suits, in the knowledge base's own words.
+
+    This is the path a user takes when they already know the model: they should not be
+    asked to describe an audience the library has already concluded on.
+    """
+    catalog = await _catalog(ctx)
+    product = _resolve_product(catalog, str(args.get("product_id", "") or args.get("model", "")),
+                               ctx)
+    if not product:
+        return {"ok": False, "error": "PRODUCT_NOT_FOUND",
+                "message": "知识库中找不到该型号；请从 available 中选择准确的 product_id",
+                "available": [{"product_id": item.product_id, "model": item.model}
+                              for item in catalog.products[:8]]}
+    card_dir = _match_card_dir(catalog, product.model)
+    if not card_dir:
+        return {"ok": False, "error": "FIT_CARD_NOT_FOUND",
+                "message": "知识库里没有这个型号的人群与场景卡，不要自行推断适用人群"}
+    wanted = ["06-适用人群与限制卡.md"]
+    if args.get("include_identity"):
+        wanted.append("01-型号身份卡.md")
+    docs = {}
+    truncated = []
+    for entry in getattr(catalog, "entries", []) or []:
+        if entry.get("_card_model") != card_dir or entry.get("title") not in wanted:
+            continue
+        try:
+            raw = await catalog.client.read_text(entry)
+        except Exception:  # noqa: BLE001 - a missing card must not fail the tool
+            continue
+        if entry["title"].startswith("06-"):
+            limit, body = 2400, _extract_sections(raw, _FIT_SECTIONS) or raw
+        else:
+            limit, body = 1600, raw
+        text, cut = _bounded(body, limit)
+        docs[entry["title"]] = text
+        if cut:
+            truncated.append(entry["title"])
+    if not docs:
+        return {"ok": False, "error": "FIT_CARD_UNREADABLE",
+                "message": "该型号的人群与场景卡读取失败，请说明资料缺口，不要编造适用人群"}
+    return {"ok": True, "product_id": product.product_id, "model": product.model,
+            "card_model": card_dir,
+            "fit": docs.get("06-适用人群与限制卡.md", ""),
+            "identity": docs.get("01-型号身份卡.md", ""),
+            "truncated": truncated,
+            "note": "这是知识库对该型号的适配结论；引用时必须保留其中的限定条件，"
+                    "不要把“适合”改写成“兼容所有软件”。参数原文另用 read_product_evidence"}
+
+
+async def _tool_field_matrix(ctx, args):
+    """Cross-model field matrices — the evidence base for matching several models."""
+    catalog = await _catalog(ctx)
+    entries = [entry for entry in (getattr(catalog, "entries", []) or [])
+               if entry.get("_matrix")]
+    if not entries:
+        return {"ok": False, "error": "MATRIX_NOT_FOUND",
+                "message": "知识库里没有字段矩阵；请改用 read_product_evidence 逐型号核对"}
+    field = str(args.get("field", "")).strip()
+    chosen = None
+    if field:
+        chosen = next((entry for entry in entries if field in entry["title"]), None)
+        if chosen is None:
+            return {"ok": False, "error": "FIELD_NOT_FOUND",
+                    "message": "没有这个字段的矩阵",
+                    "available": [entry["title"] for entry in entries]}
+    else:
+        chosen = next((entry for entry in entries if "联合" in entry["title"]), entries[0])
+    try:
+        text, cut = _bounded(await catalog.client.read_text(chosen), 8000)
+    except Exception as error:  # noqa: BLE001
+        return {"ok": False, "error": "MATRIX_UNREADABLE", "message": str(error)[:160]}
+    return {"ok": True, "matrix": chosen["title"], "content": text, "truncated": cut,
+            "available": [entry["title"] for entry in entries],
+            "note": "按同一字段口径并列，不做综合排名；写稿前仍要读该型号事实并保留限定条件"}
+
+
 async def execute_tool(ctx: ToolContext, name: str, args: dict):
     started = time.monotonic()
     try:
@@ -754,6 +904,10 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
             result = await _tool_search_products(ctx, args)
         elif name == "read_product_evidence":
             result = await _tool_read_evidence(ctx, args)
+        elif name == "read_product_fit":
+            result = await _tool_product_fit(ctx, args)
+        elif name == "read_field_matrix":
+            result = await _tool_field_matrix(ctx, args)
         elif name == "compare_products":
             result = await _tool_compare(ctx, args)
         elif name == "find_product_images":

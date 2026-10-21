@@ -226,7 +226,8 @@ def image_configured():
     return settings["enabled"] and all([settings["base_url"], settings["api_key"], settings["model"]])
 
 
-def _post_chat_completions(url, body_data, api_key, timeout, limit=4 * 1024 * 1024):
+def _post_chat_completions(url, body_data, api_key, timeout, limit=4 * 1024 * 1024,
+                           _deadline=None, _retried=False):
     """POST to an OpenAI-compatible endpoint with a *total* wall-clock deadline.
 
     ``urllib``'s ``timeout`` applies per socket operation, so a gateway that trickles
@@ -244,7 +245,8 @@ def _post_chat_completions(url, body_data, api_key, timeout, limit=4 * 1024 * 10
     if parts.scheme != "https" and not (parts.scheme == "http" and local):
         raise ModelError("模型服务地址需为 HTTPS；仅本机地址允许 HTTP")
     budget = max(1.0, float(timeout))
-    deadline = time.monotonic() + budget
+    # A retry reuses the original deadline, so the total wall clock stays bounded.
+    deadline = _deadline if _deadline is not None else time.monotonic() + budget
     path = parts.path or "/"
     if parts.query:
         path += "?" + parts.query
@@ -288,9 +290,25 @@ def _post_chat_completions(url, body_data, api_key, timeout, limit=4 * 1024 * 10
         status = int(response.status)
     except ModelError:
         raise
-    except (TimeoutError, OSError, ssl.SSLError,
-            http.client.HTTPException) as exc:
-        raise ModelError("模型连接或读取超时，请检查服务地址和网络") from None
+    except TimeoutError:
+        # TimeoutError is an OSError subclass in 3.10+, so it is matched first: a real
+        # deadline must not be reported as a connection failure, or vice versa.
+        raise ModelError("模型响应超过总时限") from None
+    except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        if time.monotonic() >= deadline:
+            # The watchdog fired: this is a deadline failure, not a network one. Retrying
+            # past the deadline is pointless.
+            raise ModelError("模型响应超过总时限") from None
+        # Retry once, but only for failures that prove no request reached the server:
+        # DNS resolution and connection refusal happen before any byte is sent, so an
+        # upstream charge is impossible. Anything ambiguous (reset mid-flight, unknown
+        # outcome) is reported, never silently repeated.
+        if not _retried and isinstance(exc, (socket.gaierror, ConnectionRefusedError)):
+            return _post_chat_completions(url, body_data, api_key, timeout, limit,
+                                          _deadline=deadline, _retried=True)
+        # Keep the exception class: a 7 ms failure is not a timeout, and calling it one
+        # sends whoever reads the log after the wrong cause.
+        raise ModelError("模型连接或读取失败（" + type(exc).__name__ + "）") from None
     finally:
         stop.set()
         try:

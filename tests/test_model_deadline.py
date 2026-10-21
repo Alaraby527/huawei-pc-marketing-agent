@@ -60,7 +60,7 @@ def test_trickling_headers_cannot_beat_the_deadline():
     state["stop"].set()
     thread.join(timeout=3)
     assert elapsed < 6, f"deadline was not enforced (took {elapsed:.1f}s)"
-    assert "超时" in str(error.value)
+    assert "时限" in str(error.value) or "超时" in str(error.value)
     assert state["sent"] >= 1, "the server should have trickled at least one byte"
 
 
@@ -143,3 +143,46 @@ def test_model_timeout_is_clamped_to_a_safe_range(monkeypatch):
     assert model._settings(None)["timeout"] == 10
     monkeypatch.setenv("LLM_TIMEOUT", "99999")
     assert model._settings(None)["timeout"] == 170
+
+def _patch_connection(monkeypatch, errors):
+    """Make each attempt raise the next error from `errors`."""
+    state = {"n": 0}
+
+    class Conn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args, **kwargs):
+            index = state["n"]
+            state["n"] += 1
+            raise errors[min(index, len(errors) - 1)]
+
+        def getresponse(self):
+            raise AssertionError("unreachable")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(model.http.client, "HTTPSConnection", Conn)
+    return state
+
+
+def test_dns_failure_is_retried_once(monkeypatch):
+    """A failure that proves nothing was sent may be retried exactly once."""
+    import socket
+    state = _patch_connection(monkeypatch, [socket.gaierror("dns"), ConnectionRefusedError("refused")])
+    with pytest.raises(model.ModelError) as error:
+        model._post_chat_completions("https://example.invalid/chat/completions",
+                                     {"model": "x"}, "k", timeout=5)
+    assert state["n"] == 2, "one retry, then report"
+    assert "ConnectionRefusedError" in str(error.value)
+
+
+def test_connection_reset_is_not_retried(monkeypatch):
+    """A reset is ambiguous: the request may already have been delivered."""
+    state = _patch_connection(monkeypatch, [ConnectionResetError("reset")])
+    with pytest.raises(model.ModelError) as error:
+        model._post_chat_completions("https://example.invalid/chat/completions",
+                                     {"model": "x"}, "k", timeout=5)
+    assert state["n"] == 1, "an ambiguous failure must not be repeated"
+    assert "ConnectionResetError" in str(error.value)

@@ -150,6 +150,22 @@ class LocalKBClient:
                     parent = name.rsplit("/", 1)[0]
                     entries.append({"media_id": "img:" + name, "title": name.rsplit("/", 1)[-1],
                                     "media_type": 9, "_path": parent})
+                elif name.endswith(".md") and "/06-型号检索卡/" in name \
+                        and name.rsplit("/", 1)[0].rsplit("/", 1)[-1] != "06-型号检索卡":
+                    # Per-model cards, including "06-适用人群与限制卡.md" — the KB's own
+                    # audience/scenario fit conclusion for a named model. Without these a
+                    # user who names a model cannot be told who it suits.
+                    parent = name.rsplit("/", 1)[0]
+                    entries.append({"media_id": "doc:" + name, "title": name.rsplit("/", 1)[-1],
+                                    "media_type": 7, "_path": parent,
+                                    "_card_model": parent.rsplit("/", 1)[-1]})
+                elif name.endswith(".csv") and "/00-全库横向索引/" in name \
+                        and "图片索引" not in name:
+                    # Cross-model field matrices (尺寸重量/内存/屏幕/接口…): the evidence
+                    # base for matching several models against one requirement.
+                    parent = name.rsplit("/", 1)[0]
+                    entries.append({"media_id": "doc:" + name, "title": name.rsplit("/", 1)[-1],
+                                    "media_type": 7, "_path": parent, "_matrix": True})
         entries.append({"media_id": "index:combined", "title": "图片索引.csv", "media_type": 5,
                         "_path": PREFIX + "P1-产品参数库/00-全库横向索引/图片索引.csv"})
         self._entries = entries
