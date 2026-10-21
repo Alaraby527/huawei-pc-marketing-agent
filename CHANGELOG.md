@@ -35,6 +35,10 @@
   with its own session executes the graph. `blocking` stays the default, so existing
   clients are unaffected. Because the run is committed before any model call, another
   connection can already see it running, and a cancel arriving mid-run is observable.
+- **Event stream** (`GET /api/v2/runs/{id}/events/stream?after_seq=N`): a server-sent
+  replay of committed events. Each event carries its index as the SSE id, so a
+  reconnect resumes without duplicating what the client already saw. It never
+  forwards raw graph state or unverified token streams.
 - **Orphan recovery on startup**: a run left `running` by a previous process becomes
   `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
   so it is neither retried blindly nor reported as a success.

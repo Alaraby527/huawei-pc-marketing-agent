@@ -85,6 +85,7 @@ START → decide ──工具──→ execute_tools ──┐
 | `POST` | `/api/v2/conversations` | 不传 `mode` 时默认 `langgraph_autonomous_v1` |
 | `POST` | `/api/v2/conversations/{id}/messages` | 同一入口；按会话的 runner 版本分流 |
 | `GET` | `/api/v2/conversations/{id}/runtime` | 脱敏运行视图（状态、停止原因、usage 汇总） |
+| `GET` | `/api/v2/runs/{id}/events/stream?after_seq=N` | SSE 事件流；每条事件以索引作为 SSE id，重连不重复 |
 
 `guided` / `autonomous` 仍然可选，旧会话保持各自原版本，不被静默改写。
 
@@ -107,11 +108,11 @@ START → decide ──工具──→ execute_tools ──┐
 
 ## 9. 验证状态
 
-已在本机 Python 3.12 隔离环境验证：**218 项测试通过**（180 项基线 legacy 合同 + 38 项新增图机制测试），且
-全量连跑 3 次稳定；`node --check` 通过；真实 uvicorn 冒烟通过（新会话默认 LG、验重 200/409、异步 202 +
-worker 执行到终态、删除清空 checkpoint、重启孤儿恢复）。更新后的 `requirements.lock` 在一个全新 venv 里
-从零安装后同样 **218/218** 通过。
+已在本机 Python 3.12 隔离环境验证：**220 项测试通过**（180 项基线 legacy 合同 + 40 项新增图机制测试），且
+全量连跑多次稳定；`node --check` 通过；真实 uvicorn 冒烟通过（新会话默认 LG、验重 200/409、异步 202 +
+worker 执行到终态、SSE 事件流、删除清空 checkpoint、重启孤儿恢复）。更新后的 `requirements.lock` 在一个全新 venv 里
+从零安装后同样全部通过。
 
 **未验证**：真实 DeepSeek 网关的原生工具多轮往返、官方知识库 ZIP / ima 真实业务任务、跨进程崩溃恢复、
-ASGI 多 worker、Linux/魔搭部署、SSE 事件流（当前只有 `GET /runs/{id}/events` 的 JSON 快照）。这些属于执行者
+ASGI 多 worker、Linux/魔搭部署。这些属于执行者
 必须如实标记的阻塞项，本文不声称已达标。真实模型 API 请求数为 **0**。

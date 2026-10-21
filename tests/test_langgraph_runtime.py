@@ -685,6 +685,36 @@ def test_concurrent_turns_on_one_conversation_serialize(monkeypatch):
     assert len(seqs) == len(set(seqs))
 
 
+def test_event_stream_replays_persisted_events_with_a_cursor(monkeypatch):
+    """SSE replay is idempotent: after_seq resumes without duplicating events."""
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+    with TestClient(app) as stream_client:
+        cid = stream_client.post("/api/v2/conversations", json={}).json()["conversation_id"]
+        run_id = stream_client.post(f"/api/v2/conversations/{cid}/messages",
+                                    json={"message": "写个标题"}).json()["run_id"]
+
+        with stream_client.stream(
+                "GET", f"/api/v2/runs/{run_id}/events/stream?after_seq=0") as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            full = "".join(response.iter_text())
+        assert "event: end" in full
+        assert "run_finished" in full
+        assert "id: 0" in full
+
+        # Reconnecting past the end yields no replayed payload events.
+        with stream_client.stream(
+                "GET", f"/api/v2/runs/{run_id}/events/stream?after_seq=99") as response:
+            resumed = "".join(response.iter_text())
+        assert "run_finished" not in resumed
+        assert "event: end" in resumed
+
+
+def test_event_stream_rejects_unknown_run():
+    response = client.get("/api/v2/runs/does-not-exist/events/stream")
+    assert response.status_code == 404
+
+
 # ---------------------------------------------------------------- checkpoint privacy
 
 def test_checkpoint_holds_references_not_secrets(monkeypatch):

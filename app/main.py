@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -6,7 +7,8 @@ from fastapi import FastAPI, Request
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .contracts import MaterialBundle, Task
@@ -29,6 +31,7 @@ from .agent import AgentTurn, run_agent
 from . import agent_runtime
 from .runtime import RUNNER_VERSION as LG_RUNNER_VERSION
 from .runtime import runner as lg_runner
+from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
 from . import design_library
 from . import image_edit
 from . import image_channel
@@ -802,6 +805,47 @@ def v2_run_events(run_id: str, db=Depends(v2_db)):
         raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND", "message": "运行不存在"})
     return {"run_id": run.id, "status": run.status, "events": run.events or [],
             "usage": run.usage or {}, "stop_reason": run.stop_reason}
+
+
+@app.get("/api/v2/runs/{run_id}/events/stream")
+async def v2_run_events_stream(run_id: str, after_seq: int = 0, db=Depends(v2_db)):
+    """Server-sent replay of persisted events.
+
+    Each event carries its index as the SSE id, so a client that reconnects with
+    ``after_seq`` resumes without duplicating what it already saw. The stream only
+    replays committed events — it never forwards raw graph state or unverified tokens.
+    """
+    run = db.get(models.AgentRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND", "message": "运行不存在"})
+
+    async def replay():
+        cursor = max(0, int(after_seq or 0))
+        idle = 0
+        while True:
+            session = db_layer.session_factory()()
+            try:
+                fresh = session.get(models.AgentRun, run_id)
+                events = list(fresh.events or []) if fresh else []
+                status = fresh.status if fresh else "failed"
+            finally:
+                session.close()
+            for index in range(cursor, len(events)):
+                data = json.dumps(events[index], ensure_ascii=False, default=str)
+                yield f"id: {index}\nevent: run\ndata: {data}\n\n"
+            cursor = len(events)
+            if status in LG_FINAL_STATUSES:
+                yield f"event: end\ndata: {json.dumps({'status': status})}\n\n"
+                return
+            idle += 1
+            if idle > 600:  # ~5 minutes; the client can reconnect with after_seq
+                yield 'event: end\ndata: {"status": "stream_timeout"}\n\n'
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(replay(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store",
+                                      "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/v2/conversations/{conversation_id}")
