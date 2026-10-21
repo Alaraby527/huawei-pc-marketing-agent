@@ -146,8 +146,8 @@
   }
 
   async function patchTask(id, body) {
-    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id), {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id) + '/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     if (!response.ok) {
       toast('操作失败，请重试');
@@ -159,7 +159,9 @@
 
   async function deleteTask(id) {
     if (!confirm('删除这个任务？删除后无法恢复。')) return;
-    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id), { method: 'DELETE' });
+    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id) + '/delete', {
+      method: 'POST',
+    });
     if (!response.ok) {
       toast('删除失败，请重试');
       return;

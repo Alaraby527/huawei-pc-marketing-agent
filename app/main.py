@@ -754,8 +754,7 @@ def v2_get_conversation(conversation_id: str, db=Depends(v2_db)):
     return agent_runtime.conversation_payload(db, conversation)
 
 
-@app.patch("/api/v2/conversations/{conversation_id}")
-def v2_update_conversation(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+def _update_conversation(conversation_id: str, payload: dict | None, db):
     conversation = db.get(models.AgentConversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
@@ -770,14 +769,35 @@ def v2_update_conversation(conversation_id: str, payload: dict | None = None, db
         pinned=payload.get("pinned") if "pinned" in payload else None)
 
 
-@app.delete("/api/v2/conversations/{conversation_id}")
-def v2_delete_conversation(conversation_id: str, db=Depends(v2_db)):
+def _delete_conversation(conversation_id: str, db):
     conversation = db.get(models.AgentConversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
     agent_runtime.delete_conversation(db, conversation)
     return {"deleted": conversation_id}
+
+
+@app.patch("/api/v2/conversations/{conversation_id}")
+def v2_update_conversation(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    return _update_conversation(conversation_id, payload, db)
+
+
+@app.post("/api/v2/conversations/{conversation_id}/update")
+def v2_update_conversation_post(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    """POST alias for gateways that block PATCH."""
+    return _update_conversation(conversation_id, payload, db)
+
+
+@app.delete("/api/v2/conversations/{conversation_id}")
+def v2_delete_conversation(conversation_id: str, db=Depends(v2_db)):
+    return _delete_conversation(conversation_id, db)
+
+
+@app.post("/api/v2/conversations/{conversation_id}/delete")
+def v2_delete_conversation_post(conversation_id: str, db=Depends(v2_db)):
+    """POST alias for gateways that block DELETE."""
+    return _delete_conversation(conversation_id, db)
 
 
 @app.post("/api/v2/runs/{run_id}/cancel")

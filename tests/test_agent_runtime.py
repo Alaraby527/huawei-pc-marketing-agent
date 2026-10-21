@@ -396,14 +396,14 @@ def test_task_list_rename_pin_and_delete(monkeypatch):
     item = next(row for row in listing if row["conversation_id"] == conversation_id)
     assert item["title"] and item["message_count"] >= 1
 
-    updated = client.patch(f"/api/v2/conversations/{conversation_id}",
-                           json={"title": "我的校园选题", "pinned": True}).json()
+    updated = client.post(f"/api/v2/conversations/{conversation_id}/update",
+                          json={"title": "我的校园选题", "pinned": True}).json()
     assert updated["title"] == "我的校园选题" and updated["pinned"] is True
 
     listing = client.get("/api/v2/conversations?limit=50").json()["conversations"]
     assert listing[0]["conversation_id"] == conversation_id
 
-    deleted = client.delete(f"/api/v2/conversations/{conversation_id}")
+    deleted = client.post(f"/api/v2/conversations/{conversation_id}/delete")
     assert deleted.status_code == 200
     assert client.get(f"/api/v2/conversations/{conversation_id}").status_code == 404
 

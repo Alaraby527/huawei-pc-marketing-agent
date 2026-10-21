@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.1 — 2026-10-21
+
+### Fixed
+
+- ModelScope's `.ms.show` gateway rejects `PATCH`/`DELETE` with 403, so task rename/pin/delete now use POST aliases (`/api/v2/conversations/{id}/update`, `/delete`); the original REST methods remain for direct API clients.
+
 ## 0.16.0 — 2026-10-21
 
 ### Added
