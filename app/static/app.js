@@ -225,10 +225,11 @@
       visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
         '<p>' + escapeHtml(item.content || '').replace(/\n/g, '<br>') + '</p>'));
       const task = conversation.task || {};
-      if (task.candidates && conversation.stage === 'select_product') {
+      // The autonomous runner has no guided "stage"; render whatever the task actually
+      // holds instead of gating on stage names only the legacy runner produces.
+      if (task.candidates && task.candidates.length) {
         renderV2Candidates(task.candidates);
-      } else if (task.plan && conversation.stage === 'confirm_plan' &&
-                 !(conversation.artifacts || []).length) {
+      } else if (task.plan && !(conversation.artifacts || []).length) {
         renderV2Plan(task.plan, task.selected);
       }
       if ((conversation.artifacts || []).length) renderV2Artifact(conversation);
@@ -444,9 +445,11 @@
     if (message && message.trim()) lastUserText = message.trim();
     try {
       if (!sessionId) {
+        // No mode is sent: the server owns the default runner version, so the entry
+        // point cannot drift from the backend again.
         const created = await fetch('/api/v2/conversations', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: 'guided' }),
+          body: JSON.stringify({}),
         });
         const conversation = await created.json();
         sessionId = conversation.conversation_id;

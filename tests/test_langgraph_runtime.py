@@ -525,6 +525,78 @@ def test_model_failure_message_to_the_user_is_sanitized(monkeypatch):
     assert "密钥" not in data["reply"]
 
 
+# ---------------------------------------------------------------- work panel wiring
+
+def test_candidates_are_surfaced_for_the_work_panel(monkeypatch):
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_products", {"query": "MateBook"})]},
+        {"content": "知识库里有这款。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "有哪些型号").json()
+    assert data["candidates"] and data["candidates"][0]["model"] == "HUAWEI MateBook Test"
+    conversation = client.get(f"/api/v2/conversations/{cid}").json()
+    assert conversation["task"]["candidates"][0]["product_id"] == "P-test"
+
+
+def test_original_images_are_surfaced_for_the_work_panel(monkeypatch):
+    class FakeImage:
+        image_id = "IMG-1"
+        caption = "HUAWEI MateBook Test 官方产品图"
+        access_url = "/api/v1/assets/IMG-1"
+
+    async def fake_images(*args, **kwargs):
+        return [FakeImage()], []
+
+    monkeypatch.setattr("app.agent_runtime.verified_images", fake_images)
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("find_product_images", {"product_id": "P-test"})]},
+        {"content": "配图用的是知识库原图，没有重画产品外观。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "找几张原图").json()
+    assert data["images"] and data["images"][0]["access_url"] == "/api/v1/assets/IMG-1"
+    conversation = client.get(f"/api/v2/conversations/{cid}").json()
+    assert conversation["task"]["images"][0]["image_id"] == "IMG-1"
+
+
+def test_question_reference_options_surface_as_actions(monkeypatch):
+    _script(monkeypatch, [{"content": "", "tool_calls": [
+        _call("ask_user", {"question": "这篇内容给谁看？",
+                           "options": ["大学生", "职场办公"]})]}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写点东西").json()
+    assert data["status"] == "waiting_user"
+    # Reference options are offered but never mandatory.
+    assert data["actions"] == ["大学生", "职场办公"]
+
+
+def test_frontend_does_not_pin_the_legacy_runner():
+    """F01 regression guard: changing only the backend default changes nothing.
+
+    The entry point must let the server own the default runner version, otherwise the
+    UI silently keeps creating guided conversations.
+    """
+    from pathlib import Path
+
+    from app import main as main_module
+
+    source = (Path(main_module.__file__).parent / "static" / "app.js").read_text()
+    assert "mode: 'guided'" not in source
+    assert 'mode: "guided"' not in source
+    assert "mode: 'autonomous'" not in source
+
+
+def test_task_restore_renders_candidates_without_a_guided_stage():
+    """The autonomous runner has no select_product stage; the UI must not require one."""
+    from pathlib import Path
+
+    from app import main as main_module
+
+    source = (Path(main_module.__file__).parent / "static" / "app.js").read_text()
+    assert "conversation.stage === 'select_product'" not in source
+
+
 # ---------------------------------------------------------------- checkpoint privacy
 
 def test_checkpoint_holds_references_not_secrets(monkeypatch):

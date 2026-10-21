@@ -182,6 +182,7 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     status = STATUS_RUNNING
     reply = ""
     telemetry = ""
+    final_state: dict = {}
     try:
         snapshot = await graph.aget_state(config)
         resuming = bool(getattr(snapshot, "next", ()) or ())
@@ -198,10 +199,14 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
         if paused is not None:
             status = STATUS_WAITING_USER
             reply = str(paused.get("question") or "还需要确认一件事：")
+            # Carry the question's reference options so the UI can offer them; the user
+            # is still free to answer in their own words.
+            final_state = {"pending_question": paused}
         else:
             status = str(result.get("status") or STATUS_COMPLETED)
             reply = str((result.get("output_candidate") or {}).get("reply") or "")
             telemetry = str(result.get("stop_reason") or "")
+            final_state = dict(result or {})
     except Exception as error:  # noqa: BLE001 - reported honestly, never faked as success
         status = STATUS_FAILED
         telemetry = error_marker(str(error) or type(error).__name__)
@@ -209,12 +214,13 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
         # environment variables or filesystem paths in it.
         reply = public_error(str(error))
 
-    _finish_run(db, conversation, run, status, reply, telemetry, ctx)
+    _finish_run(db, conversation, run, status, reply, telemetry, ctx, final_state)
     return agent_runtime.run_payload(db, run)
 
 
 def _finish_run(db: Session, conversation: models.AgentConversation, run: models.AgentRun,
-                status: str, reply: str, telemetry: str, ctx: RuntimeContext) -> None:
+                status: str, reply: str, telemetry: str, ctx: RuntimeContext,
+                state: dict | None = None) -> None:
     # A cancel is a persisted intent: it can never be flipped back into a success.
     if ledger.fresh_run_status(run.id) == STATUS_CANCELLED and status != STATUS_CANCELLED:
         status = STATUS_CANCELLED
@@ -228,35 +234,46 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
         agent_runtime._event(run, "message", role="assistant", content=reply)
 
     totals = ledger.usage_totals(db, conversation.id)
+    payload = dict(state or {})
     agent_runtime._event(run, "run_result", runner_version=RUNNER_VERSION,
                          status=status, usage=totals,
-                         artifact=ctx.tool_ctx.last_artifact)
+                         artifact=payload.get("artifact_ref"),
+                         candidates=payload.get("candidates") or [],
+                         images=payload.get("images") or [],
+                         actions=list((payload.get("pending_question") or {}).get("options")
+                                      or []) if status == STATUS_WAITING_USER else [])
     agent_runtime._event(run, "run_finished", status=status, stop_reason=telemetry)
 
     run.status = status
     run.stop_reason = telemetry[:160]
     run.usage = {"runner_version": RUNNER_VERSION, **totals}
     run.finished_at = agent_runtime._now()
-    _sync_task_state(db, conversation, status, ctx)
+    _sync_task_state(db, conversation, status, ctx, payload)
     db.flush()
 
 
 def _sync_task_state(db: Session, conversation: models.AgentConversation, status: str,
-                     ctx: RuntimeContext) -> None:
+                     ctx: RuntimeContext, state: dict | None = None) -> None:
     """Keep the task-history row usable without clobbering 0.16 title/pin data."""
-    state = db.get(models.AgentTaskState, conversation.id)
-    data = dict(state.data or {}) if state else {}
+    state_row = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state_row.data or {}) if state_row else {}
+    payload = dict(state or {})
     data["runner_version"] = RUNNER_VERSION
-    artifacts = db.query(models.AgentArtifact).filter(
+    data["artifact_count"] = db.query(models.AgentArtifact).filter(
         models.AgentArtifact.conversation_id == conversation.id).count()
-    data["artifact_count"] = artifacts
-    if isinstance(ctx.tool_ctx.last_search, dict) and ctx.tool_ctx.last_search.get("products"):
-        data["candidates"] = ctx.tool_ctx.last_search["products"][:3]
-    if state is None:
+    if payload.get("candidates"):
+        data["candidates"] = payload["candidates"]
+    elif isinstance(ctx.tool_ctx.last_search, dict) and ctx.tool_ctx.last_search.get("products"):
+        data["candidates"] = [{"product_id": item.get("product_id"),
+                               "model": item.get("model"), "reason": "", "facts": []}
+                              for item in ctx.tool_ctx.last_search["products"][:3]]
+    if payload.get("images"):
+        data["images"] = payload["images"]
+    if state_row is None:
         db.add(models.AgentTaskState(conversation_id=conversation.id, stage=status, data=data))
     else:
-        state.stage = status
-        state.data = data
+        state_row.stage = status
+        state_row.data = data
     db.flush()
 
 

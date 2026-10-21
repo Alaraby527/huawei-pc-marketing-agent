@@ -100,6 +100,8 @@ def build_graph(saver, ctx: RuntimeContext):
         messages = list(state.get("messages") or [])
         evidence_refs = list(state.get("evidence_refs") or [])
         artifact_ref = state.get("artifact_ref")
+        candidates = list(state.get("candidates") or [])
+        images = list(state.get("images") or [])
         repair_count = int(state.get("repair_count") or 0)
         observations: list[dict] = []
         status = STATUS_RUNNING
@@ -146,6 +148,11 @@ def build_graph(saver, ctx: RuntimeContext):
                                           "source_hash": _evidence_hash(outcome)})
 
             if name == "search_products" and outcome.get("ok") and outcome.get("products"):
+                candidates = [{"product_id": str(item.get("product_id") or ""),
+                               "model": str(item.get("model") or ""),
+                               "facts_count": int(item.get("facts_count") or 0),
+                               "reason": "", "facts": []}
+                              for item in outcome["products"][:3]]
                 for product in outcome["products"][:3]:
                     product_id = str(product.get("product_id") or "")
                     if product_id and all(ref.get("product_id") != product_id
@@ -157,15 +164,21 @@ def build_graph(saver, ctx: RuntimeContext):
                     ctx.tool_ctx.evidence_read = True
                     ctx.tool_ctx.last_search = outcome
 
+            if name in ("find_product_images", "render_visuals") and outcome.get("ok"):
+                rows = outcome.get("images") or []
+                if rows and isinstance(rows[0], dict):
+                    images = rows[:6]
+
         if status == STATUS_NEEDS_RECONCILIATION:
             return {"messages": messages, "evidence_refs": evidence_refs,
-                    "artifact_ref": artifact_ref, "pending_calls": [], "status": status,
+                    "artifact_ref": artifact_ref, "candidates": candidates,
+                    "images": images, "pending_calls": [], "status": status,
                     "stop_reason": stop_reason, "repair_count": repair_count,
                     "last_observation": observations[-1] if observations else None}
 
         return {"messages": messages, "evidence_refs": evidence_refs,
-                "artifact_ref": artifact_ref, "pending_calls": [],
-                "status": STATUS_RUNNING, "repair_count": repair_count,
+                "artifact_ref": artifact_ref, "candidates": candidates, "images": images,
+                "pending_calls": [], "status": STATUS_RUNNING, "repair_count": repair_count,
                 "last_observation": observations[-1] if observations else None}
 
     async def wait_for_user(state: MarketingState) -> dict[str, Any]:

@@ -42,6 +42,8 @@ class MarketingState(TypedDict, total=False):
     # --- evidence / artifact references (not the payloads themselves) -------
     evidence_refs: list[dict[str, Any]]
     artifact_ref: dict[str, Any] | None
+    candidates: list[dict[str, Any]]
+    images: list[dict[str, Any]]
 
     # --- control ------------------------------------------------------------
     pending_calls: list[dict[str, Any]]
@@ -70,6 +72,8 @@ def initial_state(*, conversation_id: str, run_id: str, thread_id: str,
         assumptions=[],
         evidence_refs=[],
         artifact_ref=None,
+        candidates=[],
+        images=[],
         pending_calls=[],
         pending_question_ref=None,
         last_observation=None,
