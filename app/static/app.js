@@ -39,6 +39,9 @@
   const FIELD_NAMES = { audience: '客户画像', budget: '预算', scenario: '使用场景', preferences: '偏好', required_software: '必用软件 / 系统', objective: '内容目标' };
   const TASKS_KEY = 'huawei-agent-tasks-v1';
   const WORK_PANEL_KEY = 'huawei-agent-work-panel';
+  const SIDEBAR_KEY = 'huawei-agent-sidebar';
+  // Keep in sync with the @media (max-width:980px) block in style.css.
+  const NARROW_QUERY = '(max-width:980px)';
   const WELCOME_HTML = chatLog.innerHTML;
   let lastUserText = '';
 
@@ -195,6 +198,8 @@
     sendBtn.disabled = true;
     input.focus();
     toast('已新建任务');
+    // On narrow screens the sidebar is an overlay: get it out of the way.
+    if (isNarrow()) setSidebar(false);
   }
 
   async function openTask(id) {
@@ -235,6 +240,7 @@
       if ((conversation.artifacts || []).length) renderV2Artifact(conversation);
       if (task.images && task.images.length) renderV2Images(task.images);
       switchView('chat');
+      if (isNarrow()) setSidebar(false);
       await loadTasks();
     } catch (error) {
       toast('任务加载失败，请重试');
@@ -250,6 +256,36 @@
     } catch (error) {
       // Non-persistent toggle is fine.
     }
+  }
+
+  function isNarrow() {
+    return window.matchMedia(NARROW_QUERY).matches;
+  }
+
+  // The sidebar has two different mechanisms: on wide screens it is a normal column
+  // that collapses, on narrow screens it is a fixed overlay driven by body.sidebar-open.
+  // Mixing them is what made it possible to open but not close.
+  function setSidebar(open) {
+    const sidebar = $('sidebar');
+    if (isNarrow()) {
+      document.body.classList.toggle('sidebar-open', open);
+    } else {
+      document.body.classList.remove('sidebar-open');
+      sidebar.classList.toggle('collapsed', !open);
+      try {
+        localStorage.setItem(SIDEBAR_KEY, open ? '1' : '0');
+      } catch (error) {
+        // Non-persistent toggle is fine.
+      }
+    }
+    $('sidebar-toggle').setAttribute('aria-expanded', String(open));
+    const collapseBtn = $('sidebar-collapse');
+    if (collapseBtn) collapseBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  function sidebarIsOpen() {
+    return isNarrow() ? document.body.classList.contains('sidebar-open')
+      : !$('sidebar').classList.contains('collapsed');
   }
 
   function setBusy(busy) {
@@ -1483,8 +1519,9 @@
   });
   $('work-close').addEventListener('click', () => setWorkPanel(false));
   $('sidebar-toggle').addEventListener('click', () => {
-    document.body.classList.toggle('sidebar-open');
+    setSidebar(!sidebarIsOpen());
   });
+  $('sidebar-collapse').addEventListener('click', () => setSidebar(false));
   $('automation-btn').addEventListener('click', () => toast('自动化编排将在后续版本开放'));
   $('plugins-btn').addEventListener('click', () => toast('插件市场将在后续版本开放'));
 
@@ -1507,6 +1544,24 @@
     workPanelOpen = true;
   }
   setWorkPanel(workPanelOpen);
+  // Restore the sidebar preference only for wide screens; narrow screens always start
+  // closed so the overlay does not cover the conversation.
+  let sidebarOpenPref = true;
+  try {
+    sidebarOpenPref = localStorage.getItem(SIDEBAR_KEY) !== '0';
+  } catch (error) {
+    sidebarOpenPref = true;
+  }
+  setSidebar(isNarrow() ? false : sidebarOpenPref);
+  window.addEventListener('resize', () => {
+    if (isNarrow()) {
+      $('sidebar').classList.remove('collapsed');
+      document.body.classList.remove('sidebar-open');
+    } else {
+      document.body.classList.remove('sidebar-open');
+      setSidebar(sidebarOpenPref);
+    }
+  });
   renderWorkTabs(selectedPlatform);
   loadTasks();
 

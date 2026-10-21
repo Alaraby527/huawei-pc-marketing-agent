@@ -63,11 +63,17 @@ h1,h2,h3,p{margin:0}
 .step.done .step-index{color:var(--success)}
 
 .topbar-left{display:flex;align-items:center;gap:10px}
-#sidebar-toggle{display:none}
+/* Visible at every width: on desktop it collapses the sidebar, on narrow screens it
+   opens the overlay. Hiding it on desktop left the sidebar with no way back in. */
+#sidebar-toggle{display:inline-flex}
 .icon-btn{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);border-radius:8px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
 .icon-btn:hover{border-color:var(--brand);color:var(--brand)}
 .body-row{flex:1;min-height:0;display:flex;overflow:hidden}
-.sidebar{flex:0 0 244px;display:flex;flex-direction:column;gap:14px;padding:12px 10px;border-right:1px solid var(--divider);background:var(--surface);overflow-y:auto}
+.sidebar{flex:0 0 244px;display:flex;flex-direction:column;gap:14px;padding:12px 10px;border-right:1px solid var(--divider);background:var(--surface);overflow-y:auto;transition:flex-basis .2s var(--ease),opacity .2s var(--ease)}
+.sidebar.collapsed{flex-basis:0;width:0;padding:0;border-right:none;opacity:0;pointer-events:none;overflow:hidden}
+.side-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 2px}
+.side-head-title{font-size:11px;color:var(--text-3);letter-spacing:.04em}
+.side-collapse{width:24px;height:24px;font-size:13px;flex:0 0 24px}
 .side-top{display:flex;flex-direction:column;gap:4px}
 .side-primary{display:flex;align-items:center;gap:8px;border:none;background:var(--brand-soft);color:var(--brand);border-radius:10px;padding:9px 10px;font-size:13px;font-weight:600;text-align:left}
 .side-primary:hover{background:var(--brand-soft);text-decoration:none}
@@ -356,6 +362,9 @@ h1,h2,h3,p{margin:0}
   .body-row{flex-direction:column;overflow:visible}
   .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:60;width:244px;transform:translateX(-100%);transition:transform .2s var(--ease);box-shadow:var(--shadow-float)}
   body.sidebar-open .sidebar{transform:none}
+  /* On narrow screens the transform governs visibility, so the desktop collapse state
+     must not also zero the panel out. */
+  .sidebar.collapsed{flex-basis:244px;width:244px;padding:12px 10px;border-right:1px solid var(--divider);opacity:1;pointer-events:auto;overflow-y:auto}
   #sidebar-toggle{display:inline-flex}
   .main-area{flex-direction:column;padding:10px;overflow:visible}
   .chat-pane{min-height:520px}

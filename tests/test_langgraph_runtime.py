@@ -846,6 +846,29 @@ def test_clean_creative_copy_is_not_flagged(monkeypatch):
     assert "提示：" not in data["reply"]
 
 
+def test_sidebar_can_be_collapsed_on_wide_screens():
+    """The sidebar was openable but not closable: no collapse control existed on desktop.
+
+    Guards the wiring, since this is pure front-end behaviour with no server contract.
+    """
+    from pathlib import Path
+
+    from app import main as main_module
+
+    static = Path(main_module.__file__).parent / "static"
+    html = (static / "index.html").read_text()
+    css = (static / "style.css").read_text()
+    js = (static / "app.js").read_text()
+
+    assert 'id="sidebar-collapse"' in html, "a visible collapse control is required"
+    assert ".sidebar.collapsed" in css, "the sidebar needs a collapsed state"
+    assert "#sidebar-toggle{display:none}" not in css, \
+        "the header toggle must be reachable on wide screens too"
+    assert "sidebar-collapse'" in js and "setSidebar(false)" in js
+    # The two mechanisms must stay separate: collapse on wide, overlay on narrow.
+    assert "NARROW_QUERY" in js and "matchMedia" in js
+
+
 # ---------------------------------------------------------------- checkpoint privacy
 
 def test_checkpoint_holds_references_not_secrets(monkeypatch):
