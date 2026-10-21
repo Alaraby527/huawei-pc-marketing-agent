@@ -99,6 +99,9 @@ class MessageIn(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     model: str | None = Field(default=None, max_length=80)
     idempotency_key: str | None = Field(default=None, max_length=120)
+    # "blocking" (default, legacy-compatible final payload) or "async" (202 + run_id,
+    # executed by the worker). Only the LangGraph runner supports async.
+    response_mode: str | None = Field(default=None, max_length=20)
 
 
 @dataclass

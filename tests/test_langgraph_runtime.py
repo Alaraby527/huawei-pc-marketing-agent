@@ -49,10 +49,7 @@ def runtime_env(tmp_path, monkeypatch):
     monkeypatch.setenv("LG_CHECKPOINT_PATH", str(tmp_path / "checkpoints.sqlite"))
     monkeypatch.setenv("LG_MAX_MODEL_CALLS", "6")
     # Each test gets a fresh saver bound to its own checkpoint file.
-    monkeypatch.setattr(lg_runner, "_saver", None)
-    monkeypatch.setattr(lg_runner, "_conn", None)
-    monkeypatch.setattr(lg_runner, "_saver_path", None)
-    monkeypatch.setattr(lg_runner, "_saver_loop", None)
+    monkeypatch.setattr(lg_runner, "_savers", {})
     db_layer.reset_for_tests(url)
     # A stale init flag from another test would leave this engine without tables.
     monkeypatch.setattr("app.main._workspace_db_ready", False)
@@ -595,6 +592,97 @@ def test_task_restore_renders_candidates_without_a_guided_stage():
 
     source = (Path(main_module.__file__).parent / "static" / "app.js").read_text()
     assert "conversation.stage === 'select_product'" not in source
+
+
+# ---------------------------------------------------------------- async mode / recovery
+
+def test_async_mode_returns_202_and_the_worker_finishes_the_run(monkeypatch):
+    """response_mode=async must submit, return 202, and let the worker complete it.
+
+    A persistent client loop is required: background tasks do not survive a per-request
+    event loop, which is exactly why the app opens its saver in the lifespan.
+    """
+    import time
+
+    _script(monkeypatch, [{"content": "后台完成了。", "tool_calls": []}])
+    with TestClient(app) as async_client:
+        cid = async_client.post("/api/v2/conversations", json={}).json()["conversation_id"]
+        response = async_client.post(f"/api/v2/conversations/{cid}/messages",
+                                     json={"message": "随便来点", "response_mode": "async"})
+        assert response.status_code == 202
+        body = response.json()
+        assert body["status"] == "running" and body["runner_version"] == RUNNER_VERSION
+        assert body["events_url"].endswith("/events")
+        run_id = body["run_id"]
+
+        # An independent connection can already see the run while it executes.
+        running = async_client.get(f"/api/v2/runs/{run_id}/events").json()
+        assert running["status"] in {"running", "completed"}
+
+        final = running
+        for _ in range(60):
+            if final["status"] != "running":
+                break
+            time.sleep(0.05)
+            final = async_client.get(f"/api/v2/runs/{run_id}/events").json()
+        assert final["status"] == "completed"
+        conversation = async_client.get(f"/api/v2/conversations/{cid}").json()
+        assert any(message["content"] == "后台完成了。"
+                   for message in conversation["messages"])
+
+
+def test_unknown_response_mode_falls_back_to_blocking(monkeypatch):
+    _script(monkeypatch, [{"content": "阻塞模式完成。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    response = _send(cid, "写个标题")
+    assert response.status_code == 200
+    assert response.json()["reply"] == "阻塞模式完成。"
+
+
+def test_orphaned_runs_are_not_reported_as_success():
+    """A run left 'running' by a restart has an unknown outcome, not a successful one."""
+    conversation = _new_conversation()
+    cid = conversation["conversation_id"]
+    session = db_layer.session_factory()()
+    session.add(models.AgentRun(conversation_id=cid, status="running"))
+    session.commit()
+    recovered = lg_runner.recover_orphaned_runs(session)
+    session.commit()
+    assert recovered == 1
+    run = session.query(models.AgentRun).filter(
+        models.AgentRun.conversation_id == cid).one()
+    assert run.status == "needs_reconciliation"
+    assert run.stop_reason == "orphaned_by_restart"
+    session.close()
+
+
+def test_concurrent_turns_on_one_conversation_serialize(monkeypatch):
+    """The conversation lease keeps two in-flight turns from interleaving state."""
+    import threading
+
+    seen = []
+
+    def fake(system, messages, tools, model=None):
+        seen.append(1)
+        return {"content": f"第 {len(seen)} 次回答。", "tool_calls": []}, {"model": "stub",
+                                                                        "usage": {}}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_tools", fake)
+    cid = _new_conversation()["conversation_id"]
+    results = []
+
+    def send(text):
+        results.append(_send(cid, text).json())
+
+    threads = [threading.Thread(target=send, args=(f"消息{i}",)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(results) == 2
+    seqs = [row[0] for row in db_layer.session_factory()().query(
+        models.AgentMessage.seq).filter(models.AgentMessage.conversation_id == cid).all()]
+    assert len(seqs) == len(set(seqs))
 
 
 # ---------------------------------------------------------------- checkpoint privacy

@@ -20,7 +20,7 @@ import hashlib
 import json
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -64,14 +64,31 @@ def fresh_run_status(run_id: str) -> str:
 
 
 def next_seq(db: Session, conversation_id: str) -> int:
-    """Server-side monotonic message sequence.
+    """Allocate the next message sequence number atomically.
 
-    The legacy runtime derived ``seq`` from a per-batch formula, which produced
-    collisions between a batch's last tool result and the next assistant turn.
+    A ``max(seq) + 1`` read-modify-write in Python loses updates when two writers
+    interleave, so the increment is done in SQL inside the caller's transaction. The
+    legacy runtime's per-batch formula collided between a batch's last tool result and
+    the next assistant turn; a counter cannot.
     """
-    current = db.scalar(select(func.max(models.AgentMessage.seq)).where(
-        models.AgentMessage.conversation_id == conversation_id))
-    return int(current or 0) + 1
+    row = db.get(models.AgentSeqCounter, conversation_id)
+    if row is None:
+        highest = db.scalar(select(func.max(models.AgentMessage.seq)).where(
+            models.AgentMessage.conversation_id == conversation_id)) or 0
+        try:
+            # A savepoint keeps a lost insert race from rolling back the caller's work.
+            with db.begin_nested():
+                db.add(models.AgentSeqCounter(conversation_id=conversation_id,
+                                              next_seq=int(highest)))
+                db.flush()
+        except IntegrityError:
+            pass
+    db.execute(update(models.AgentSeqCounter)
+               .where(models.AgentSeqCounter.conversation_id == conversation_id)
+               .values(next_seq=models.AgentSeqCounter.next_seq + 1))
+    value = db.scalar(select(models.AgentSeqCounter.next_seq).where(
+        models.AgentSeqCounter.conversation_id == conversation_id))
+    return int(value or 1)
 
 
 def accept_request(db: Session, conversation_id: str, key: str,

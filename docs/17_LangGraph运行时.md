@@ -88,8 +88,30 @@ START → decide ──工具──→ execute_tools ──┐
 
 `guided` / `autonomous` 仍然可选，旧会话保持各自原版本，不被静默改写。
 
+### 阻塞与异步
+
+`messages` 新增可选字段 `response_mode`：
+
+- `blocking`（默认）：与旧行为一致，直接返回最终 payload，现有前端不受影响。
+- `async`：短事务提交后返回 `202`，body 为 `{run_id, conversation_id, runner_version, status, events_url}`；
+  由持有**独立 Session** 的 worker 执行。因为 run 在任何模型调用之前就已提交，另一个连接立刻能看到它处于
+  `running`，此时取消也能被真正观察到。
+
+异步只在 LangGraph runner 下生效；未知取值一律回退 `blocking`。
+
+### 重启后的孤儿运行
+
+进程重启会丢掉内存中的 worker。启动时会把仍是 `running` 的运行改为
+`needs_reconciliation`，`stop_reason=orphaned_by_restart`。这类运行的上游结果未知，
+既不自动重试，也不记为成功。
+
 ## 9. 验证状态
 
-已在本机 Python 3.12 隔离环境验证：**209 项测试通过**（180 项基线 legacy 合同 + 29 项新增图机制测试），`node --check` 通过，真实启动冒烟通过。
+已在本机 Python 3.12 隔离环境验证：**218 项测试通过**（180 项基线 legacy 合同 + 38 项新增图机制测试），且
+全量连跑 3 次稳定；`node --check` 通过；真实 uvicorn 冒烟通过（新会话默认 LG、验重 200/409、异步 202 +
+worker 执行到终态、删除清空 checkpoint、重启孤儿恢复）。更新后的 `requirements.lock` 在一个全新 venv 里
+从零安装后同样 **218/218** 通过。
 
-**未验证**：真实 DeepSeek 网关的原生工具多轮往返、官方知识库 ZIP / ima 真实业务任务、跨进程崩溃恢复、ASGI 多 worker、Linux/魔搭部署。这些属于执行者必须如实标记的阻塞项，本文不声称已达标。真实模型 API 请求数为 **0**。
+**未验证**：真实 DeepSeek 网关的原生工具多轮往返、官方知识库 ZIP / ima 真实业务任务、跨进程崩溃恢复、
+ASGI 多 worker、Linux/魔搭部署、SSE 事件流（当前只有 `GET /runs/{id}/events` 的 JSON 快照）。这些属于执行者
+必须如实标记的阻塞项，本文不声称已达标。真实模型 API 请求数为 **0**。

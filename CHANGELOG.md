@@ -30,6 +30,14 @@
   with the validated user text only — no arbitrary client state patch.
 - `GET /api/v2/conversations/{id}/runtime` — a redacted runner view (status, stop reason,
   usage totals); it never returns raw graph state.
+- **Optional asynchronous execution** (`response_mode: "async"`): the request returns
+  `202` with `run_id` / `status` / `events_url` after a short transaction, and a worker
+  with its own session executes the graph. `blocking` stays the default, so existing
+  clients are unaffected. Because the run is committed before any model call, another
+  connection can already see it running, and a cancel arriving mid-run is observable.
+- **Orphan recovery on startup**: a run left `running` by a previous process becomes
+  `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
+  so it is neither retried blindly nor reported as a success.
 
 ### Changed
 
@@ -41,9 +49,16 @@
   be rewritten as `completed`.
 - **Budget exhaustion is `partial`, not `completed`**, so a spent budget cannot be
   counted as success in management metrics.
-- **Message sequence** uses a monotonic server-side counter. The old per-batch formula
+- **Message sequence** uses an atomic per-conversation counter (`agent_seq_counters`)
+  incremented in SQL inside the writer's transaction. The old per-batch formula
   (`base_seq + 2 + step*4` vs `base_seq + 3 + step*4 + call_index`) produced duplicate
-  `seq` values between a batch's last tool result and the next assistant turn.
+  `seq` values, and a Python `max(seq) + 1` loses updates when two writers interleave —
+  both were reproduced by a concurrency test before this fix.
+- **One conversation executes at a time** within a process (a local lease, not a
+  distributed lock), so two in-flight turns cannot interleave graph state.
+- **The checkpoint saver is per event loop** and is never closed by another loop's
+  request; the previous single-slot saver closed a connection that an in-flight task was
+  still using (`Cannot operate on a closed database`).
 - **Errors shown to users are sanitized**: the knowledge base is no longer loaded before
   every decision, so a KB outage degrades to one tool error the model can react to
   instead of aborting the turn; and user-facing text never contains a credential name, an

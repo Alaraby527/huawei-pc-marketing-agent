@@ -456,6 +456,18 @@ class AgentModelAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AgentSeqCounter(Base):
+    """Per-conversation message sequence allocator.
+
+    ``max(seq) + 1`` in Python loses updates when two writers interleave, which is how
+    the legacy batch formula also produced duplicate sequence numbers. The counter is
+    incremented in SQL inside the writer's own transaction.
+    """
+    __tablename__ = "agent_seq_counters"
+    conversation_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    next_seq: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class AgentEffect(Base):
     """Side-effect ledger so a replayed tool call does not duplicate a business write.
 

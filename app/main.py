@@ -43,8 +43,29 @@ async def lifespan(_app: FastAPI):
     # The LangGraph checkpoint connection is process-wide: opened once here and closed
     # once on shutdown, never re-created per request.
     await lg_runner.init_saver()
+    _recover_orphaned_runs()
     yield
     await lg_runner.close_saver()
+
+
+def _recover_orphaned_runs() -> int:
+    """A run left 'running' by a previous process cannot be assumed to have finished."""
+    try:
+        if not db_layer.configured() and not db_layer.ensure_configured():
+            return 0
+        db_layer.init_db()
+        session = db_layer.session_factory()()
+    except Exception:  # noqa: BLE001 - startup must not fail on a database problem
+        return 0
+    try:
+        count = lg_runner.recover_orphaned_runs(session)
+        session.commit()
+        return count
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        return 0
+    finally:
+        session.close()
 
 
 app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -748,14 +769,27 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
     if conversation.runner_version == LG_RUNNER_VERSION:
+        async_mode = (payload.response_mode or "blocking").lower() == "async"
         try:
-            return await lg_runner.run_turn(db, conversation, payload.message,
-                                            model=payload.model,
-                                            idempotency_key=payload.idempotency_key)
+            prepared = await lg_runner.submit(db, conversation, payload.message,
+                                              payload.model, payload.idempotency_key)
         except lg_runner.RunnerError as error:
             raise HTTPException(status_code=error.status,
                                 detail={"code": "REQUEST_CONFLICT",
                                         "message": error.message}) from None
+        if prepared["replayed"]:
+            return prepared["payload"]
+        if async_mode:
+            # The run is already committed, so another connection can see it running.
+            # The worker owns its own session; the request returns immediately.
+            lg_runner.schedule_run(prepared["run_id"])
+            return JSONResponse(status_code=202, content={
+                "run_id": prepared["run_id"], "conversation_id": conversation.id,
+                "runner_version": LG_RUNNER_VERSION, "status": "running",
+                "events_url": f"/api/v2/runs/{prepared['run_id']}/events"})
+        run = db.get(models.AgentRun, prepared["run_id"])
+        return await lg_runner.execute_run(db, conversation, run, payload.message,
+                                           payload.model)
     return await agent_runtime.run_turn(db, conversation, payload.message,
                                         model=payload.model,
                                         idempotency_key=payload.idempotency_key)
