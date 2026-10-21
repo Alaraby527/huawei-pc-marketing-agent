@@ -116,6 +116,9 @@ class ToolContext:
     last_artifact: dict | None = None
     compose_attempted: bool = False
     events: list = field(default_factory=list)
+    # Every product whose evidence was actually read. A reply may legitimately compare
+    # several models, so prose validation must span all of them rather than the first.
+    read_product_ids: list = field(default_factory=list)
 
 
 def _now():

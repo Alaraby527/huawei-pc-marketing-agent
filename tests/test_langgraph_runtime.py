@@ -347,16 +347,23 @@ def test_model_call_budget_ends_as_partial_not_completed(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------- output fence
 
-def test_output_fence_sanitizes_unsupported_numbers_in_the_reply(monkeypatch):
+def test_output_fence_flags_unsupported_numbers_without_rewriting(monkeypatch):
+    """Prose is flagged, not rewritten.
+
+    An earlier version ran sanitize_text over the reply, which corrupted a real
+    cross-model comparison by injecting the first model's values into another model's
+    figures. The claim now stays visible and is marked unverified.
+    """
     _script(monkeypatch, [
         {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-test"})]},
         {"content": "这台机器有 64 GB 内存，值得买。", "tool_calls": []},
     ])
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "说说内存").json()
-    assert "64" not in data["reply"]
-    assert "16 GB" in data["reply"]
     assert data["status"] == "partial"
+    assert "64 GB 内存" in data["reply"], "the sentence must not be rewritten"
+    assert "未核实" in data["reply"]
+    assert data.get("unsupported_numbers")
 
 
 def test_output_fence_leaves_clean_creative_text_alone(monkeypatch):
@@ -869,6 +876,69 @@ def test_sidebar_can_be_collapsed_on_wide_screens():
     assert "NARROW_QUERY" in js and "matchMedia" in js
 
 
+# ---------------------------------------------------------------- cross-model replies
+
+class TwoProductCatalog:
+    """Two models with different figures, so a comparison reply spans both."""
+
+    class A:
+        model = "HUAWEI MateBook Test A"
+        product_id = "P-a"
+        issues = []
+        docs = []
+        facts = [_fact("A-MEM", "内存：16 GB"), _fact("A-W", "尺寸与重量：约 1.33 kg")]
+
+    class B:
+        model = "HUAWEI MateBook Test B"
+        product_id = "P-b"
+        issues = []
+        docs = []
+        facts = [_fact("B-MEM", "内存：32 GB"), _fact("B-W", "尺寸与重量：约 1.68 kg")]
+
+    products = [A(), B()]
+    entries = []
+    image_index = []
+
+
+def test_cross_model_comparison_is_not_flagged(monkeypatch):
+    """A reply comparing two read models must accept both models' figures.
+
+    The previous fence only loaded the first product's records, so it rewrote the
+    second model's real values with the first model's — corrupting valid copy.
+    """
+    async def two_products(*args, **kwargs):
+        return TwoProductCatalog()
+
+    monkeypatch.setattr("app.agent_runtime.load_catalog", two_products)
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-a"}, "c1")]},
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-b"}, "c2")]},
+        {"content": "A 款是 16 GB、约 1.33 kg；B 款是 32 GB、约 1.68 kg。",
+         "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "帮我对比这两款").json()
+    assert data["status"] == "completed", f"unexpected flags: {data.get('unsupported_numbers')}"
+    assert "1.68 kg" in data["reply"], "the second model's figure must survive untouched"
+    assert not data.get("unsupported_numbers")
+
+
+def test_a_number_from_neither_model_is_still_flagged(monkeypatch):
+    async def two_products(*args, **kwargs):
+        return TwoProductCatalog()
+
+    monkeypatch.setattr("app.agent_runtime.load_catalog", two_products)
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-a"}, "c1")]},
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-b"}, "c2")]},
+        {"content": "A 是 16 GB，B 是 32 GB，还能选 64 GB。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "对比一下").json()
+    assert data["status"] == "partial"
+    assert data.get("unsupported_numbers")
+
+
 # ---------------------------------------------------------------- checkpoint privacy
 
 def test_checkpoint_holds_references_not_secrets(monkeypatch):
@@ -892,3 +962,39 @@ def test_checkpoint_holds_references_not_secrets(monkeypatch):
     assert "LLM_API_KEY" not in text
     assert "api_key" not in text.lower()
     assert "sqlalchemy" not in text.lower()
+
+def test_refusal_to_write_a_number_is_not_flagged(monkeypatch):
+    """Mentioning 64GB only to refuse it must not turn a correct run into `partial`."""
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-test"})]},
+        {"content": "64 GB 内存这条我写不了，知识库里的档位是 16 GB / 512 GB，没有 64GB 这一档。",
+         "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "内存写成 64GB").json()
+    assert data["status"] == "completed", f"flags: {data.get('unsupported_numbers')}"
+    assert not data.get("unsupported_numbers")
+
+
+def test_a_cross_model_number_is_not_flagged(monkeypatch):
+    """A figure belonging to another read model is supported, not unverified."""
+    from app.runtime.content_policy import is_refusal_context
+    assert is_refusal_context("写不了 64GB。", 3, 7) is True
+    assert is_refusal_context("这台机器有 64GB 内存。", 5, 10) is False
+
+
+def test_real_refusal_phrasings_are_recognised():
+    """The exact wording live output used must not be treated as a claim."""
+    from app.runtime.content_policy import is_refusal_context
+    cases = [
+        ("交付好了，但有一处必须跟你说清楚：64GB 这个数字我没法写。", "64GB"),
+        ("官方口径是 24GB / 32GB，没有 64GB 这个配置。", "64GB"),
+        ("如果你其实想推的是存储 1TB 或者想换个 64GB 内存的机型，告诉我。", "64GB"),
+        ("64GB 内存这条我写不了，知识库里的档位是 16 GB / 512 GB。", "64GB"),
+    ]
+    for text, needle in cases:
+        start = text.index(needle)
+        assert is_refusal_context(text, start, start + len(needle)) is True, text
+    claim = "这台机器有 64GB 内存。"
+    start = claim.index("64GB")
+    assert is_refusal_context(claim, start, start + 4) is False

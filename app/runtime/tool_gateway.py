@@ -65,6 +65,13 @@ class ToolGateway:
         # environment variable, a credential or a filesystem path.
         outcome = sanitize_observation(outcome)
 
+        if name == "read_product_evidence" and outcome.get("ok"):
+            # Remember every product that was actually read: a comparison reply spans
+            # several models, and prose validation must not treat the others as unknown.
+            product_id = str(outcome.get("product_id") or "")
+            if product_id and product_id not in self.ctx.read_product_ids:
+                self.ctx.read_product_ids.append(product_id)
+
         if name in WRITE_TOOLS and call_uid:
             state = ledger.EFFECT_COMPLETED if outcome.get("ok") else ledger.EFFECT_FAILED
             ledger.effect_complete(self.ctx.db, call_uid, outcome, state=state)

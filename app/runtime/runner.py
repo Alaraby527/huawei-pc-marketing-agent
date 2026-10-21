@@ -346,7 +346,7 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
                          images=payload.get("images") or [],
                          unverified_experience=candidate.get("unverified_experience") or [],
                          unverified_numbers=candidate.get("unverified_numbers") or [],
-                         corrected=candidate.get("corrected") or "",
+                         unsupported_numbers=candidate.get("unsupported_numbers") or [],
                          actions=list((payload.get("pending_question") or {}).get("options")
                                       or []) if status == STATUS_WAITING_USER else [])
     agent_runtime._event(run, "run_finished", status=status, stop_reason=telemetry)

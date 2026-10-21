@@ -26,7 +26,8 @@ from .. import agent_runtime
 from . import ledger
 from .context import RuntimeContext
 from .content_policy import (EXPERIENCE_NOTICE, UNVERIFIED_NUMBER_NOTICE,
-                             fabricated_experience, unverified_product_numbers)
+                             fabricated_experience, is_refusal_context,
+                             unverified_product_numbers, unverified_reply_notice)
 from .errors import error_marker, public_error
 from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
                     STATUS_NEEDS_RECONCILIATION, STATUS_PARTIAL, STATUS_RUNNING,
@@ -237,8 +238,11 @@ def build_graph(saver, ctx: RuntimeContext):
                 violation = _reply_fact_violation(ctx, reply)
                 if violation:
                     status = STATUS_PARTIAL
-                    reply = violation["reply"]
-                    candidate["corrected"] = violation["detail"]
+                    # Flag only. Rewriting prose silently replaced another model's real
+                    # figures with the first model's values in a cross-model comparison.
+                    candidate["unsupported_numbers"] = violation["unsupported"]
+                    reply = reply + "\n\n" + unverified_reply_notice(
+                        violation["unsupported"][:4])
 
             if reply:
                 # Fabricated lived experience is forbidden by the platform rules but was
@@ -325,25 +329,57 @@ def _recheck_artifact(ctx: RuntimeContext, artifact_ref: dict) -> dict | None:
 
 
 def _reply_fact_violation(ctx: RuntimeContext, reply: str) -> dict | None:
-    """Check the *reply text* too, not only the artifact payload.
+    """Flag numbers in the *reply text* that no read product supports.
 
-    A wrong figure in prose is still a wrong figure; the fence must not depend on which
-    surface the model chose to write the claim into.
+    Two deliberate choices, both learned the hard way:
+
+    * **No rewriting.** An earlier version ran ``sanitize_text`` over the prose, which
+      corrupted a legitimate cross-model comparison — it replaced another model's real
+      figures with the first model's values ("D 16 约 1.68–1.33 kg / 1.32 kg"). Structured
+      artifact content is still repaired by the artifact path; prose is only flagged.
+    * **Union of every product read**, not just the first: a reply may compare several
+      models, and their figures are equally supported.
     """
     if not ctx.tool_ctx.evidence_read:
         return None
-    products = (ctx.tool_ctx.last_search or {}).get("products") or []
-    product_id = str(products[0].get("product_id") or "") if products else ""
-    if not product_id:
-        return None
-    _, records = _records_for(ctx, product_id)
+    from ..grounding import extract_claims, records_from_facts
+
+    records: list = []
+    seen: set[str] = set()
+    product_ids = list(getattr(ctx.tool_ctx, "read_product_ids", []) or [])
+    if not product_ids:
+        products = (ctx.tool_ctx.last_search or {}).get("products") or []
+        product_ids = [str(item.get("product_id") or "") for item in products]
+    for product_id in product_ids:
+        if not product_id or product_id in seen or ctx.tool_ctx.catalog is None:
+            continue
+        seen.add(product_id)
+        product = agent_runtime._resolve_product(ctx.tool_ctx.catalog, product_id,
+                                                 ctx.tool_ctx)
+        if product:
+            records.extend(records_from_facts(product.facts, product.product_id,
+                                              "model-level"))
     if not records:
         return None
-    from ..grounding import extract_claims, sanitize_text
-    if not extract_claims(reply):
+    claims = extract_claims(reply)
+    if not claims:
         return None
-    cleaned = sanitize_text(reply, records)
-    if cleaned == reply:
+    from ..grounding import check_text
+    report = check_text(reply, records)
+    unsupported = []
+    for item in report["errors"]:
+        if item.get("code") != "FACT_NOT_FOUND":
+            continue
+        span = item.get("span") or [0, 0]
+        # Do not flag a number the reply is explicitly refusing or asking about: that
+        # turned correct refusals into `partial` runs.
+        if is_refusal_context(reply, int(span[0]), int(span[1])):
+            continue
+        claim = str(item.get("claim") or "")
+        if claim:
+            unsupported.append(claim)
+    if not unsupported:
         return None
-    return {"reply": cleaned,
-            "detail": "回复中的未证实参数已按知识库真实值改写"}
+    return {"reply": reply,
+            "unsupported": sorted(set(unsupported)),
+            "detail": "回复中出现知识库未核到的数字，已标记未核实（未自动改写）"}
