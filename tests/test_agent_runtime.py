@@ -382,6 +382,32 @@ def test_guided_flow_from_greeting_to_artifact(monkeypatch):
     assert fifth["stage"] == "done"
 
 
+def test_task_list_rename_pin_and_delete(monkeypatch):
+    def fake_json(system, messages, schema_hint=None, model=None):
+        return {"intent": "chat"}, {"model": "stub", "usage": {}}
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake_json)
+    conversation_id = client.post("/api/v2/conversations",
+                                  json={"mode": "guided"}).json()["conversation_id"]
+    client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                json={"message": "你好"})
+
+    listing = client.get("/api/v2/conversations?limit=50").json()["conversations"]
+    item = next(row for row in listing if row["conversation_id"] == conversation_id)
+    assert item["title"] and item["message_count"] >= 1
+
+    updated = client.patch(f"/api/v2/conversations/{conversation_id}",
+                           json={"title": "我的校园选题", "pinned": True}).json()
+    assert updated["title"] == "我的校园选题" and updated["pinned"] is True
+
+    listing = client.get("/api/v2/conversations?limit=50").json()["conversations"]
+    assert listing[0]["conversation_id"] == conversation_id
+
+    deleted = client.delete(f"/api/v2/conversations/{conversation_id}")
+    assert deleted.status_code == 200
+    assert client.get(f"/api/v2/conversations/{conversation_id}").status_code == 404
+
+
 def test_v2_uses_file_sqlite_when_database_url_missing(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("AGENT_DB_PATH", str(tmp_path / "fallback.db"))

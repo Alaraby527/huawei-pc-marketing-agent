@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from . import models
@@ -1688,6 +1688,89 @@ async def _guided_turn(db: Session, conversation, run, text: str, model, base_se
                               usage=usage)
 
 
+_TASK_TITLE_SKIP = re.compile(
+    r"^(开始生成|第\s*\d+\s*款|都保留|重新生成.*|你好|您好|hi|hello)[!！。.\s]*$", re.I)
+
+
+def _auto_title(db: Session, conversation) -> str:
+    rows = db.scalars(select(models.AgentMessage).where(
+        models.AgentMessage.conversation_id == conversation.id,
+        models.AgentMessage.role == "user").order_by(models.AgentMessage.seq)).all()
+    for item in rows:
+        text = _clean_reply(item.content).strip().replace("\n", " ")
+        if len(text) >= 6 and not _TASK_TITLE_SKIP.match(text):
+            return text[:28]
+    if rows:
+        return _clean_reply(rows[0].content).strip().replace("\n", " ")[:28] or "新任务"
+    return "新任务"
+
+
+def _conversation_updated(db: Session, conversation):
+    last = db.scalars(select(models.AgentMessage).where(
+        models.AgentMessage.conversation_id == conversation.id).order_by(
+        models.AgentMessage.seq.desc())).first()
+    return last.created_at if last else conversation.created_at
+
+
+def conversation_summary(db: Session, conversation) -> dict:
+    state = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state.data or {}) if state else {}
+    title = str(data.get("title") or "").strip() or _auto_title(db, conversation)
+    updated = _conversation_updated(db, conversation)
+    count = db.scalar(select(func.count()).select_from(models.AgentMessage).where(
+        models.AgentMessage.conversation_id == conversation.id)) or 0
+    return {"conversation_id": conversation.id, "title": title,
+            "stage": state.stage if state else "intake",
+            "pinned": bool(data.get("pinned")),
+            "message_count": int(count),
+            "updated_at": updated.isoformat() if updated else "",
+            "updated_ts": updated.timestamp() if updated else 0}
+
+
+def list_conversations(db: Session, limit: int = 50) -> dict:
+    rows = db.scalars(select(models.AgentConversation).order_by(
+        models.AgentConversation.created_at.desc()).limit(200)).all()
+    items = [conversation_summary(db, conversation) for conversation in rows]
+    items.sort(key=lambda item: (0 if item["pinned"] else 1,
+                                 -float(item["updated_ts"] or 0)))
+    return {"conversations": items[:max(1, min(int(limit or 50), 100))]}
+
+
+def update_conversation(db: Session, conversation, *, title=None, pinned=None) -> dict:
+    state = _task_state(db, conversation)
+    data = dict(state.data or {})
+    if title is not None:
+        value = str(title).strip()[:60]
+        if value:
+            data["title"] = value
+    if pinned is not None:
+        data["pinned"] = bool(pinned)
+    state.data = data
+    db.flush()
+    return conversation_summary(db, conversation)
+
+
+def delete_conversation(db: Session, conversation) -> None:
+    run_ids = select(models.AgentRun.id).where(
+        models.AgentRun.conversation_id == conversation.id)
+    artifact_ids = select(models.AgentArtifact.id).where(
+        models.AgentArtifact.conversation_id == conversation.id)
+    db.execute(delete(models.AgentToolExecution).where(
+        models.AgentToolExecution.run_id.in_(run_ids)))
+    db.execute(delete(models.AgentArtifactRevision).where(
+        models.AgentArtifactRevision.artifact_id.in_(artifact_ids)))
+    db.execute(delete(models.AgentArtifact).where(
+        models.AgentArtifact.conversation_id == conversation.id))
+    db.execute(delete(models.AgentRun).where(
+        models.AgentRun.conversation_id == conversation.id))
+    db.execute(delete(models.AgentMessage).where(
+        models.AgentMessage.conversation_id == conversation.id))
+    db.execute(delete(models.AgentTaskState).where(
+        models.AgentTaskState.conversation_id == conversation.id))
+    db.delete(conversation)
+    db.flush()
+
+
 def run_payload(db: Session, run: models.AgentRun) -> dict:
     messages = db.scalars(select(models.AgentMessage).where(
         models.AgentMessage.conversation_id == run.conversation_id).order_by(
@@ -1720,8 +1803,8 @@ def conversation_payload(db: Session, conversation: models.AgentConversation) ->
                               "check": latest.check_status if latest else None,
                               "content_hash": latest.content_hash if latest else ""})
     state = db.get(models.AgentTaskState, conversation.id)
-    return {"conversation_id": conversation.id, "revision": conversation.revision,
-            "stage": state.stage if state else "intake",
+    summary = conversation_summary(db, conversation)
+    return {**summary, "revision": conversation.revision,
             "task": state.data if state else {},
             "messages": [{"role": item.role,
                           "content": _clean_reply(item.content) if item.role == "assistant" else item.content,

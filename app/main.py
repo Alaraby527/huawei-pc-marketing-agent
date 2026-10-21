@@ -706,6 +706,11 @@ def v2_db():
         session.close()
 
 
+@app.get("/api/v2/conversations")
+def v2_list_conversations(limit: int = 50, db=Depends(v2_db)):
+    return agent_runtime.list_conversations(db, limit)
+
+
 @app.post("/api/v2/conversations")
 def v2_create_conversation(payload: dict | None = None, db=Depends(v2_db)):
     payload = payload or {}
@@ -747,6 +752,32 @@ def v2_get_conversation(conversation_id: str, db=Depends(v2_db)):
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
     return agent_runtime.conversation_payload(db, conversation)
+
+
+@app.patch("/api/v2/conversations/{conversation_id}")
+def v2_update_conversation(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    payload = payload or {}
+    if "title" not in payload and "pinned" not in payload:
+        raise HTTPException(status_code=400, detail={"code": "NOTHING_TO_UPDATE",
+                                                     "message": "只支持 title 和 pinned"})
+    return agent_runtime.update_conversation(
+        db, conversation,
+        title=payload.get("title") if "title" in payload else None,
+        pinned=payload.get("pinned") if "pinned" in payload else None)
+
+
+@app.delete("/api/v2/conversations/{conversation_id}")
+def v2_delete_conversation(conversation_id: str, db=Depends(v2_db)):
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    agent_runtime.delete_conversation(db, conversation)
+    return {"deleted": conversation_id}
 
 
 @app.post("/api/v2/runs/{run_id}/cancel")

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.0 — 2026-10-21
+
+### Added
+
+- **Real task history**: the sidebar now lists backend v2 conversations (`GET /api/v2/conversations`) with auto titles, stage, message count and last-updated time. Clicking a task restores its messages, artifacts, candidates, plan and images, so multi-turn work actually continues.
+- **Task menu (⋯)**: pin/unpin (pinned tasks stay on top), rename, and delete (also removes messages, runs, artifacts, revisions, tool executions and task state server-side).
+- `PATCH /api/v2/conversations/{id}` and `DELETE /api/v2/conversations/{id}`.
+
+### Changed
+
+- The sidebar no longer stores one localStorage entry per message; localStorage is only an offline fallback.
+- Auto titles skip greetings and short commands, using the first substantive user message.
+
 ## 0.15.0 — 2026-10-20
 
 ### Added

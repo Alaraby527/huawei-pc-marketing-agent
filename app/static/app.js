@@ -65,21 +65,31 @@
     setTimeout(() => node.remove(), 2600);
   }
 
-  function readTasks() {
+  let taskCache = [];
+  let taskMenuId = null;
+
+  function readLocalTasks() {
     try {
       const stored = JSON.parse(localStorage.getItem(TASKS_KEY) || '[]');
-      return Array.isArray(stored) ? stored : [];
+      return Array.isArray(stored) ? stored.map(item => ({
+        conversation_id: item.id, title: item.title, updated_ts: (item.updated || 0) / 1000,
+        pinned: false,
+      })) : [];
     } catch (error) {
       return [];
     }
   }
 
-  function writeTasks(tasks) {
+  async function loadTasks() {
     try {
-      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks.slice(0, 20)));
+      const response = await fetch('/api/v2/conversations?limit=50');
+      if (!response.ok) throw new Error('task-list');
+      const data = await response.json();
+      taskCache = Array.isArray(data.conversations) ? data.conversations : [];
     } catch (error) {
-      // Task history is a convenience; the chat still works without storage.
+      taskCache = readLocalTasks();
     }
+    renderTasks();
   }
 
   function relativeTime(value) {
@@ -90,28 +100,73 @@
     return Math.round(seconds / 86400) + ' 天前';
   }
 
-  function saveTask() {
-    if (!sessionId) return;
-    const existing = readTasks().find(task => task.id === sessionId);
-    const title = (lastUserText || (existing && existing.title) || '新任务')
-      .replace(/\s+/g, ' ').slice(0, 22) || '新任务';
-    const tasks = readTasks().filter(task => task.id !== sessionId);
-    tasks.unshift({ id: sessionId, title, updated: Date.now() });
-    writeTasks(tasks);
-    renderTasks();
-  }
-
   function renderTasks() {
     const wrap = $('task-list');
-    const tasks = readTasks();
-    if (!tasks.length) {
+    if (!taskCache.length) {
       wrap.innerHTML = '<p class="hint">暂无任务</p>';
       return;
     }
-    wrap.innerHTML = tasks.map(task =>
-      '<button type="button" class="task-item' + (task.id === sessionId ? ' active' : '') +
-      '" data-task="' + escapeHtml(task.id) + '"><span class="task-title">' + escapeHtml(task.title) +
-      '</span><span class="task-time">' + relativeTime(task.updated) + '</span></button>').join('');
+    wrap.innerHTML = taskCache.map(task => {
+      const id = escapeHtml(task.conversation_id || '');
+      const pinned = task.pinned ? '<span class="task-pin" title="已置顶">📌</span> ' : '';
+      const updated = task.updated_ts ? relativeTime(task.updated_ts * 1000) : '';
+      return '<div class="task-item' + (id === sessionId ? ' active' : '') + '">' +
+        '<button type="button" class="task-main" data-open="' + id + '">' +
+        '<span class="task-title">' + pinned + escapeHtml(task.title || '新任务') + '</span>' +
+        '<span class="task-time">' + updated + '</span></button>' +
+        '<button type="button" class="task-more" data-menu="' + id + '" aria-label="任务菜单">⋯</button>' +
+        '</div>';
+    }).join('');
+  }
+
+  function hideTaskMenu() {
+    const menu = $('task-menu');
+    menu.hidden = true;
+    menu.innerHTML = '';
+    taskMenuId = null;
+  }
+
+  function showTaskMenu(id, anchor) {
+    const task = taskCache.find(item => item.conversation_id === id);
+    if (!task) return;
+    taskMenuId = id;
+    const menu = $('task-menu');
+    menu.innerHTML =
+      '<button type="button" data-task-action="pin">' + (task.pinned ? '取消置顶' : '置顶任务') + '</button>' +
+      '<button type="button" data-task-action="rename">重命名</button>' +
+      '<button type="button" class="danger" data-task-action="delete">删除任务</button>';
+    menu.hidden = false;
+    const rect = anchor.getBoundingClientRect();
+    const width = 140;
+    const left = Math.max(8, rect.right - width);
+    let top = rect.bottom + 4;
+    if (top + 132 > window.innerHeight) top = Math.max(8, rect.top - 132);
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+  }
+
+  async function patchTask(id, body) {
+    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      toast('操作失败，请重试');
+      return false;
+    }
+    await loadTasks();
+    return true;
+  }
+
+  async function deleteTask(id) {
+    if (!confirm('删除这个任务？删除后无法恢复。')) return;
+    const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (!response.ok) {
+      toast('删除失败，请重试');
+      return;
+    }
+    if (sessionId === id) newTask();
+    await loadTasks();
+    toast('任务已删除');
   }
 
   function newTask() {
@@ -131,7 +186,8 @@
     $('cover-result').hidden = true;
     $('publish-state').textContent = '尚未通过核验，不可发布';
     $('publish-state').className = '';
-    renderTasks();
+    hideTaskMenu();
+    loadTasks();
     switchView('chat');
     input.value = '';
     sendBtn.disabled = true;
@@ -146,23 +202,37 @@
       return;
     }
     try {
-      const response = await fetch('/api/v1/conversations/' + encodeURIComponent(id) + '/state');
+      const response = await fetch('/api/v2/conversations/' + encodeURIComponent(id));
       if (!response.ok) {
-        toast('任务已过期，请新建任务');
+        toast('任务不存在或已删除');
+        await loadTasks();
         return;
       }
-      const result = await response.json();
+      const conversation = await response.json();
+      const visible = (conversation.messages || []).filter(item =>
+        (item.role === 'user' || item.role === 'assistant') &&
+        !(item.role === 'assistant' && (!item.content || item.content.startsWith('{"__tool_calls__'))));
+      if (!visible.length && !(conversation.artifacts || []).length) {
+        toast('这个任务还没有内容');
+        return;
+      }
       sessionId = id;
-      lastUserText = ((result.slots && result.slots.instructions) || '').split('\n')[0];
-      chatLog.innerHTML = WELCOME_HTML;
-      (result.history || []).forEach(item => {
-        if (item && item.text) {
-          addMessage(item.role === 'operator' ? 'operator' : 'assistant',
-            '<p>' + escapeHtml(item.text) + '</p>');
-        }
-      });
-      render(result);
+      lastResult = null;
+      lastUserText = [...visible].reverse().find(item => item.role === 'user')?.content || '';
+      chatLog.innerHTML = '';
+      visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
+        '<p>' + escapeHtml(item.content || '').replace(/\n/g, '<br>') + '</p>'));
+      const task = conversation.task || {};
+      if (task.candidates && conversation.stage === 'select_product') {
+        renderV2Candidates(task.candidates);
+      } else if (task.plan && conversation.stage === 'confirm_plan' &&
+                 !(conversation.artifacts || []).length) {
+        renderV2Plan(task.plan, task.selected);
+      }
+      if ((conversation.artifacts || []).length) renderV2Artifact(conversation);
+      if (task.images && task.images.length) renderV2Images(task.images);
       switchView('chat');
+      await loadTasks();
     } catch (error) {
       toast('任务加载失败，请重试');
     }
@@ -297,7 +367,7 @@
         '<span class="fact-chip">' + escapeHtml(id) + '</span>').join('') + '</div>' : '') +
       '</article>').join('');
     switchTab('plan');
-    saveTask();
+    loadTasks();
   }
 
   function renderV2Candidates(candidates) {
@@ -412,6 +482,7 @@
       turnInFlight = false;
       setBusy(false);
       sendBtn.disabled = !input.value.trim();
+      loadTasks();
     }
   }
 
@@ -437,7 +508,7 @@
       switchTab('plan');
     }
     if (result.slots) loadHotspots(result.slots);
-    saveTask();
+    loadTasks();
   }
 
   function traceHtml(result) {
@@ -1350,8 +1421,38 @@
 
   $('new-task').addEventListener('click', newTask);
   $('task-list').addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-task]');
-    if (button) openTask(button.dataset.task);
+    const more = event.target.closest('[data-menu]');
+    if (more) {
+      event.stopPropagation();
+      showTaskMenu(more.getAttribute('data-menu'), more);
+      return;
+    }
+    const open = event.target.closest('[data-open]');
+    if (open) {
+      hideTaskMenu();
+      openTask(open.getAttribute('data-open'));
+    }
+  });
+  $('task-list').addEventListener('scroll', hideTaskMenu);
+  $('task-menu').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-task-action]');
+    if (!button || !taskMenuId) return;
+    const action = button.getAttribute('data-task-action');
+    const id = taskMenuId;
+    const task = taskCache.find(item => item.conversation_id === id);
+    hideTaskMenu();
+    if (action === 'pin') {
+      await patchTask(id, { pinned: !(task && task.pinned) });
+    } else if (action === 'rename') {
+      const name = prompt('任务名称', (task && task.title) || '新任务');
+      if (name && name.trim()) await patchTask(id, { title: name.trim() });
+    } else if (action === 'delete') {
+      await deleteTask(id);
+    }
+  });
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('#task-menu') || event.target.closest('[data-menu]')) return;
+    hideTaskMenu();
   });
   $('work-toggle').addEventListener('click', () => {
     setWorkPanel($('work-panel').classList.contains('collapsed'));
@@ -1383,7 +1484,7 @@
   }
   setWorkPanel(workPanelOpen);
   renderWorkTabs(selectedPlatform);
-  renderTasks();
+  loadTasks();
 
   window.AgentApp = { getSessionId: () => sessionId, getHotTopics: () => hotTopics, switchView };
 
