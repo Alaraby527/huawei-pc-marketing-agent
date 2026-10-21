@@ -1726,6 +1726,9 @@ def conversation_summary(db: Session, conversation) -> dict:
     count = db.scalar(select(func.count()).select_from(models.AgentMessage).where(
         models.AgentMessage.conversation_id == conversation.id)) or 0
     return {"conversation_id": conversation.id, "title": title,
+            # Which runner produced this task, so guided and langgraph_autonomous_v1
+            # conversations can be told apart in the list.
+            "runner_version": conversation.runner_version,
             "stage": state.stage if state else "intake",
             "pinned": bool(data.get("pinned")),
             "message_count": int(count),

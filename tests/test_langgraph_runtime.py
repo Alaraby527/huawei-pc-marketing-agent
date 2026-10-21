@@ -998,3 +998,13 @@ def test_real_refusal_phrasings_are_recognised():
     claim = "这台机器有 64GB 内存。"
     start = claim.index("64GB")
     assert is_refusal_context(claim, start, start + 4) is False
+
+
+def test_task_list_reports_the_runner_version(monkeypatch):
+    """The list must say which runner a task used, so modes can be compared."""
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    _send(cid, "写个标题")
+    listing = client.get("/api/v2/conversations?limit=50").json()["conversations"]
+    item = next(row for row in listing if row["conversation_id"] == cid)
+    assert item["runner_version"] == RUNNER_VERSION
