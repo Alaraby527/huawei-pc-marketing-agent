@@ -43,6 +43,29 @@
   `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
   so it is neither retried blindly nor reported as a success.
 
+### Fixed
+
+- **The model deadline now bounds the whole exchange.** `urllib`'s timeout is per socket
+  operation, so a gateway that trickles bytes inside that window reset it forever, and
+  the previous body reader only started once the response headers had arrived. A real
+  request hung for 527 s with `LLM_TIMEOUT=120`. The chat calls now use `http.client`
+  with a watchdog that `shutdown()`s the socket at the deadline (verified against a
+  trickling server). A caller-side cap also bounds the worker path.
+- A client disconnect no longer leaves a run stuck in `running`: `CancelledError` is a
+  `BaseException`, so the previous handler missed it. Such a run now ends as
+  `needs_reconciliation` / `client_disconnected`.
+- The composer's knowledge-base pill and the context menu no longer claim
+  "官方知识库 · 已连接" unconditionally; they follow
+  `GET /api/v1/knowledge/connection`, and the user-facing tooltip no longer repeats the
+  server's configuration hint.
+- **Fabricated first-person experience and unverified numbers in delivered prose are
+  now flagged** (`app/runtime/content_policy.py`). The platform rules already forbade
+  invented experience, but nothing enforced it: grounding only inspects numeric claims
+  bound to a product record, and only for a saved artifact. Real testing produced a
+  first-person story and a 14-inch claim while the knowledge base was down. Such a
+  delivery now ends as `partial` with `unverified_experience` / `unverified_numbers`
+  reported and an honest notice appended.
+
 ### Changed
 
 - New conversations default to `langgraph_autonomous_v1`; `guided` and `autonomous`

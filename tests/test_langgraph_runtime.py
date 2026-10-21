@@ -811,6 +811,41 @@ def test_client_disconnect_does_not_leave_a_running_run(monkeypatch):
     session.close()
 
 
+def test_fabricated_first_person_experience_is_flagged(monkeypatch):
+    """Real testing produced a first-person story with the KB down; it must not ship
+    as verified content."""
+    _script(monkeypatch, [{"content":
+                           "背了三年游戏本上班，今年终于换回 MateBook 14 了。"
+                           "14 英寸塞包里不占地。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写一篇办公场景的小红书").json()
+    assert data["status"] == "partial"
+    assert "第一人称使用叙述" in data["reply"]
+    markers = [item for item in (data.get("unverified_experience") or [])]
+    assert markers, "the fabricated experience markers should be reported"
+
+
+def test_unverified_numbers_are_flagged_when_the_kb_is_unavailable(monkeypatch):
+    """Without evidence, a spec claim in prose must not be presented as verified."""
+    _script(monkeypatch, [{"content": "这台机器 14 英寸，重 1.33 kg，很合适。",
+                           "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "说说这台机器").json()
+    assert data["status"] == "partial"
+    assert "未经核实" in data["reply"]
+    assert data.get("unverified_numbers")
+
+
+def test_clean_creative_copy_is_not_flagged(monkeypatch):
+    """The guard must not fire on ordinary creative copy."""
+    _script(monkeypatch, [{"content": "给你 3 个校园选题方向，7 天后再发。",
+                           "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "给标题").json()
+    assert data["status"] == "completed"
+    assert "提示：" not in data["reply"]
+
+
 # ---------------------------------------------------------------- checkpoint privacy
 
 def test_checkpoint_holds_references_not_secrets(monkeypatch):

@@ -336,11 +336,17 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
 
     totals = ledger.usage_totals(db, conversation.id)
     payload = dict(state or {})
+    candidate = payload.get("output_candidate") or {}
+    # Surface *why* a delivery was flagged, so the operator surface and the UI do not
+    # have to re-derive it from the prose.
     agent_runtime._event(run, "run_result", runner_version=RUNNER_VERSION,
                          status=status, usage=totals,
                          artifact=payload.get("artifact_ref"),
                          candidates=payload.get("candidates") or [],
                          images=payload.get("images") or [],
+                         unverified_experience=candidate.get("unverified_experience") or [],
+                         unverified_numbers=candidate.get("unverified_numbers") or [],
+                         corrected=candidate.get("corrected") or "",
                          actions=list((payload.get("pending_question") or {}).get("options")
                                       or []) if status == STATUS_WAITING_USER else [])
     agent_runtime._event(run, "run_finished", status=status, stop_reason=telemetry)

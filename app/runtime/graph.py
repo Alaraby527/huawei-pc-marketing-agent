@@ -25,6 +25,8 @@ from langgraph.types import interrupt
 from .. import agent_runtime
 from . import ledger
 from .context import RuntimeContext
+from .content_policy import (EXPERIENCE_NOTICE, UNVERIFIED_NUMBER_NOTICE,
+                             fabricated_experience, unverified_product_numbers)
 from .errors import error_marker, public_error
 from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
                     STATUS_NEEDS_RECONCILIATION, STATUS_PARTIAL, STATUS_RUNNING,
@@ -230,12 +232,28 @@ def build_graph(saver, ctx: RuntimeContext):
                     reply = (reply + " 交付物未通过事实检查，已保留为待修正版本。" +
                              (detail or ""))
                     candidate["check"] = check
+
             if reply:
                 violation = _reply_fact_violation(ctx, reply)
                 if violation:
                     status = STATUS_PARTIAL
                     reply = violation["reply"]
                     candidate["corrected"] = violation["detail"]
+
+            if reply:
+                # Fabricated lived experience is forbidden by the platform rules but was
+                # never enforced. Flag it instead of shipping it as verified content.
+                markers = fabricated_experience(reply)
+                if markers:
+                    status = STATUS_PARTIAL
+                    candidate["unverified_experience"] = markers
+                    reply = reply + "\n\n" + EXPERIENCE_NOTICE
+                elif not ctx.tool_ctx.evidence_read:
+                    numbers = unverified_product_numbers(reply)
+                    if numbers:
+                        status = STATUS_PARTIAL
+                        candidate["unverified_numbers"] = numbers
+                        reply = reply + "\n\n" + UNVERIFIED_NUMBER_NOTICE
 
         candidate["reply"] = reply
         return {"status": status, "output_candidate": candidate,

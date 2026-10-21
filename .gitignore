@@ -18,6 +18,8 @@ data/*.zip
 # LangGraph runtime checkpoints (local execution store, never committed)
 agent_checkpoints.sqlite
 
-# local runtime databases (created by running the app; never committed)
+# local runtime databases and their sqlite sidecar files (never committed)
 data/*.db
+data/*.db-*
 data/*.sqlite
+data/*.sqlite-*

@@ -106,9 +106,24 @@ START → decide ──工具──→ execute_tools ──┐
 `needs_reconciliation`，`stop_reason=orphaned_by_restart`。这类运行的上游结果未知，
 既不自动重试，也不记为成功。
 
+## 8.1 时限与断连（实测后加固）
+
+- **总时限覆盖连接+响应头+响应体。** `urllib` 的 `timeout` 是单次 socket 操作超时，网关在窗口内滴流一个字节就能让它永不过期；而原来的响应体读取只在响应头到达之后才开始，所以连接与响应头阶段完全没有时限。实测曾出现 `LLM_TIMEOUT=120` 下挂起 **527 秒**。现在 `app/model.py` 用 `http.client` + 看门狗，在到期时 `shutdown(SHUT_RDWR)` 切断连接（只 `close()` 无法唤醒阻塞读）。
+- 调用侧另有一道上限（`asyncio.wait`，不是 `wait_for`：后者会等被取消的线程结束），它约束**异步 worker 路径**；阻塞 HTTP 路径由传输层时限约束，因为 `BaseHTTPMiddleware` 的 anyio task group 在退出时会等待被放弃的任务。
+- 客户端断开由 `CancelledError` 处理（它是 `BaseException`，`except Exception` 抓不到），运行会落到 `needs_reconciliation / client_disconnected`，不再永久停在 `running`。
+- 注意：被放弃的阻塞线程会让该事件循环的关闭等待其结束；因为传输层时限已经生效，这个等待是有界的。
+
+## 8.2 内容围栏（`app/runtime/content_policy.py`）
+
+确定性检查，不依赖提示词自觉：
+
+- **第一人称使用叙述**（"亲测/我用了/背了三年"等）→ 标记 `unverified_experience`，状态降为 `partial`，并追加"属于未核实的创作表达，不能作为真实体验发布"。
+- **无证据时的产品数字声明** → 标记 `unverified_numbers`，状态降为 `partial`，并追加"知识库当前不可用，以上数字未经核实"。
+- 已知假阳性：模型**拒绝**写某个数字时（"64GB 这个数字我不能写"）该数字也会被标记。这是偏保守的方向——不放过，但会带来噪音，后续可区分"断言"与"拒绝"。
+
 ## 9. 验证状态
 
-已在本机 Python 3.12 隔离环境验证：**220 项测试通过**（180 项基线 legacy 合同 + 40 项新增图机制测试），且
+已在本机 Python 3.12 隔离环境验证：**229 项测试通过**（180 项基线 legacy 合同 + 49 项新增/扩展测试），且
 全量连跑多次稳定；`node --check` 通过；真实 uvicorn 冒烟通过（新会话默认 LG、验重 200/409、异步 202 +
 worker 执行到终态、SSE 事件流、删除清空 checkpoint、重启孤儿恢复）。更新后的 `requirements.lock` 在一个全新 venv 里
 从零安装后同样全部通过。
