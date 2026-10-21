@@ -157,6 +157,43 @@ def record_attempt(db: Session, *, conversation_id: str, run_id: str, decision_i
     return attempt
 
 
+def save_fingerprint(db: Session, *, conversation_id: str, run_id: str, workspace_id: str,
+                     artifact_id: str, sketch: dict) -> None:
+    """Register delivered content in the content memory (idempotent per run)."""
+    existing = db.scalars(select(models.AgentContentFingerprint).where(
+        models.AgentContentFingerprint.run_id == run_id)).first()
+    if existing:
+        return
+    db.add(models.AgentContentFingerprint(
+        conversation_id=conversation_id, run_id=run_id, workspace_id=workspace_id or "default",
+        artifact_id=artifact_id or "", algorithm=str(sketch.get("algorithm") or ""),
+        normalized_sha256=str(sketch.get("normalized_sha256") or ""),
+        length=int(sketch.get("length") or 0), shingles=int(sketch.get("shingles") or 0),
+        minhash=list(sketch.get("minhash") or [])))
+
+
+def recent_fingerprints(db: Session, *, workspace_id: str, exclude_run_id: str,
+                        limit: int = 200) -> list[dict[str, Any]]:
+    """Fingerprints already in the content memory for this workspace, newest first."""
+    rows = db.scalars(select(models.AgentContentFingerprint).where(
+        models.AgentContentFingerprint.workspace_id == (workspace_id or "default"),
+        models.AgentContentFingerprint.run_id != exclude_run_id).order_by(
+        models.AgentContentFingerprint.created_at.desc()).limit(limit)).all()
+    return [{"id": row.id, "run_id": row.run_id, "conversation_id": row.conversation_id,
+             "normalized_sha256": row.normalized_sha256, "algorithm": row.algorithm,
+             "minhash": list(row.minhash or [])} for row in rows]
+
+
+def attempts_for_run(db: Session, run_id: str) -> int:
+    """How many model requests this run has already made.
+
+    Includes failed attempts and fallbacks, because the plan requires every provider
+    retry, fallback and structured-repair call to count against the same budget.
+    """
+    return int(db.scalar(select(func.count()).select_from(models.AgentModelAttempt)
+                         .where(models.AgentModelAttempt.run_id == run_id)) or 0)
+
+
 def usage_totals(db: Session, conversation_id: str) -> dict[str, Any]:
     """Aggregate usage while keeping unknown separate from a measured zero."""
     rows = db.scalars(select(models.AgentModelAttempt).where(

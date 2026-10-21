@@ -4,6 +4,28 @@
 
 ### Added
 
+- **Independent review pass** (`review` graph node, plan G7/T08). It runs on the finalised
+  text with its own context — the delivered copy plus the allowed facts and conditions,
+  never the author's conversation or self-assessment — and it checks the whole text rather
+  than only the claims the author labelled. Blocking findings (`high`) or a `block` /
+  `needs_input` / `human_review` / `choose_new_plan` verdict end the run as `partial` with
+  an honest notice; advisory findings are recorded without failing the delivery. Real
+  output: it caught that a closing "告诉我主推哪款…" line is requester-facing meta-discourse
+  that must not ship inside customer-facing copy.
+- **Delivery state is now separated from task state.** `completed` never means approved:
+  the run reports `content_status` (`review_ready` / `review_required` / `research_draft`)
+  and `can_publish: false`. A review that did not run cannot be reported as `review_ready`.
+- **Shadow-mode content memory for near-duplicate evidence** (`app/runtime/dedup.py`,
+  `agent_content_fingerprints`). Delivered text is registered at delivery (not only at
+  publication) as a normalised digest plus a 64-permutation MinHash sketch. It records
+  exact and near matches and **blocks nothing**: no threshold is applied, because an
+  uncalibrated score must not decide anything. Scope is a single workspace — cross-store
+  authorisation is not implemented and is not claimed. Real output: a second identical
+  request compared against 1 prior delivery, similarity 0.0.
+- Tool-call ceiling (`LG_MAX_TOOL_CALLS`, default 12): the model-call cap did not bound
+  tool fan-out. Exceeding it ends the run as `partial` with a stated reason.
+
+
 - **LangGraph autonomous runner** (`langgraph_autonomous_v1`) as the default for new
   conversations: one generic loop (`decide → execute_tools | wait_for_user → decide →
   finalize`) where the main model decides whether to ask, query, write, revise or

@@ -55,6 +55,31 @@ SYSTEM_PROMPT = """你是华为 PC 营销内容助手。使用者表达目标，
 
 表达方式：像合作的人，少讲槽位和工作流；不要向用户输出原始协议 JSON 或隐藏推理。"""
 
+# Independent reviewer (plan G7 / T08). Its context is deliberately separate: it sees the
+# delivered text and the allowed facts, never the author's reasoning or self-assessment,
+# and it checks the whole text rather than only the claims the author chose to label.
+REVIEWER_SYSTEM_PROMPT = """你是独立审校，负责检查，不负责说服自己这篇已经很好。
+
+你拿到的是一篇即将交付的对外文案，以及本次允许使用的事实与限定条件。逐项检查：
+
+1. 型号、配置、数字、功能、价格、活动和必要条件有没有证据支持；条件有没有实质性遗漏。
+2. 有没有虚构的个人经历、顾客故事、测试结果，或无依据的效果保证。
+3. 研究材料或社会讨论有没有被当成产品事实；热点与产品有没有实质联系。
+4. 标题、正文、标签、配图短句之间是否一致，有没有未标注的新主张。
+5. 是否有跨配置外推，或把“适合某类任务”写成“兼容所有软件”。
+
+不要因为正确的型号、参数或必要条款就判定整篇有问题。只报你确实能指出位置和依据的问题。
+对每个问题给出：原文短摘录、严重性（low/medium/high）、判断依据、建议动作
+（pass/edit_local/choose_new_plan/needs_input/block/human_review）。
+证据不足时不要写“已核实”。
+
+只输出一个 JSON 对象，不要代码围栏：
+{"verdict":"pass|edit_local|choose_new_plan|needs_input|block|human_review",
+ "issues":[{"excerpt":"原文片段","severity":"low|medium|high",
+            "reason":"为什么是问题","action":"建议动作"}],
+ "checked":["你实际核对过的项目"]}
+没有任何问题时 issues 为空数组、verdict 为 pass。"""
+
 SCHEMA_HINT = "只输出一个 JSON 对象；action 必须是 tool/ask/reply 之一；工具名必须来自 tools。"
 
 

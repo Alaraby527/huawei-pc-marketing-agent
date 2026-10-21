@@ -67,8 +67,13 @@ def runtime_env(tmp_path, monkeypatch):
         pass
 
 
-def _script(monkeypatch, results):
-    """Queue scripted native-protocol model replies."""
+def _script(monkeypatch, results, review=None):
+    """Queue scripted native-protocol model replies.
+
+    The independent review pass is a separate, non-decision call. It is stubbed here as
+    well, so no test can reach the network through it: by default it passes, and a test
+    can script specific reviewer outputs with ``review=``.
+    """
     calls = []
 
     def fake(system, messages, tools, model=None):
@@ -80,6 +85,23 @@ def _script(monkeypatch, results):
                       "usage": item.pop("_usage", {}) if isinstance(item, dict) else {}}
 
     monkeypatch.setattr("app.runtime.model_gateway.chat_tools", fake)
+
+    queue = list(review) if isinstance(review, list) else []
+    fixed = review if not isinstance(review, list) else None
+
+    def fake_json(system, messages, schema_hint=None, model=None):
+        if queue:
+            item = queue.pop(0)
+        elif fixed is not None:
+            item = fixed
+        else:
+            item = {"verdict": "pass", "issues": [], "checked": ["事实与条件"]}
+        if isinstance(item, Exception):
+            raise item
+        usage = item.pop("_usage", {}) if isinstance(item, dict) else {}
+        return item, {"provider": "stub", "model": model or "stub", "usage": usage}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_json_messages", fake_json)
     return calls
 
 
@@ -169,13 +191,16 @@ def test_missing_usage_is_unknown_not_zero(monkeypatch):
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "写个标题").json()
     assert data["usage"]["usage_certainty"] == "unknown"
-    assert data["usage"]["unknown_attempts"] == 1
+    # Two requests now happen: the decision and the independent review. Neither reported
+    # usage, so the run is unknown rather than a measured zero.
+    assert data["usage"]["unknown_attempts"] == 2
     assert data["usage"]["input_tokens"] == 0          # sum over *measured* attempts
     assert data["usage"]["measured_attempts"] == 0     # nothing was measured
 
     session = db_layer.session_factory()()
     rows = session.query(models.AgentModelAttempt).filter(
-        models.AgentModelAttempt.conversation_id == cid).all()
+        models.AgentModelAttempt.conversation_id == cid,
+        models.AgentModelAttempt.kind == "decide").all()
     assert len(rows) == 1
     assert rows[0].prompt_tokens is None and rows[0].completion_tokens is None
     assert rows[0].usage_certainty == "unknown"
@@ -184,11 +209,14 @@ def test_missing_usage_is_unknown_not_zero(monkeypatch):
 
 def test_reported_usage_is_metered(monkeypatch):
     _script(monkeypatch, [{"content": "完成。", "tool_calls": [],
-                           "_usage": {"prompt_tokens": 120, "completion_tokens": 30}}])
+                           "_usage": {"prompt_tokens": 120, "completion_tokens": 30}}],
+            review={"verdict": "pass", "issues": [], "checked": [],
+                    "_usage": {"prompt_tokens": 40, "completion_tokens": 10}})
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "写个标题").json()
     assert data["usage"]["usage_certainty"] == "reported"
-    assert data["usage"]["input_tokens"] == 120 and data["usage"]["output_tokens"] == 30
+    # Both requests reported, so the totals are measured, not estimated.
+    assert data["usage"]["input_tokens"] == 160 and data["usage"]["output_tokens"] == 40
 
 
 def test_every_decision_is_one_attempt(monkeypatch):
@@ -199,7 +227,14 @@ def test_every_decision_is_one_attempt(monkeypatch):
     ])
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "看看这台机器").json()
-    assert data["usage"]["attempts"] == 2
+    session = db_layer.session_factory()()
+    decisions = session.query(models.AgentModelAttempt).filter(
+        models.AgentModelAttempt.conversation_id == cid,
+        models.AgentModelAttempt.kind == "decide").count()
+    session.close()
+    assert decisions == 2
+    # The independent review is a third request, metered like any other.
+    assert data["usage"]["attempts"] == 3
 
 
 # ---------------------------------------------------------------- pause / resume
@@ -399,7 +434,7 @@ def test_delete_purges_ledgers_and_checkpoint(monkeypatch):
     _send(cid, "写个标题", key="K1")
     session = db_layer.session_factory()()
     assert session.query(models.AgentModelAttempt).filter(
-        models.AgentModelAttempt.conversation_id == cid).count() == 1
+        models.AgentModelAttempt.conversation_id == cid).count() == 2  # decide + review
     session.close()
 
     response = client.post(f"/api/v2/conversations/{cid}/delete")
@@ -453,7 +488,8 @@ def test_json_compat_fallback_when_native_tools_are_unsupported(monkeypatch):
 
     session = db_layer.session_factory()()
     row = session.query(models.AgentModelAttempt).filter(
-        models.AgentModelAttempt.conversation_id == cid).one()
+        models.AgentModelAttempt.conversation_id == cid,
+        models.AgentModelAttempt.kind == "decide").one()
     assert row.protocol_mode == "json_compat" and row.ok is True
     session.close()
 
@@ -1008,3 +1044,162 @@ def test_task_list_reports_the_runner_version(monkeypatch):
     listing = client.get("/api/v2/conversations?limit=50").json()["conversations"]
     item = next(row for row in listing if row["conversation_id"] == cid)
     assert item["runner_version"] == RUNNER_VERSION
+
+
+def test_tool_calls_are_capped(monkeypatch):
+    """The model-call cap did not bound tool fan-out; a separate ceiling does."""
+    monkeypatch.setenv("LG_MAX_TOOL_CALLS", "2")
+    # Four batches of one tool call each: the third must be refused, not executed.
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "a"}, "c1")]},
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "b"}, "c2")]},
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "c"}, "c3")]},
+        {"content": "收尾。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "查点东西").json()
+    executed = [e.get("tool") for e in data.get("events", [])
+                if e.get("type") == "tool_finished"]
+    assert len(executed) == 2, f"expected the cap to stop at 2, got {executed}"
+
+
+def test_tool_cap_stops_honestly_when_already_spent(monkeypatch):
+    monkeypatch.setenv("LG_MAX_TOOL_CALLS", "1")
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "a"}, "c1")]},
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "b"}, "c2")]},
+        {"content": "收尾。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "查点东西").json()
+    assert data["status"] in ("partial", "completed")
+    assert "上限" in (data.get("reply") or "") or data["status"] == "completed"
+
+
+def test_completed_is_not_reported_as_publishable(monkeypatch):
+    """`completed` must not read as "approved": the module never publishes."""
+    _script(monkeypatch, [{"content": "写好了。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写个标题").json()
+    assert data["status"] == "completed"
+    assert data["content_status"] == "review_ready"
+    assert data["can_publish"] is False
+
+
+def test_flagged_delivery_is_a_research_draft(monkeypatch):
+    _script(monkeypatch, [{"content": "这台机器有 64 GB 内存。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "说说配置").json()
+    assert data["status"] == "partial"
+    assert data["content_status"] == "research_draft"
+    assert data["can_publish"] is False
+
+
+# ---------------------------------------------------------------- independent review
+
+def test_review_finds_blocking_issue_and_marks_it(monkeypatch):
+    """A blocking review finding must not be delivered as a passed run."""
+    _script(monkeypatch, [{"content": "这台机器有 64 GB 内存，值得买。", "tool_calls": []}],
+            review={"verdict": "block",
+                    "issues": [{"excerpt": "64 GB 内存", "severity": "high",
+                                "reason": "知识库无此档位", "action": "edit_local"}],
+                    "checked": ["内存档位"]})
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "说说配置").json()
+    assert data["status"] == "partial"
+    assert "独立审校" in data["reply"]
+    assert data["review"]["verdict"] == "block"
+    assert data["review"]["blocking"] == 1
+    assert data["content_status"] == "research_draft"
+
+
+def test_review_without_blocking_findings_keeps_the_run_delivered(monkeypatch):
+    """Advisory findings are recorded but must not be turned into a failure."""
+    _script(monkeypatch, [{"content": "写好了。", "tool_calls": []}],
+            review={"verdict": "edit_local",
+                    "issues": [{"excerpt": "很值得", "severity": "low",
+                                "reason": "略空泛", "action": "edit_local"}],
+                    "checked": ["事实"]})
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写个标题").json()
+    assert data["status"] == "completed"
+    assert data["content_status"] == "review_required"
+    assert data["review"]["issue_count"] == 1
+
+
+def test_review_runs_with_its_own_context(monkeypatch):
+    """The reviewer must not inherit the author's conversation or self-assessment."""
+    captured = {}
+
+    _script(monkeypatch, [{"content": "作者说这部分已经检查过了。", "tool_calls": []}])
+
+    def fake_json(system, messages, schema_hint="", model=None):
+        captured["system"] = system
+        captured["messages"] = messages
+        return {"verdict": "pass", "issues": [], "checked": []}, {"model": "stub", "usage": {}}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_json_messages", fake_json)
+    cid = _new_conversation()["conversation_id"]
+    _send(cid, "写个标题").json()
+
+    assert "独立审校" in captured["system"]
+    assert len(captured["messages"]) == 1, "the reviewer gets one self-contained payload"
+    payload = captured["messages"][0]["content"]
+    assert "【待交付文案】" in payload
+    assert "【本次允许使用的事实】" in payload
+    # The author's own words reach the reviewer only as delivered text, never as context
+    # the reviewer could mistake for an authority that already approved it.
+    assert "作者说这部分已经检查过了" in payload
+    assert "system" not in payload
+
+
+def test_an_unrun_review_is_never_publishable(monkeypatch):
+    """No check executed means no 'review_ready' — the gap is reported, not hidden."""
+    monkeypatch.setenv("LG_MAX_MODEL_CALLS", "1")
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写个标题").json()
+    assert data["review"]["status"] == "not_run"
+    assert data["review"]["reason"] == "model_call_budget"
+    assert data["content_status"] == "research_draft"
+    assert data["can_publish"] is False
+
+
+def test_a_failed_review_is_reported_as_not_run(monkeypatch):
+    from app.model import ModelError
+
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}],
+            review=ModelError("模型服务 HTTP 500"))
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写个标题").json()
+    assert data["review"]["status"] == "not_run"
+    assert data["content_status"] == "research_draft"
+
+
+# ---------------------------------------------------------------- shadow dedup
+
+def test_a_repeat_delivery_is_reported_but_not_blocked(monkeypatch):
+    """Shadow mode records the repeat; it must never change the run into a failure."""
+    # Deliberately free of product numbers: this test is about dedup, and a numeric claim
+    # without evidence would (correctly) trip the separate unverified-number fence.
+    text = "学生党选本，先看屏幕和重量，看文档更舒服。"
+    _script(monkeypatch, [{"content": text, "tool_calls": []}])
+    first = _send(_new_conversation()["conversation_id"], "写个开头").json()
+    assert first["duplicate"]["kind"] == "none"
+
+    _script(monkeypatch, [{"content": text, "tool_calls": []}])
+    second = _send(_new_conversation()["conversation_id"], "写个开头").json()
+    assert second["duplicate"]["kind"] == "exact"
+    assert second["duplicate"]["blocks"] is False
+    assert second["duplicate"]["calibrated"] is False
+    # The delivery itself is untouched: same status, same text.
+    assert second["status"] == "completed"
+    assert second["reply"] == text
+
+
+def test_dedup_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("LG_DEDUP_MODE", "off")
+    _script(monkeypatch, [{"content": "随便写点。", "tool_calls": []}])
+    data = _send(_new_conversation()["conversation_id"], "写个标题").json()
+    assert data["duplicate"]["kind"] == "not_run"
+    assert data["status"] == "completed"

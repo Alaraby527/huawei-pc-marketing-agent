@@ -32,6 +32,13 @@ UNVERIFIED_NUMBER_NOTICE = ("（提示：知识库当前不可用，以上数字
                             "不能作为产品参数发布。）")
 
 
+def review_notice(count: int, detail: str = "") -> str:
+    """Appended when an independent review refuses the text as-is."""
+    tail = ("：" + detail) if detail else ""
+    return (f"（独立审校发现 {count} 处需要处理{tail}。"
+            "已标记为未通过本次交付，未自动改写；请确认后再使用。）")
+
+
 def unverified_reply_notice(values) -> str:
     """Prose is flagged, never rewritten: rewriting silently changed a valid comparison."""
     listed = "、".join(str(value) for value in values if value)

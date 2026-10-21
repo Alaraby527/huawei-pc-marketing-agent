@@ -27,11 +27,13 @@ from . import ledger
 from .context import RuntimeContext
 from .content_policy import (EXPERIENCE_NOTICE, UNVERIFIED_NUMBER_NOTICE,
                              fabricated_experience, is_refusal_context,
-                             unverified_product_numbers, unverified_reply_notice)
+                             review_notice, unverified_product_numbers,
+                             unverified_reply_notice)
 from .errors import error_marker, public_error
 from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
                     STATUS_NEEDS_RECONCILIATION, STATUS_PARTIAL, STATUS_RUNNING,
                     MarketingState)
+from .model_gateway import REVIEWER_SYSTEM_PROMPT
 from .tool_gateway import parse_tool_arguments
 
 # Tools whose outcome must be reflected back into state for later steps.
@@ -131,16 +133,34 @@ def build_graph(saver, ctx: RuntimeContext):
         status = STATUS_RUNNING
         stop_reason = ""
 
+        # Tool fan-out needs its own ceiling: the model-call cap does not bound how many
+        # tools each decision may fire. Counting replayed tool results is the exact
+        # measure of what has already been spent.
+        pending = list(state.get("pending_calls") or [])
+        used_tools = sum(1 for message in messages if message.get("role") == "tool")
+        remaining_tools = ctx.max_tool_calls - used_tools
+        if remaining_tools <= 0:
+            return {"status": STATUS_PARTIAL, "pending_calls": [],
+                    "stop_reason": "tool_budget_exhausted",
+                    "output_candidate": {
+                        "reply": "本轮工具调用已达上限（" + str(ctx.max_tool_calls) +
+                                 " 次），已停止继续取数；现有内容按未完成处理，"
+                                 "可以让我接着做剩下的部分。"}}
+        if len(pending) > remaining_tools:
+            # Trim the batch before the assistant turn is built, so every call the
+            # provider sees still has exactly one result.
+            pending = pending[:remaining_tools]
+
         # Assistant turn carrying every tool call of this batch, so the provider sees a
         # complete call/result pairing (a missing tool_result is a 400 from the gateway).
         assistant_calls = [{"id": call["call_uid"], "type": "function",
                             "function": {"name": call["name"],
                                          "arguments": call["arguments"]}}
-                           for call in (state.get("pending_calls") or [])]
+                           for call in pending]
         messages.append({"role": "assistant", "content": None, "tool_calls": assistant_calls})
 
         # Writes are serialized: one SQLAlchemy session is not a concurrency primitive.
-        for call in (state.get("pending_calls") or []):
+        for call in pending:
             name = call["name"]
             arguments = parse_tool_arguments(call["arguments"])
             outcome = await ctx.tools.run(name, arguments, call_uid=call["call_uid"])
@@ -285,6 +305,63 @@ def build_graph(saver, ctx: RuntimeContext):
         return {"status": status, "output_candidate": candidate,
                 "stop_reason": state.get("stop_reason") or ""}
 
+    async def review(state: MarketingState) -> dict[str, Any]:
+        """Independent review of the delivered text (plan G7 / T08).
+
+        Two properties matter and both are deliberate:
+
+        * **Separate context.** It receives the delivered text plus the allowed facts and
+          conditions — never the author's reasoning or self-assessment. It also checks the
+          whole text, not only the claims the author chose to label.
+        * **An unmet check is reported, not implied.** If the budget is already spent the
+          review records ``not_run``, and the delivery can then never be called
+          ``review_ready``.
+        """
+        status = state.get("status") or STATUS_RUNNING
+        candidate = dict(state.get("output_candidate") or {})
+        reply = str(candidate.get("reply") or "")
+        if status not in (STATUS_COMPLETED, STATUS_PARTIAL) or not reply:
+            return {}
+
+        spent = ledger.attempts_for_run(ctx.db, ctx.run.id)
+        if spent >= ctx.max_decisions:
+            candidate["review"] = {"status": "not_run", "reason": "model_call_budget",
+                                   "attempts": spent}
+            return {"output_candidate": candidate}
+
+        payload = _review_payload(ctx, state, reply)
+        call = asyncio.create_task(asyncio.to_thread(
+            ctx.gateway.compose, REVIEWER_SYSTEM_PROMPT,
+            [{"role": "user", "content": payload}],
+            kind="review", decision_index=int(state.get("decision_index") or 0) + 1))
+        done, _pending = await asyncio.wait({call}, timeout=ctx.model_call_timeout)
+        if not done:
+            call.cancel()
+            call.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None)
+            candidate["review"] = {"status": "not_run", "reason": "review_timeout"}
+            return {"output_candidate": candidate}
+        try:
+            result, _error = call.result()
+        except Exception as exc:  # noqa: BLE001 - a failed review is reported as not_run
+            candidate["review"] = {"status": "not_run", "reason": "model_error",
+                                   "detail": type(exc).__name__}
+            return {"output_candidate": candidate}
+
+        report = _review_report(result)
+        candidate["review"] = report
+        blocking = [item for item in report["issues"]
+                    if str(item.get("severity") or "").lower() in ("high", "critical")]
+        refused = report["verdict"] in ("block", "needs_input", "human_review",
+                                        "choose_new_plan")
+        if blocking or refused:
+            status = STATUS_PARTIAL
+            detail = "；".join(str(item.get("reason") or item.get("excerpt") or "")[:60]
+                              for item in (blocking or report["issues"])[:3])
+            candidate["reply"] = reply + "\n\n" + review_notice(
+                len(blocking) or report["issue_count"], detail)
+        return {"status": status, "output_candidate": candidate}
+
     def route_after_decide(state: MarketingState) -> str:
         if state.get("status") in FINAL_STATUSES:
             return "finalize"
@@ -303,6 +380,7 @@ def build_graph(saver, ctx: RuntimeContext):
     graph.add_node("execute_tools", execute_tools)
     graph.add_node("wait_for_user", wait_for_user)
     graph.add_node("finalize", finalize)
+    graph.add_node("review", review)
     graph.add_edge(START, "decide")
     graph.add_conditional_edges("decide", route_after_decide,
                                {"execute_tools": "execute_tools",
@@ -311,8 +389,64 @@ def build_graph(saver, ctx: RuntimeContext):
     graph.add_conditional_edges("execute_tools", route_after_tools,
                                {"decide": "decide", "finalize": "finalize"})
     graph.add_edge("wait_for_user", "decide")
-    graph.add_edge("finalize", END)
+    # The reviewer runs on the finalised text, after the programmatic fence, so it sees
+    # exactly what would be delivered.
+    graph.add_edge("finalize", "review")
+    graph.add_edge("review", END)
     return graph.compile(checkpointer=saver)
+
+
+def _allowed_fact_lines(ctx: RuntimeContext, limit: int = 40) -> list[str]:
+    """The facts the delivery is allowed to rely on, for the reviewer to judge against."""
+    lines: list[str] = []
+    catalog = ctx.tool_ctx.catalog
+    if catalog is None:
+        return lines
+    for product_id in list(getattr(ctx.tool_ctx, "read_product_ids", []) or []):
+        product = agent_runtime._resolve_product(catalog, product_id, ctx.tool_ctx)
+        if not product:
+            continue
+        for fact in product.facts:
+            text = str(getattr(fact, "text", "") or "").replace("\n", " ")
+            condition = str(getattr(fact, "conditions", "") or "").replace("\n", " ")
+            lines.append(product.model + "｜" + text[:160] +
+                         (("（条件：" + condition[:80] + "）") if condition else ""))
+            if len(lines) >= limit:
+                return lines
+    return lines
+
+
+def _review_payload(ctx: RuntimeContext, state: MarketingState, reply: str) -> str:
+    """Build the reviewer's input: the delivered text and the allowed facts only."""
+    parts = ["【待交付文案】", reply[:6000]]
+    artifact_ref = state.get("artifact_ref") or {}
+    if artifact_ref.get("artifact_id"):
+        loaded = agent_runtime._load_artifact(ctx.tool_ctx, dict(artifact_ref))
+        if loaded.get("ok"):
+            parts += ["", "【交付物正文】",
+                      json.dumps(loaded.get("content"), ensure_ascii=False)[:6000]]
+    facts = _allowed_fact_lines(ctx)
+    if facts:
+        parts += ["", "【本次允许使用的事实】"] + facts
+    else:
+        parts += ["", "【本次允许使用的事实】", "（本轮没有读到任何产品事实）"]
+    return "\n".join(parts)
+
+
+def _review_report(result) -> dict:
+    """Normalise the reviewer output; a malformed review is recorded as unknown."""
+    if not isinstance(result, dict):
+        return {"status": "ran", "verdict": "unknown", "issue_count": 0, "blocking": 0,
+                "issues": [], "checked": [], "malformed": True}
+    issues = [item for item in (result.get("issues") or []) if isinstance(item, dict)]
+    return {"status": "ran",
+            "verdict": str(result.get("verdict") or "unknown"),
+            "issue_count": len(issues),
+            "blocking": len([item for item in issues
+                             if str(item.get("severity") or "").lower() in ("high",
+                                                                            "critical")]),
+            "issues": issues[:6],
+            "checked": [str(item) for item in (result.get("checked") or [])][:10]}
 
 
 def _source_kind(ctx: RuntimeContext) -> str:

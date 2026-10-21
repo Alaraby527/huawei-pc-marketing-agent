@@ -40,6 +40,10 @@ class RuntimeContext:
     cancel_check: Callable[[], bool]
     budget_seconds: int = 180
     model_call_timeout: int = 140
+    # The model-call cap alone left tool fan-out unbounded. The plan's policy config puts
+    # max_tool_requests at 12; exceeding it stops the run honestly rather than quietly
+    # spending more.
+    max_tool_calls: int = 12
     started_at: float = 0.0
 
     @property
@@ -81,6 +85,7 @@ def build_context(db: Session, conversation: models.AgentConversation, run: mode
         max_decisions=_env_int("LG_MAX_MODEL_CALLS", 12, 1, 40),
         cancel_check=cancelled,
         budget_seconds=_env_int("AGENT_RUN_BUDGET_SECONDS", 180, 30, 600),
+        max_tool_calls=_env_int("LG_MAX_TOOL_CALLS", 12, 1, 60),
         # A second net above the transport-level deadline in app/model.py: even if a
         # blocking call cannot be interrupted on this platform, the graph still moves on.
         # LG_MODEL_CALL_TIMEOUT exists so tests can use a small value.

@@ -468,6 +468,28 @@ class AgentSeqCounter(Base):
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AgentContentFingerprint(Base):
+    """Shadow-mode content memory: evidence for near-duplicate detection.
+
+    Registered when content is *delivered*, not only when published, and scoped to a single
+    workspace. Cross-store scope authorisation is NOT implemented, so rows here must never
+    be described as brand-wide deduplication.
+    """
+    __tablename__ = "agent_content_fingerprints"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_fingerprint_run"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True, default="default")
+    artifact_id: Mapped[str] = mapped_column(String(32), default="")
+    algorithm: Mapped[str] = mapped_column(String(40), default="")
+    normalized_sha256: Mapped[str] = mapped_column(String(64), index=True, default="")
+    length: Mapped[int] = mapped_column(Integer, default=0)
+    shingles: Mapped[int] = mapped_column(Integer, default=0)
+    minhash: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AgentEffect(Base):
     """Side-effect ledger so a replayed tool call does not duplicate a business write.
 

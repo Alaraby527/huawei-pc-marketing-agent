@@ -11,6 +11,8 @@ checkpointed state.
 """
 from __future__ import annotations
 
+import json
+
 import asyncio
 import os
 import time
@@ -23,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import agent_runtime, db as db_layer, models
-from . import RUNNER_VERSION, ledger
+from . import RUNNER_VERSION, dedup, ledger
 from .context import RuntimeContext, build_context
 from .errors import error_marker, public_error
 from .graph import build_graph
@@ -319,6 +321,38 @@ def recover_orphaned_runs(db: Session) -> int:
     return len(rows)
 
 
+def _register_content_memory(db: Session, conversation: models.AgentConversation,
+                             run: models.AgentRun, ctx: RuntimeContext, reply: str,
+                             payload: dict) -> dict:
+    """Register the delivered text and report duplicate evidence. Never blocks.
+
+    Scope is one workspace, because cross-store authorisation is not implemented. No
+    threshold is applied: an uncalibrated score must not decide anything, so the result is
+    evidence for later calibration and nothing else.
+    """
+    if dedup.mode() == "off" or not reply:
+        return {"mode": dedup.mode(), "kind": "not_run", "calibrated": False, "blocks": False}
+    text = reply
+    artifact_ref = payload.get("artifact_ref") or {}
+    if artifact_ref.get("artifact_id"):
+        loaded = agent_runtime._load_artifact(ctx.tool_ctx, dict(artifact_ref))
+        if loaded.get("ok"):
+            text = reply + "\n" + json.dumps(loaded.get("content"), ensure_ascii=False)
+    try:
+        sketch = dedup.fingerprint(text)
+        history = ledger.recent_fingerprints(
+            db, workspace_id=conversation.workspace_id, exclude_run_id=run.id)
+        result = dedup.compare(sketch, history)
+        ledger.save_fingerprint(db, conversation_id=conversation.id, run_id=run.id,
+                                workspace_id=conversation.workspace_id,
+                                artifact_id=str(artifact_ref.get("artifact_id") or ""),
+                                sketch=sketch)
+        return result
+    except Exception as exc:  # noqa: BLE001 - dedup must never break a delivery
+        return {"mode": dedup.mode(), "kind": "error", "calibrated": False, "blocks": False,
+                "detail": type(exc).__name__}
+
+
 def _finish_run(db: Session, conversation: models.AgentConversation, run: models.AgentRun,
                 status: str, reply: str, telemetry: str, ctx: RuntimeContext,
                 state: dict | None = None) -> None:
@@ -337,10 +371,29 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
     totals = ledger.usage_totals(db, conversation.id)
     payload = dict(state or {})
     candidate = payload.get("output_candidate") or {}
+    # A finished task is not a publishable one. `completed` means this run's machine
+    # checks passed; it is not evidence of human approval, and the text module never
+    # publishes. Reporting the two separately stops `completed` being read as "approved".
+    duplicate = _register_content_memory(db, conversation, run, ctx, reply, payload)
+    review = candidate.get("review") or {}
+    if status == "completed":
+        if review.get("status") != "ran":
+            # An independent review that did not run cannot be implied to have passed.
+            content_status = "research_draft"
+        elif int(review.get("issue_count") or 0) > 0:
+            content_status = "review_required"
+        else:
+            content_status = "review_ready"
+    elif status == "partial":
+        content_status = "research_draft"
+    else:
+        content_status = None
     # Surface *why* a delivery was flagged, so the operator surface and the UI do not
     # have to re-derive it from the prose.
     agent_runtime._event(run, "run_result", runner_version=RUNNER_VERSION,
                          status=status, usage=totals,
+                         content_status=content_status, can_publish=False,
+                         review=review, duplicate=duplicate,
                          artifact=payload.get("artifact_ref"),
                          candidates=payload.get("candidates") or [],
                          images=payload.get("images") or [],
