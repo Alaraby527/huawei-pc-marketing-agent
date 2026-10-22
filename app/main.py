@@ -35,6 +35,7 @@ from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
 from . import design_library
 from . import image_edit
 from . import image_channel
+from . import hotspot_api
 from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
@@ -90,6 +91,8 @@ def _recover_orphaned_runs() -> int:
 app = FastAPI(title="华为PC营销Agent · 门店导购与图文生成", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+# 热点中心：独立 APIRouter，只新增 /api/hotspots 下的路由，不改动任何既有路由。
+app.include_router(hotspot_api.router)
 
 @app.middleware("http")
 async def guard_request(request: Request, call_next):

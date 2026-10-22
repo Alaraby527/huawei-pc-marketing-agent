@@ -24,7 +24,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import hotspot_rules as rules
@@ -160,16 +159,21 @@ def idempotent_replay(db: Session, *, tenant_id: str, user_id: str, key: str,
 
 def remember(db: Session, *, tenant_id: str, user_id: str, key: str, payload: dict,
              response: dict) -> None:
+    """Register the response for this key. The *caller* owns the transaction boundary.
+
+    Concurrency, following ``runtime/lease.py``'s claim: only one request can register a
+    given key, so the business row and this registration must sit in the caller's single
+    savepoint (SQLAlchemy ``begin_nested``). On a lost race the IntegrityError is raised on
+    purpose so the caller can roll the savepoint back - resource and key together - and then
+    serve the winner's stored response. Calling ``db.rollback()`` here would throw away a
+    business row the caller had already created, and swallowing the error would leave two
+    resources for what the API reports as one request.
+    """
     if not key:
         return
-    # A concurrent duplicate may have inserted first; that insert is the winner and this
-    # one is the same request, so absorbing the collision is correct here.
     db.add(models.HotspotIdempotency(tenant_id=tenant_id, user_id=user_id, key=key,
                                      request_digest=_digest(payload), response=response))
-    try:
-        db.flush()
-    except IntegrityError:
-        db.rollback()
+    db.flush()
 
 
 # ------------------------------------------------------------------ refresh
@@ -283,6 +287,20 @@ def _check_source(db: Session, group: models.HotspotRefreshGroup,
         db.flush()
         return {**base, "state": "failed", "outcome": OUTCOME_FAILED, "error": check.error}
 
+    if mode == DATA_MODE_SYNTHETIC:
+        # A synthetic observation is *never* a verified upstream visit, whatever the fake
+        # collector claims. Writing verified_upstream_at here would forge freshness - the
+        # exact failure the six-times contract and the "HTTP 200 proves only a response"
+        # rule exist to prevent - and it would also let a later release label synthetic
+        # entries as ``live``. The entries are still stored (unverified) so an internal
+        # test can exercise the pipeline, and the ``synthetic`` label travels with them.
+        check.state, check.outcome = "succeeded", OUTCOME_CACHE_ONLY
+        check.error = ""
+        _store_snapshot(db, row, check, entries, verified=False, origin_updated=origin_updated)
+        db.flush()
+        return {**base, "state": "succeeded", "outcome": OUTCOME_CACHE_ONLY, "error": "",
+                "reason": "合成数据，不作为可验证的原平台访问，不推进可验证时间"}
+
     if not reached_origin:
         # HTTP 200 with a cache hit proves a response, not that the origin was reached.
         check.state, check.outcome = "succeeded", OUTCOME_CACHE_ONLY
@@ -395,6 +413,13 @@ def build_events(db: Session, *, limit: int = 400) -> int:
     items = list(db.scalars(select(models.HotspotItem).order_by(
         models.HotspotItem.last_seen_at.desc()).limit(limit)).all())
     events = list(db.scalars(select(models.HotspotEvent)).all())
+    # Coverage is counted per *origin platform*, not per source_id: NewsNow and DailyHotApi
+    # serving the same Weibo board are one origin, and a source without a row falls back to
+    # its own id rather than to an empty string. Using source_id here (as an earlier version
+    # did) let a second provider of the same platform buy an extra vote, which the plan
+    # forbids: 换 provider 不增加 C.
+    origins = {row.source_id: (row.origin_platform or row.source_id)
+               for row in db.scalars(select(models.HotspotSource)).all()}
     created = 0
     for item in items:
         match = None
@@ -420,7 +445,8 @@ def build_events(db: Session, *, limit: int = 400) -> int:
         if member is None:
             db.add(models.HotspotEventMember(event_id=match.id, item_id=item.id,
                                              source_id=item.source_id,
-                                             origin_platform=item.source_id))
+                                             origin_platform=origins.get(item.source_id,
+                                                                         item.source_id)))
         match.last_seen_at = max(_aware(match.last_seen_at), _aware(item.last_seen_at))
         match.risk_flags = sorted(set(list(match.risk_flags or [])
                                       + list(item.risk_flags or [])))
