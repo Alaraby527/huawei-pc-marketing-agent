@@ -450,6 +450,31 @@ def generate_cover_image(prompt):
     raise ModelError("生图服务未返回图片数据")
 
 
+def embedding_model() -> str:
+    return (os.getenv("LLM_EMBEDDING_MODEL") or "text-embedding-v3").strip()
+
+
+def embed_texts(texts, model: str | None = None):
+    """Embed texts through the same guarded transport as the chat calls.
+
+    Reusing :func:`_post_chat_completions` matters: it owns the total wall-clock deadline
+    and the trickle-byte protection. An embedding call that bypassed it would reintroduce
+    the unbounded connect/header phase that was observed hanging for 500+ seconds.
+    """
+    settings = _settings()
+    items = [str(text or "")[:8000] for text in texts]
+    if not items:
+        return [], {}
+    body_data = {"model": (model or embedding_model()), "input": items}
+    data = _post_chat_completions(settings["base_url"] + "/embeddings",
+                                  body_data, settings["api_key"], settings["timeout"])
+    rows = sorted((data or {}).get("data") or [], key=lambda row: row.get("index", 0))
+    vectors = [list(row.get("embedding") or []) for row in rows]
+    meta = {"model": (model or embedding_model()), "usage": (data or {}).get("usage") or {},
+            "dimension": len(vectors[0]) if vectors else 0}
+    return vectors, meta
+
+
 def chat_json_messages(system, messages, *, schema_hint="", model=None):
     """Chat with real role messages and parse a JSON object from the reply.
 

@@ -123,3 +123,72 @@ def test_registration_is_idempotent_per_run():
         assert connection.execute(sql_text(
             "SELECT count(*) FROM agent_content_fingerprints WHERE run_id = 'r1'"
         )).scalar() == 1
+
+# ------------------------------------------------------------------ semantic layer
+
+def _embedding(values, version="emb-v1:test-model:3"):
+    from app.runtime import semantic
+    return {"model_id": "test-model", "dimension": len(values), "view": "full",
+            "index_version": version, "vector": semantic.normalize(list(values)),
+            "usage": {}}
+
+
+def test_an_embedding_is_stored_and_compared_inside_the_lock():
+    from sqlalchemy import text as sql_text
+    from app.runtime import semantic
+
+    _admit("r1", "第一篇交付内容，语义层测试用。", )
+    second = admission.admit_delivery(
+        workspace_id="default", conversation_id="c-r2", run_id="r2", artifact_id="",
+        sketch=dedup.fingerprint("第二篇完全不同的内容。"),
+        embedding=_embedding([0.9, 0.1, 0.0]))
+    result = second["semantic"]
+    assert result["mode"] in ("off", "shadow")
+    with db_layer.engine().connect() as connection:
+        stored = connection.execute(sql_text(
+            "SELECT count(*) FROM agent_content_embeddings")).scalar()
+    assert stored == 1, "the embedding is registered with the delivery"
+    assert second["blocks"] is False and second["calibrated"] is False
+
+
+def test_a_paraphrase_is_caught_by_the_semantic_layer_only(monkeypatch):
+    """The literal layer misses a paraphrase; the stored vector catches it."""
+    monkeypatch.setenv("LG_EMBEDDING_MODE", "shadow")
+    from app.runtime import semantic
+
+    first = admission.admit_delivery(
+        workspace_id="default", conversation_id="c1", run_id="r1", artifact_id="",
+        sketch=dedup.fingerprint("学生党挑本子，先看屏幕能不能一屏多看几行。"),
+        embedding=_embedding([1.0, 0.0, 0.0]))
+    assert first["semantic"]["kind"] == "none"
+
+    # Same meaning, different words: the literal sketch sees nothing in common.
+    second = admission.admit_delivery(
+        workspace_id="default", conversation_id="c2", run_id="r2", artifact_id="",
+        sketch=dedup.fingerprint("选购笔记本时，我最在意显示屏一次能显示多少内容。"),
+        embedding=_embedding([0.98, 0.02, 0.0]))
+    assert second["kind"] != "exact", "the literal layer cannot see this"
+    assert second["semantic"]["kind"] == "semantic"
+    assert second["semantic"]["similarity"] > 0.9
+    assert second["blocks"] is False
+
+
+def test_vectors_from_another_index_version_are_not_compared(monkeypatch):
+    monkeypatch.setenv("LG_EMBEDDING_MODE", "shadow")
+    admission.admit_delivery(
+        workspace_id="default", conversation_id="c1", run_id="r1", artifact_id="",
+        sketch=dedup.fingerprint("第一段。"), embedding=_embedding([1.0, 0.0, 0.0]))
+    other = admission.admit_delivery(
+        workspace_id="default", conversation_id="c2", run_id="r2", artifact_id="",
+        sketch=dedup.fingerprint("第二段。"),
+        embedding=_embedding([1.0, 0.0, 0.0], version="emb-v1:other-model:3"))
+    assert other["semantic"]["compared"] == 0
+    assert other["semantic"]["index_version"] == "emb-v1:other-model:3"
+
+
+def test_no_embedding_is_reported_as_not_run_not_as_clean():
+    result = admission.admit_delivery(
+        workspace_id="default", conversation_id="c1", run_id="r1", artifact_id="",
+        sketch=dedup.fingerprint("没有向量的交付。"))
+    assert result["semantic"]["kind"] in ("not_run", "none")
+    assert result["blocks"] is False

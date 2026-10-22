@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from .. import db as db_layer
-from . import dedup
+from . import dedup, semantic
 
 
 class LockUnavailable(RuntimeError):
@@ -151,6 +151,42 @@ def _history_count(engine, workspace_id: str, exclude_run_id: str) -> int:
         return 0
 
 
+def _read_embeddings(connection, workspace_id: str, exclude_run_id: str,
+                    limit: int = 200) -> list[dict]:
+    rows = connection.execute(text(
+        "SELECT run_id, conversation_id, view, dimension, index_version, vector "
+        "FROM agent_content_embeddings WHERE workspace_id = :scope AND run_id != :run "
+        "ORDER BY created_at DESC LIMIT :limit"),
+        {"scope": workspace_id or "default", "run": exclude_run_id,
+         "limit": limit}).fetchall()
+    history = []
+    for row in rows:
+        try:
+            vector = json.loads(row[5]) if isinstance(row[5], str) else list(row[5] or [])
+        except (TypeError, ValueError):
+            vector = []
+        history.append({"run_id": row[0], "conversation_id": row[1], "view": row[2],
+                        "dimension": row[3], "index_version": row[4],
+                        "vector": [float(value) for value in vector]})
+    return history
+
+
+def _insert_embedding(connection, *, conversation_id, run_id, workspace_id, embedding) -> None:
+    connection.execute(text(
+        "INSERT INTO agent_content_embeddings "
+        "(id, conversation_id, run_id, workspace_id, view, model_id, dimension, "
+        " index_version, vector, created_at) "
+        "VALUES (:id, :conversation_id, :run_id, :workspace_id, :view, :model_id, "
+        "        :dimension, :index_version, :vector, :created_at)"),
+        {"id": uuid.uuid4().hex[:32], "conversation_id": conversation_id, "run_id": run_id,
+         "workspace_id": workspace_id or "default", "view": str(embedding.get("view") or "full"),
+         "model_id": str(embedding.get("model_id") or ""),
+         "dimension": int(embedding.get("dimension") or 0),
+         "index_version": str(embedding.get("index_version") or ""),
+         "vector": json.dumps(list(embedding.get("vector") or [])),
+         "created_at": datetime.now(timezone.utc).isoformat(sep=" ")})
+
+
 def _insert_fingerprint(connection, *, conversation_id, run_id, workspace_id, artifact_id,
                         sketch) -> None:
     connection.execute(text(
@@ -177,7 +213,8 @@ def _base_admission_info(dialect: str) -> dict:
 
 
 def admit_delivery(*, workspace_id: str, conversation_id: str, run_id: str,
-                   artifact_id: str, sketch: dict, history_limit: int = 200) -> dict:
+                   artifact_id: str, sketch: dict, history_limit: int = 200,
+                   embedding: dict | None = None) -> dict:
     """Take the admission lock, decide on freshly committed history, and register."""
     engine = db_layer.engine()
     dialect = engine.dialect.name
@@ -194,6 +231,10 @@ def admit_delivery(*, workspace_id: str, conversation_id: str, run_id: str,
             with _locked_connection(engine, workspace_id, timeout) as (connection, _raw):
                 history = _read_history(connection, workspace_id, run_id, history_limit)
                 result = dedup.compare(sketch, history)
+                # The embedding was computed before the lock: nothing remote happens here.
+                semantic_result = semantic.compare(
+                    embedding, _read_embeddings(connection, workspace_id, run_id,
+                                                history_limit))
                 if len(history) > before:
                     # Another delivery registered while we were deciding: this is exactly
                     # the race the lock exists to remove.
@@ -201,10 +242,14 @@ def admit_delivery(*, workspace_id: str, conversation_id: str, run_id: str,
                 _insert_fingerprint(connection, conversation_id=conversation_id,
                                     run_id=run_id, workspace_id=workspace_id,
                                     artifact_id=artifact_id, sketch=sketch)
+                if embedding:
+                    _insert_embedding(connection, conversation_id=conversation_id,
+                                      run_id=run_id, workspace_id=workspace_id,
+                                      embedding=embedding)
             info["locked"] = True
             info["lock_wait_ms"] = int((time.monotonic() - started) * 1000)
             info["rechecked"] = bool(info["stale_snapshot"] or attempt > 0)
-            return {**result, "admission": info}
+            return {**result, "semantic": semantic_result, "admission": info}
         except LockUnavailable:
             continue
         except Exception as exc:  # noqa: BLE001 - admission must not break a delivery
@@ -218,7 +263,11 @@ def admit_delivery(*, workspace_id: str, conversation_id: str, run_id: str,
     info["lock_wait_ms"] = int((time.monotonic() - started) * 1000)
     fallback = {"mode": dedup.mode(), "algorithm": dedup.ALGORITHM, "kind": "unverified",
                 "similarity": 0.0, "exact_match": None, "nearest": None, "compared": 0,
-                "calibrated": False, "blocks": False}
+                "calibrated": False, "blocks": False,
+                # Neither layer may be reported as cleared when the lock was not taken.
+                "semantic": {"mode": semantic.mode(), "layer": "semantic",
+                             "kind": "unverified", "reason": "lock_timeout",
+                             "compared": 0, "calibrated": False, "blocks": False}}
     try:
         with engine.connect() as connection:
             # Registration matters more than the verdict, but must still be bounded: give

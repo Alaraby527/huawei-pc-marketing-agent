@@ -468,6 +468,27 @@ class AgentSeqCounter(Base):
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AgentContentEmbedding(Base):
+    """Vector memory for the semantic layer, one row per run and view.
+
+    ``index_version`` identifies the vector space (model id + dimension). Vectors from two
+    versions are never compared, because a distance across two embedding models is
+    meaningless. Same authorisation and retention scope as the text they describe.
+    """
+    __tablename__ = "agent_content_embeddings"
+    __table_args__ = (UniqueConstraint("run_id", "view", name="uq_embedding_run_view"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True, default="default")
+    view: Mapped[str] = mapped_column(String(30), default="full")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    dimension: Mapped[int] = mapped_column(Integer, default=0)
+    index_version: Mapped[str] = mapped_column(String(160), index=True, default="")
+    vector: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AgentRunLease(Base):
     """A persisted lease over a run, so a worker crash is detectable and recoverable.
 

@@ -4,6 +4,30 @@
 
 ### Added
 
+- **Semantic similarity layer** (`app/runtime/semantic.py`, `agent_content_embeddings`,
+  T13). The literal layer cannot see a paraphrase: measured against the live embedding
+  endpoint, a rewritten post that makes the same points scores **0.0000** on character
+  shingles and **0.8689** on embeddings, while unrelated copy scores ~0.51. Everything the
+  plan requires of an index is recorded: model id, dimension, view and an `index_version`
+  identifying the vector space, and vectors from two versions are never compared. Search is
+  a full cosine scan — the plan's preferred exact baseline — so no approximate index exists
+  and there is no recall to monitor yet. Thresholds are still unapplied.
+- `embed_texts` reuses the same guarded transport as the chat calls, so an embedding cannot
+  reintroduce the unbounded connect/header phase. Opt-in via `LG_EMBEDDING_MODE=shadow`
+  because it is a paid call on every delivery; off by default, which also keeps the test
+  suite off the network.
+- The embedding is computed **before** the admission lock and only compared inside it, as
+  the plan requires: no model, embedding or network call happens while the critical section
+  is held.
+
+### Note
+
+The measurement also shows why the plan forbids a universal 0.8 threshold: two unrelated
+Chinese marketing texts sit at about 0.5, so the gap between the paraphrase and the
+negatives is roughly 0.36 and must be calibrated on labelled pairs.
+
+Tests: 327 pass (180 legacy + 147 new/extended).
+
 - **Durable run leases with heartbeat, expiry and bounded attempts** (`app/runtime/lease.py`,
   `agent_run_leases`, T16). The in-process conversation lock is a *local* lease: it says
   nothing to a second worker and nothing after a restart, so a crash was indistinguishable

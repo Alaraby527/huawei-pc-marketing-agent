@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .. import agent_runtime, db as db_layer, models
-from . import RUNNER_VERSION, admission, dedup, lease, ledger
+from . import RUNNER_VERSION, admission, dedup, lease, ledger, semantic
 from .context import RuntimeContext, build_context
 from .errors import error_marker, public_error
 from .graph import build_graph
@@ -512,6 +512,15 @@ def _register_content_memory(db: Session, conversation: models.AgentConversation
             text = reply + "\n" + json.dumps(loaded.get("content"), ensure_ascii=False)
     try:
         sketch = dedup.fingerprint(text)
+        # Computed BEFORE the admission lock: the plan forbids holding the critical section
+        # across a model, embedding or network call. A failure here is reported as a layer
+        # that did not run, never as a layer that passed.
+        embedding = None
+        if semantic.mode() == semantic.MODE_SHADOW:
+            try:
+                embedding = semantic.embed(text)
+            except Exception:  # noqa: BLE001 - the literal layer still works
+                embedding = None
         # The admission pass opens its own connection and takes a write lock, so this
         # session must not still be holding one: any pending write from the run is
         # committed first, otherwise BEGIN IMMEDIATE would simply time out.
@@ -519,7 +528,7 @@ def _register_content_memory(db: Session, conversation: models.AgentConversation
         return admission.admit_delivery(
             workspace_id=conversation.workspace_id, conversation_id=conversation.id,
             run_id=run.id, artifact_id=str(artifact_ref.get("artifact_id") or ""),
-            sketch=sketch)
+            sketch=sketch, embedding=embedding)
     except Exception as exc:  # noqa: BLE001 - dedup must never break a delivery
         return {"mode": dedup.mode(), "kind": "error", "calibrated": False, "blocks": False,
                 "detail": type(exc).__name__}
