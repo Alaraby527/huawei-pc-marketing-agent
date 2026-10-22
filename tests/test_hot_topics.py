@@ -196,3 +196,24 @@ def test_the_hot_section_has_no_leftover_detail_panel():
     assert "清单说明" not in html
     assert 'id="hot-detail"' not in html
     assert "hot-tabs-row" in html and 'id="hot-scenario-tabs"' in html
+
+
+def test_board_tabs_reuse_the_pill_style_not_the_section_tabs_class():
+    """实测 UI bug：热点那行被挤成一竖条。
+
+    根因是 .section-tabs 有 flex:0 0 44px —— 那是给纵向容器里的全局横条当高度用的，
+    放进横向容器就变成 44px 宽，加 overflow-x:auto 后整行变成一竖条加滚动条。
+    所以这里必须复用 .surface-tabs/.surface-btn（对话区交付面那行的 pill 样式）。
+    """
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+    html = Path("app/static/index.html").read_text()
+    css = Path("app/static/style.css").read_text()
+
+    assert 'class="surface-tabs" id="hot-scenario-tabs"' in html, "热点那行要用 pill 样式"
+    assert "surface-btn" in js and "data-hot-mode" in js
+    assert "section-tab' + (key === hotMode" not in js, "不能再用 section-tab"
+    # 旧的覆写规则必须清掉，否则 44px 仍会作用
+    assert ".hot-tabs-row .section-tabs{" not in css
+    # 那条 44px 规则本身还在（全局横条仍需要它），但要确保不作用于热点行
+    assert ".section-tabs{flex:0 0 44px" in css

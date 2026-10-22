@@ -1288,8 +1288,10 @@
     const wrap = $('hot-scenario-tabs');
     if (!wrap) return;
     const items = [['topics', '热梗（联网搜索）'], ...CHART_PLATFORMS];
+    // 用与对话区交付面完全相同的 pill 样式（复用 .surface-tabs/.surface-btn）。
+    // 不能复用 .section-tabs：它有 flex:0 0 44px，在横向容器里会变成 44px 宽，把整行挤成一竖条。
     wrap.innerHTML = items.map(([key, label]) =>
-      '<button type="button" class="section-tab' + (key === hotMode ? ' active' : '') +
+      '<button type="button" class="surface-btn' + (key === hotMode ? ' active' : '') +
       '" data-hot-mode="' + key + '">' + escapeHtml(label) + '</button>').join('');
   }
 

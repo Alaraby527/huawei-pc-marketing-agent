@@ -502,6 +502,17 @@ Tests: 533 pass (180 legacy + 353 new/extended).
   modal and the polling code. It was measured to be useless: the cloud IP triggers risk control,
   the upstream MCP has no interface to submit the SMS code, and its chart contains no memes.
 
+### Fixed
+
+- **The board tabs were squeezed into one vertical strip** ("抖音热…" truncated, with a scrollbar).
+  Root cause: the base `.section-tabs` rule carries `flex: 0 0 44px` - a *height* for the global
+  bar inside a column container, but inside a row container it becomes a **44px width**, and with
+  `overflow-x: auto` that turns the whole row into a narrow scrolling column. The hot row now reuses
+  the same pill styling as the 对话 surface tabs (`.surface-tabs` / `.surface-btn`) instead, which is
+  also exactly the row the user pointed at as the target look.
+
+Tests: 564 pass (180 legacy + 384 new/extended).
+
 ### Changed (hot section layout, per the annotated screenshot)
 
 - **「清单说明」panel removed**, along with the whole right-hand column. The list now fills the

@@ -600,14 +600,9 @@ h1,h2,h3,p{margin:0}
 /* 选项卡行移到头部，与对话区交付面同一位置感 */
 .hot-tabs-row{flex:0 0 auto;display:flex;align-items:center;gap:10px;
   padding:10px 18px;border-bottom:1px solid var(--divider);background:var(--surface)}
-.hot-tabs-row .section-tabs{padding:3px;background:var(--surface-2);border-radius:10px;
-  display:inline-flex;gap:2px;flex-wrap:wrap}
-.hot-tabs-row .section-tab{border:none;background:transparent;color:var(--text-2);
-  font-size:12px;padding:6px 14px;border-radius:8px;cursor:pointer;
-  transition:background .15s var(--ease),color .15s var(--ease),box-shadow .15s var(--ease)}
-.hot-tabs-row .section-tab:hover{color:var(--text)}
-.hot-tabs-row .section-tab.active{background:var(--surface);color:var(--brand);
-  font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+/* 这行直接用 .surface-tabs/.surface-btn 的 pill 样式，不覆写 .section-tabs。
+   踩过：.section-tabs 有 flex:0 0 44px，在横向容器里被当成 44px 宽，整行挤成一竖条。 */
+.hot-tabs-row .surface-tabs{flex-wrap:wrap;max-width:100%}
 
 /* 榜单区不再分左右两栏：卡片铺满，小卡片网格分布 */
 .hot-body{flex:1;min-height:0;display:block;overflow:hidden}
