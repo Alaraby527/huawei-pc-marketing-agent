@@ -1283,7 +1283,7 @@
       'active', item.dataset.section === (hot ? 'hot' : (studio ? 'studio'
         : (workspace ? '' : 'chat')))));
     renderSectionTabs(hot ? 'hot' : (studio ? 'studio' : 'chat'));
-    if (hot) loadHotList();
+    if (hot) loadOrganizedTopics(false);
     if (workspace && window.WorkspaceApp) window.WorkspaceApp.open();
   }
 
@@ -1299,6 +1299,64 @@
     if (!tabs.length) return;
     const first = host.querySelector('.section-tab');
     if (first) first.classList.add('active');
+  }
+
+  // 热点榜单：点刷新 = 取公开热榜 + 让模型整理成热点清单（不排序、不打分）
+  async function loadOrganizedTopics(force) {
+    const note = $('hot-source-note');
+    if (note) note.textContent = force ? '正在取源并让模型整理…（约 10–60 秒）' : '正在加载热点清单…';
+    const list = $('hot-list');
+    if (list) list.innerHTML = '<p class="hint">加载中…</p>';
+    try {
+      const response = force
+        ? await fetch('/api/v1/hot-topics/refresh', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 50 }),
+          })
+        : await fetch('/api/v1/hot-topics?limit=50');
+      const data = await response.json();
+      renderOrganizedTopics(data);
+    } catch (error) {
+      if (note) note.textContent = '加载失败：' + error;
+      if (list) list.innerHTML = '<p class="hint">加载失败，请点刷新重试。</p>';
+    }
+  }
+
+  function renderOrganizedTopics(data) {
+    const note = $('hot-source-note');
+    const list = $('hot-list');
+    const detail = $('hot-detail');
+    if (!data || !data.ok) {
+      if (note) note.textContent = (data && (data.message || data.error)) || '没有可用的热点清单';
+      if (list) list.innerHTML = '<p class="hint">' +
+        escapeHtml((data && (data.message || data.error)) || '暂无可展示内容') + '</p>';
+      return;
+    }
+    const src = data.source || {};
+    if (note) {
+      note.textContent = '来源：' + (src.source || '') + ' · 取到 ' + src.available + ' 条'
+        + (src.cap_note ? '（' + src.cap_note + '）' : '')
+        + ' · 品牌过滤剔除 ' + (data.excluded_by_brand || []).length + ' 条'
+        + ' · 整理出 ' + data.topic_count + ' 条热点'
+        + (data.cached ? ' · 缓存' : ' · 刚刚生成');
+    }
+    const topics = data.topics || [];
+    list.innerHTML = topics.length
+      ? topics.map((topic, index) =>
+          '<article class="topic-card" data-topic="' + index + '">' +
+          '<div class="topic-head"><span class="topic-kind">' + escapeHtml(topic.kind) + '</span>' +
+          '<strong>' + escapeHtml(topic.topic) + '</strong></div>' +
+          '<p class="topic-gist">' + escapeHtml(topic.gist) + '</p>' +
+          '<p class="topic-src">原始条目：' + (topic.source_titles || [])
+            .map(escapeHtml).join(' ／ ') + '</p>' +
+          '</article>').join('')
+      : '<p class="hint">这一轮没有整理出好玩的热点（剔除了新闻事件与其他品牌后为空，这是正常结果）。</p>';
+    if (detail) {
+      detail.innerHTML = '<div class="empty-state"><div class="empty-icon">✦</div>' +
+        '<h3>清单说明</h3><p>' + escapeHtml(data.notice || '') + '</p>' +
+        '<p class="hint">' + escapeHtml(src.time_note || '') + '</p>' +
+        '<p class="hint">规则：偏好玩 · 跳过新闻事件 · 不涉及其他数码品牌</p></div>';
+    }
   }
 
   async function loadHotList() {
@@ -1593,12 +1651,7 @@
 
   on('hot-back', 'click', () => switchView('chat'));
   on('studio-back', 'click', () => switchView('chat'));
-  $('hot-refresh').addEventListener('click', () => {
-    hotTopics = [];
-    currentHotTopics = [];
-    lastHotKey = '';
-    loadHotList();
-  });
+  $('hot-refresh').addEventListener('click', () => loadOrganizedTopics(true));
   $('hot-connect').addEventListener('click', xhsLogin);
 
   on('xhs-refresh', 'click', xhsLogin);

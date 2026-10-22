@@ -555,3 +555,18 @@ h1,h2,h3,p{margin:0}
 .suggest-actions .chip{padding:5px 12px;font-size:11px}
 .suggest-actions .chip.active{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);font-weight:600}
 .suggest-actions .chip:disabled{opacity:.5;cursor:default}
+
+
+/* ===================== 热点清单（模型整理，不排序）===================== */
+.topic-card{border:1px solid var(--divider);border-radius:var(--radius-m);padding:12px 14px;
+  margin-bottom:8px;background:var(--surface);box-shadow:var(--shadow-card)}
+.topic-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.topic-head strong{font-size:13px;font-weight:600;color:var(--text)}
+.topic-kind{font-size:10px;font-weight:600;color:var(--brand);background:var(--brand-soft);
+  border-radius:999px;padding:3px 8px;white-space:nowrap}
+.topic-gist{font-size:12px;color:var(--text-2);line-height:1.7;margin-bottom:4px}
+.topic-angle{font-size:12px;color:var(--brand);line-height:1.7}
+.topic-src{font-size:11px;color:var(--text-3);margin-top:4px;line-height:1.6}
+.topic-ref{margin-top:10px;font-size:11px;color:var(--text-3)}
+.topic-ref summary{cursor:pointer;padding:4px 0}
+#hot-list{padding:12px}

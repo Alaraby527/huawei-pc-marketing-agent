@@ -34,7 +34,7 @@ from .runtime import runner as lg_runner
 from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
 from . import design_library
 from . import image_edit
-from . import image_channel
+from . import hot_topics, image_channel
 from . import hotspot_api
 from .rednote import WorkspaceContext, WorkspaceError
 
@@ -854,6 +854,24 @@ def v2_set_surface(conversation_id: str, payload: dict | None = None, db=Depends
         return JSONResponse(status_code=400, content=result)
     db.commit()
     return result
+
+
+@app.get("/api/v1/hot-topics")
+async def hot_topics_cached(limit: int = 50, refresh: int = 0):
+    """当前热点清单：取公开热榜 + 模型整理。不带 refresh 时用缓存。"""
+    return await asyncio.to_thread(hot_topics.organize, limit=limit, force=bool(refresh))
+
+
+@app.post("/api/v1/hot-topics/refresh")
+async def hot_topics_refresh(payload: dict | None = None):
+    """刷新：重新取源并让模型整理。"""
+    limit = int((payload or {}).get("limit") or 50)
+    return await asyncio.to_thread(hot_topics.organize, limit=limit, force=True)
+
+
+@app.get("/api/v1/hot-topics/status")
+def hot_topics_status():
+    return hot_topics.status()
 
 
 @app.get("/api/v2/conversations/{conversation_id}/studio")

@@ -482,6 +482,41 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ### Added
 
+- **热点清单（取源 + 模型整理）** `app/hot_topics.py`, `GET/POST /api/v1/hot-topics*`, and the
+  热点榜单 section's 刷新 button. Point of the architecture, all of it measured rather than
+  assumed: **recency comes from the live chart, meaning comes from the model.** Asked for
+  "近期热梗" the model spent its whole budget reasoning and returned *nothing*
+  (`finish_reason=length`, `text_tokens=0`); asked to organise a chart it had in front of it, it
+  answered in seconds with a clean list.
+- The user's editorial direction is enforced, and one part of it in code: lean fun, skip news
+  events, and **never involve other digital brands** - that last rule is a deterministic filter
+  applied before the model sees the list, so it cannot be argued out of it, plus a post-filter.
+  Dropped items are reported, never silently removed.
+- No ranking and no scoring, as asked: a plain list of `topic / kind / gist / source_titles`.
+  The `marketing_angle` field from the first attempt was **removed** - requiring an angle per
+  topic pushed the model to either force a connection ("日常美食教程 → 厨房与书房多屏协同") or
+  reject everything (0 of 20). Neither is what was asked for.
+
+### Fixed
+
+- **`chat_json_messages` could return an empty reply on any judgement task.** This gateway's
+  model reasons before answering and the reasoning counts against `max_tokens`; on larger inputs
+  it consumed the entire budget, so the reply came back empty with `finish_reason=length`.
+  Measured: `enable_thinking=false` gives **1.5 s / 34 tokens** where the default gives
+  **31.2 s / 2858 tokens**, and the larger failures produced no answer at all. Structured calls
+  now send it unless `LLM_ENABLE_THINKING` says otherwise. The first attempt at this fix landed
+  in `complete_json` instead of `chat_json_messages` — two functions with near-identical bodies —
+  and the empty replies continued until that was caught.
+
+### Known limit
+
+The public chart caps at **20 items**, not the 50 requested; the response says so
+(`cap_note`) rather than implying a full 50. It also carries **no update time**, so the response
+states that `observed_at` is our fetch time, not the platform's. Its content is a general
+lifestyle/entertainment chart, so how many usable topics come out varies by hour.
+
+Tests: 550 pass (180 legacy + 370 new/extended).
+
 - **Delivery-surface suggestion with confirmation** (`suggest_surface`, tool 14). The user's
   rule has two halves and both are enforced: when the intent is unclear the assistant works out
   the right surface and offers it, and when the user has already been explicit it must not switch
