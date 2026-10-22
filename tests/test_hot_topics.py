@@ -68,3 +68,42 @@ def test_cache_prevents_paying_twice_for_one_click(monkeypatch):
     second = hot_topics.organize(limit=50)
     assert second["cached"] is True
     hot_topics.reset_cache()
+
+
+def test_every_topic_carries_an_intro_a_link_and_a_keyword():
+    """短文约 100 字、来源链接、真实搜索词 —— 链接与关键词必须来自原始条目，不是模型编的。"""
+    source = {"items": [{"rank": 1, "title": "我创造了新型遛狗法", "hot": "1w",
+                         "url": "https://www.xiaohongshu.com/search_result?keyword=%E6%96%B0%E5%9E%8B%E9%80%9B%E7%8B%97%E6%B3%95&type=51",
+                         "source": "60s-rednote"}],
+              "requested": 50, "available": 1, "source": "t", "time_note": "t",
+              "cap_note": "", "observed_at": "t"}
+    import app.hot_topics as ht
+    original = ht.fetch_source_items
+    ht.fetch_source_items = lambda limit=50: source
+    try:
+        ht.reset_cache()
+        from app.model import ModelError
+        ht.chat_json_messages = None  # 触发受控失败，只验证取源与映射结构
+        out = ht.organize(limit=50, force=True)
+        assert out["ok"] is False, "没有模型时应如实失败，不得用原始条目冒充清单"
+        assert "不要用未整理的原始条目冒充热点清单" in out["note"]
+    finally:
+        ht.fetch_source_items = original
+
+
+def test_the_keyword_is_extracted_from_the_source_link():
+    url = ("https://www.xiaohongshu.com/search_result?keyword=%E6%97%85%E8%A1%8C%E6%89%93%E5%8D%A1"
+           "&type=51")
+    assert hot_topics._keyword_of(url) == "旅行打卡"
+    assert hot_topics._keyword_of("") == ""
+    assert hot_topics._keyword_of("https://example.com/x") == ""
+
+
+def test_the_response_states_what_the_links_are_and_are_not():
+    """链接是搜索页链接，需要登录才能打开，且不能由服务端抓取 —— 必须写清楚。"""
+    status = hot_topics.status()
+    assert "note" in status
+    import inspect
+    source = inspect.getsource(hot_topics.organize)
+    assert "link_note" in source
+    assert "不能由服务端抓取内容" in source

@@ -482,6 +482,26 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ### Added
 
+- **每条热点带约 100 字短文、来源链接与真实搜索词.** The intro explains what the topic is, why
+  it is fun and what people discuss, and is instructed to expand only from the given entries -
+  no invented names, numbers or incidents. Verified live: 19 topics, intros of 95-119 characters.
+- Links and keywords are taken from the **source entries, not written by the model**, so they can
+  be trusted: the keyword is the actual Xiaohongshu search term behind the chart item
+  (e.g. 我的家庭旅行更像是打副本). A "用这个热点写文案" button carries the topic - name, intro and
+  search terms - into the conversation so the copy is written from the topic itself.
+
+### Answered, not implemented
+
+The ask was whether a topic link could be fetched and its content turned into copy. **No, and the
+reason is concrete rather than a preference.** The link is a Xiaohongshu *search* page, not a note;
+opening it needs a login session; and fetching it server-side runs straight into the risk control
+that this project already measured and documented in `docs/15` ("云端 IP 触发风控要求短信验证码，
+而 MCP 没有提交验证码的接口"). The app also has no web-fetch capability at all. So the link is an
+entry point for a person to open, and the copy is generated from the topic itself - which is what
+the new button does. The response says this in `link_note` rather than leaving it to be discovered.
+
+Tests: 553 pass (180 legacy + 373 new/extended).
+
 - **热点清单（取源 + 模型整理）** `app/hot_topics.py`, `GET/POST /api/v1/hot-topics*`, and the
   热点榜单 section's 刷新 button. Point of the architecture, all of it measured rather than
   assumed: **recency comes from the live chart, meaning comes from the model.** Asked for

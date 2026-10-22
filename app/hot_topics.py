@@ -48,10 +48,12 @@ ORGANIZE_SYSTEM = """你在为华为 PC 的门店营销整理一份「当前热�
 
 不排序、不打分、不显示热度值，只给清单。不要写"借势理由"，那是下一步的事。
 
-每条只输出四个字段：
+每条输出五个字段：
 - topic：热点名称，简短
 - kind：玩梗 / 生活方式 / 共鸣场景 / 其他
 - gist：一句话说明它是什么
+- intro：约 100 字的短文介绍，讲清楚这个热点是什么、为什么好玩、大家在讨论什么。
+  只能依据给定条目合理展开，不得编造具体人物、数据或事件细节。
 - source_titles：对应的原始条目标题（数组，必须来自给定条目）
 
 只输出 JSON：
@@ -73,6 +75,16 @@ def hits_other_brand(text: str) -> str:
         if brand in low:
             return brand.strip()
     return ""
+
+
+def _keyword_of(url: str) -> str:
+    """从搜索页链接里取出关键词，它是"大家在搜什么"的真实信号。"""
+    from urllib.parse import parse_qs, unquote, urlparse
+    try:
+        query = parse_qs(urlparse(str(url or "")).query)
+        return unquote((query.get("keyword") or [""])[0])[:60]
+    except Exception:  # noqa: BLE001 - 链接格式变了就当作没有关键词
+        return ""
 
 
 def split_by_brand(items: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -125,6 +137,8 @@ def organize(*, limit: int = 50, force: bool = False) -> dict:
                 "message": "取不到可用条目（源不可用，或全部条目都涉及其他品牌）"}
 
     payload = {"items": [{"n": index + 1, "title": item["title"]} for index, item in enumerate(kept)]}
+    # title -> 原始条目，用于把链接与搜索关键词映射回模型整理出的话题
+    by_title = {item["title"]: item for item in kept}
     try:
         result, meta = chat_json_messages(
             ORGANIZE_SYSTEM, [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
@@ -144,10 +158,25 @@ def organize(*, limit: int = 50, force: bool = False) -> dict:
             dropped.append({"title": titles[0] if titles else str(row.get("topic") or ""),
                             "excluded_brand": brand, "stage": "post_filter"})
             continue
+        # 链接与关键词来自原始条目，不是模型编的。该源给的是搜索页链接（不是笔记链接），
+        # 服务端抓取它需要登录态，会撞上实测过的风控，所以只作为人工点开的入口。
+        links, keywords = [], []
+        for title in titles:
+            item = by_title.get(title)
+            if not item:
+                continue
+            url = str(item.get("url") or "")
+            if url and url not in links:
+                links.append(url)
+            keyword = _keyword_of(url)
+            if keyword and keyword not in keywords:
+                keywords.append(keyword)
         topics.append({"topic": str(row.get("topic") or "")[:80],
                        "kind": str(row.get("kind") or KIND_OTHER)[:12],
                        "gist": str(row.get("gist") or "")[:200],
-                       "source_titles": titles[:6]})
+                       "intro": str(row.get("intro") or "")[:300],
+                       "source_titles": titles[:6],
+                       "links": links[:3], "keywords": keywords[:3]})
     out = {"ok": True, "topics": topics, "topic_count": len(topics),
            "source": source, "from_source": source["available"],
            "sent_to_model": len(kept), "excluded_by_brand": dropped,
@@ -158,7 +187,9 @@ def organize(*, limit: int = 50, force: bool = False) -> dict:
            "rules": {"prefer": "好玩、有梗、有共鸣", "skip": "新闻事件类",
                      "never": "涉及其他数码/手机/电脑品牌"},
            "notice": ("清单由公开热榜原始条目经模型整理得到，不是平台官方热点榜；"
-                      "该源不提供榜单更新时间。")}
+                      "该源不提供榜单更新时间。"),
+           "link_note": ("链接是小红书搜索页链接（不是笔记链接），需要小红书登录才能打开，"
+                         "不能由服务端抓取内容；可点开后人工查看。")}
     _CACHE[key] = (time.monotonic(), out)
     return out
 

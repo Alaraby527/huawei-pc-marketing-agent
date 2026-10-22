@@ -1322,6 +1322,25 @@
     }
   }
 
+  // 把热点复用进对话：带上名称、短文与搜索词，让模型基于热点本身写文案。
+  // 不抓链接内容——服务端抓小红书需要登录态，会撞风控（见 docs/15）。
+  let organizedCache = [];
+  function useTopic(index) {
+    const topic = organizedCache[index];
+    if (!topic) return;
+    switchView('chat');
+    const parts = ['用这个热点写一条华为 PC 的文案。',
+                   '热点：' + topic.topic,
+                   '类别：' + topic.kind,
+                   '说明：' + (topic.intro || topic.gist)];
+    if ((topic.keywords || []).length) parts.push('相关搜索词：' + topic.keywords.join('、'));
+    parts.push('注意：热点只作选题背景，产品事实仍以知识库为准，不得编造热点细节。');
+    const text = parts.join('\n');
+    input.value = text;
+    input.focus();
+    toast('热点已带入输入框，可先改再发送');
+  }
+
   function renderOrganizedTopics(data) {
     const note = $('hot-source-note');
     const list = $('hot-list');
@@ -1341,12 +1360,23 @@
         + (data.cached ? ' · 缓存' : ' · 刚刚生成');
     }
     const topics = data.topics || [];
+    organizedCache = topics;
     list.innerHTML = topics.length
       ? topics.map((topic, index) =>
           '<article class="topic-card" data-topic="' + index + '">' +
           '<div class="topic-head"><span class="topic-kind">' + escapeHtml(topic.kind) + '</span>' +
           '<strong>' + escapeHtml(topic.topic) + '</strong></div>' +
           '<p class="topic-gist">' + escapeHtml(topic.gist) + '</p>' +
+          (topic.intro ? '<p class="topic-intro">' + escapeHtml(topic.intro) + '</p>' : '') +
+          '<div class="topic-actions">' +
+          '<button type="button" class="chip" data-use-topic="' + index + '">用这个热点写文案</button>' +
+          ((topic.links || [])[0]
+            ? '<a class="chip" href="' + escapeHtml(topic.links[0]) + '" target="_blank" rel="noopener">在小红书打开 ↗</a>'
+            : '') +
+          ((topic.keywords || []).length
+            ? '<span class="topic-kw">搜索词：' + topic.keywords.map(escapeHtml).join(' ／ ') + '</span>'
+            : '') +
+          '</div>' +
           '<p class="topic-src">原始条目：' + (topic.source_titles || [])
             .map(escapeHtml).join(' ／ ') + '</p>' +
           '</article>').join('')
@@ -1842,6 +1872,8 @@
     }
   });
   document.addEventListener('click', (event) => {
+    const use = event.target.closest('[data-use-topic]');
+    if (use) { useTopic(Number(use.getAttribute('data-use-topic'))); return; }
     if (event.target.closest('#task-menu') || event.target.closest('[data-menu]')) return;
     hideTaskMenu();
   });
