@@ -4,6 +4,27 @@
 
 ### Added
 
+- **Calibration tooling for duplicate detection (plan Phase D).** `app/runtime/calibration.py`
+  evaluates a threshold against labelled pairs (precision, recall, false-positive rate,
+  false-negative rate), and refuses to recommend anything from an empty or unlabelled set —
+  an undefined rate is `None`, never a measured `0.0`. It reports the **separation** between
+  the classes, so a clean split is not mistaken for a calibrated value: with every duplicate
+  high and every distinct pair at zero, the recommended number is the grid floor and is
+  labelled `provisional`. `scripts/calibrate_dedup.py --sheet` writes a JSONL labelling
+  sheet from real deliveries; `--constructed` calibrates the lexical layer on pairs whose
+  ground truth follows from how they were built (the plan's Q10-Q14 cases).
+- The sheet separates **deliverables from chat**: a conversational reply is registered in
+  the content memory like any draft, and those rows dominated the most-similar pairs
+  (0.2656 for all replies vs 0.125 for artifact-backed ones). They are excluded by default
+  rather than silently skewing a threshold.
+
+### Note
+
+Real deliveries currently contain **no duplicate positives**: 17 deliverables produce 136
+pairs whose highest lexical similarity is 0.125. A threshold therefore cannot be calibrated
+from real data yet — the tooling says so instead of inventing one.
+
+
 - **Final admission with a real critical section** (`app/runtime/admission.py`, T15). The
   dedup evidence was previously read outside any lock, so two concurrent runs could both
   see a history without the other and both be admitted. Admission now computes the
