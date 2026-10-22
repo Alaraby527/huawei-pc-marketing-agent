@@ -824,6 +824,21 @@ Tests: 583 pass (180 legacy + 403 new/extended).
 
 Tests: 590 pass (180 legacy + 410 new/extended).
 
+### 长度规格裁定：4 处冲突一律采纳新方案，用户要求优先
+
+用户裁定："新方案 350–700 字，如果用户自己要求了字数则按用户要求为主"。
+
+- 4 处长度冲突全部记为 `resolution: adopted_package3`，`UNRESOLVED_CONFLICTS` 归零——
+  不再有"并存待人工裁定"的状态。**实际生效的值本来就已经是新方案**（小红书 350-700、
+  公众号 1000-1800、门店朋友圈 100-200、门店海报主标题 14 字），所以这次是把裁定**记录下来**，
+  而不是改数值。
+- 新增 `SPEC_DECISION`（谁定的、何时、裁定内容）与 `override_rule`。
+- **覆盖规则写进了给模型的指令**：`surface_directive` 现在明确"用户在对话里明确要求的字数优先于
+  下面的建议区间；两者冲突时按用户要求"。放在提示词里而不是只放代码里，是因为模型会拿"规格"
+  去压用户的要求——那正是这条规则要防的。
+
+Tests: 593 pass (180 legacy + 413 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

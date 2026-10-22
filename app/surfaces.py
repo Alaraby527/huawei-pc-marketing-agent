@@ -90,14 +90,26 @@ LIMITS_DISCLAIMER = "editorial_recommendations_not_platform_rules"
 # silently shortening or lengthening existing output is a behaviour change nobody asked for.
 SPEC_CONFLICTS = (
     {"surface": "xiaohongshu", "field": "body", "legacy": "300-600",
-     "package3": "350-700", "note": "旧规则更短；新规格未覆盖旧规则，两者并存待人工裁定"},
+     "package3": "350-700", "resolution": "adopted_package3"},
     {"surface": "store_moments", "field": "chars", "legacy": "60-150（PLATFORM_RULES.moments）",
-     "package3": "100-200", "note": "旧规则名称即“门店朋友圈”，与新规格对应但字数不同"},
+     "package3": "100-200", "resolution": "adopted_package3"},
     {"surface": "store_poster", "field": "headline", "legacy": "12 字内",
-     "package3": "14 字内", "note": "主标题上限不同"},
+     "package3": "14 字内", "resolution": "adopted_package3"},
     {"surface": "wechat_article", "field": "body", "legacy": "600-1200",
-     "package3": "1000-1800", "note": "旧规则更短"},
+     "package3": "1000-1800", "resolution": "adopted_package3"},
 )
+
+# 2026-10-22 裁定：4 处长度冲突一律采纳新方案（package3）值，旧规则作废。
+# 运行时 4 处都已按新值生效，所以没有"并存待裁定"的项了。
+SPEC_DECISION = {
+    "decided_by": "项目负责人",
+    "decided_at": "2026-10-22",
+    "ruling": "4 处长度冲突一律采纳新方案（package3）值；旧规则作废。",
+    # 用户原话："如果用户自己要求了字数则按用户要求为主"
+    "override_rule": "用户在对话里明确要求的字数优先于本规格；规格是建议区间，不是平台规则。",
+}
+
+UNRESOLVED_CONFLICTS: tuple = ()
 
 
 def surface_ids() -> list[str]:

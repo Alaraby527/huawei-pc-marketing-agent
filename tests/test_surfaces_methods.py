@@ -160,3 +160,33 @@ def test_a_price_change_reopens_the_gate():
     assert result["reason"] == "price_changed"
     promise = methods.needs_strategy_confirmation(brand_runs=10, major_promise_changed=True)
     assert promise["reason"] == "major_promise_changed"
+
+def test_the_length_conflicts_are_decided_not_left_open():
+    """4 处长度冲突已裁定采纳新方案值，不再有"并存待裁定"。"""
+    from app import surfaces
+    assert surfaces.UNRESOLVED_CONFLICTS == ()
+    for row in surfaces.SPEC_CONFLICTS:
+        assert row["resolution"] == "adopted_package3", row
+    decision = surfaces.SPEC_DECISION
+    assert decision["decided_by"] and decision["decided_at"]
+    assert "采纳新方案" in decision["ruling"]
+
+
+def test_the_specs_actually_carry_the_adopted_values():
+    """裁定说的和实际生效的值必须一致——否则裁定只是文字。"""
+    from app import surfaces
+    assert surfaces.SURFACES["xiaohongshu"]["body_soft_range"] == (350, 700)
+    assert surfaces.SURFACES["wechat_article"]["body_soft_range"] == (1000, 1800)
+    assert surfaces.SURFACES["store_moments"]["chars_soft_range"] == (100, 200)
+    assert surfaces.SURFACES["store_poster"]["headline_soft_max"] == 14
+
+
+def test_a_user_stated_length_wins_over_the_spec():
+    """用户原话："如果用户自己要求了字数则按用户要求为主"。"""
+    from app import surfaces
+    assert "优先于本规格" in surfaces.SPEC_DECISION["override_rule"]
+    import inspect
+    from app.runtime import context
+    source = inspect.getsource(context.surface_directive)
+    assert "明确要求的字数优先" in source, "提示词里必须写明这条，否则模型会拿规格压用户"
+    assert "两者冲突时按用户要求" in source

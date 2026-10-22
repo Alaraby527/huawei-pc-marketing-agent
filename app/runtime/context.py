@@ -85,7 +85,10 @@ def surface_directive(db: Session, conversation: models.AgentConversation) -> st
         return ""
     row = info["spec"] or {}
     lines = ["【本次交付面已锁定：" + str(row.get("label") or surface_id) + "】",
-             "按该交付面的规格写作："]
+             "按该交付面的规格写作：",
+             # 2026-10-22 裁定：用户明确要求的字数优先于规格。规格只是编辑建议，不是平台规则，
+             # 所以不能拿它去覆盖用户说过的要求。
+             "- 用户在对话里明确要求的字数优先于下面的建议区间；两者冲突时按用户要求。"]
     if row.get("body_soft_range"):
         lines.append("- 正文建议 " + "-".join(str(v) for v in row["body_soft_range"])
                      + " 字（编辑建议，不是平台规则）")
