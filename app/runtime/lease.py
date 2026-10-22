@@ -171,6 +171,33 @@ def describe(db: Session, run_id: str) -> dict | None:
             "is_ours": row.owner == worker_id(), "reason": row.reason}
 
 
+def single_worker() -> bool:
+    """Whether this deployment runs one worker, which changes what a restart can conclude.
+
+    A TTL alone cannot tell a crashed worker from a live one on another host, so a
+    multi-worker deployment must wait for expiry. A single-worker deployment knows
+    something stronger: it just started, so any lease it does not own belongs to a process
+    that no longer exists. Set ``LG_LEASE_SINGLE_WORKER=0`` when that stops being true.
+    """
+    return str(os.getenv("LG_LEASE_SINGLE_WORKER", "1")).strip().lower() not in ("0", "false",
+                                                                               "no")
+
+
+def reclaim_stale_on_start(db: Session, *, assume_single_worker: bool | None = None) -> int:
+    """Expire leases left by a previous process when this deployment is single-worker."""
+    single = single_worker() if assume_single_worker is None else assume_single_worker
+    if not single:
+        return 0
+    me = worker_id()
+    now = _now()
+    updated = db.execute(
+        models.AgentRunLease.__table__.update()
+        .where(models.AgentRunLease.state == HELD,
+               models.AgentRunLease.owner != me)
+        .values(state=RELEASED, released_at=now, reason="previous_process_gone"))
+    return int(updated.rowcount or 0)
+
+
 def abandoned(db: Session, ttl: float | None = None) -> list[str]:
     """Runs whose lease is held past its expiry — i.e. their worker stopped beating.
 

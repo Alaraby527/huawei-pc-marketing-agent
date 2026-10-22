@@ -227,3 +227,40 @@ def test_orphan_recovery_still_handles_runs_without_a_lease():
     db.commit()
     assert db.get(lease.models.AgentRun, run.id).status == "needs_reconciliation"
     db.close()
+
+
+def test_startup_reclaim_releases_leases_from_a_previous_process():
+    """Single worker: a lease we do not own at startup belongs to a process that is gone."""
+    db = _db()
+    lease.claim(db, run_id="r1", conversation_id="c1", owner="previous-process", ttl=600)
+    db.commit()
+    assert lease.describe(db, "r1")["expired"] is False
+
+    released = lease.reclaim_stale_on_start(db, assume_single_worker=True)
+    db.commit()
+    assert released == 1
+    info = lease.describe(db, "r1")
+    assert info["state"] == "released"
+    assert info["reason"] == "previous_process_gone"
+    db.close()
+
+
+def test_startup_reclaim_is_skipped_for_a_multi_worker_deployment():
+    """With more than one worker a live lease may belong to a healthy peer."""
+    db = _db()
+    lease.claim(db, run_id="r1", conversation_id="c1", owner="healthy-peer", ttl=600)
+    db.commit()
+    assert lease.reclaim_stale_on_start(db, assume_single_worker=False) == 0
+    db.commit()
+    assert lease.describe(db, "r1")["state"] == "held"
+    db.close()
+
+
+def test_startup_reclaim_never_touches_our_own_lease():
+    db = _db()
+    lease.claim(db, run_id="r1", conversation_id="c1")  # owner is this process
+    db.commit()
+    assert lease.reclaim_stale_on_start(db, assume_single_worker=True) == 0
+    db.commit()
+    assert lease.describe(db, "r1")["state"] == "held"
+    db.close()

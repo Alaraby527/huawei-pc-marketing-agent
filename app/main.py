@@ -61,8 +61,18 @@ def _recover_orphaned_runs() -> int:
     except Exception:  # noqa: BLE001 - startup must not fail on a database problem
         return 0
     try:
+        # Leases first: a single-worker deployment can conclude that a lease it does not own
+        # belongs to a process that is gone, which makes recovery immediate instead of
+        # waiting out a TTL. This needs the database, exactly like the recovery below —
+        # doing it before the setup is why it silently skipped with a RuntimeError.
+        released = lg_runner.lease.reclaim_stale_on_start(session)
+        if released:
+            print(f"[startup] released {released} lease(s) left by a previous process")
         count = lg_runner.recover_orphaned_runs(session)
         session.commit()
+        if count:
+            print(f"[startup] marked {count} interrupted run(s) as needs_reconciliation "
+                  f"(resumable via POST /api/v2/runs/{{id}}/resume)")
         return count
     except Exception:  # noqa: BLE001
         session.rollback()
