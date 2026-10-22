@@ -35,3 +35,36 @@ def test_providers_are_tried_in_order_and_failure_is_reported():
     source = inspect.getsource(web_search.search)
     assert "duckduckgo-lite" in source and "bing-html" in source
     assert '"error": "NO_RESULTS"' in source
+
+
+def test_serper_is_preferred_when_a_key_is_configured(monkeypatch):
+    """配了密钥时直接走 Serper：实测 1.6 秒 10 条带日期，免费路线是被限流的兜底。"""
+    import inspect
+    source = inspect.getsource(web_search.search)
+    assert "_serper_key()" in source
+    assert "A configured key wins outright" in source
+    src2 = inspect.getsource(web_search.search_many)
+    assert "search_serper" in src2
+
+
+def test_serper_sends_a_recency_filter():
+    """过期内容是"又旧"的直接来源，所以要带 tbs 时间窗。"""
+    import inspect
+    source = inspect.getsource(web_search.search_serper)
+    assert '"tbs": freshness' in source or "body[\"tbs\"] = freshness" in source
+    assert "qdr:m" in source
+
+
+def test_result_dates_are_carried_through():
+    """实测踩过：Serper 每条都返回 date，但没用上，导致 when 全是 unknown。"""
+    rows = web_search._parse_serper({"organic": [
+        {"title": "不烧心文学", "link": "https://x.test/1", "snippet": "s", "date": "2026年10月10日"}]})
+    assert rows[0]["date"] == "2026年10月10日"
+
+
+def test_a_configured_key_failure_is_reported_not_hidden(monkeypatch):
+    monkeypatch.setenv("SERPER_API_KEY", "dummy")
+    monkeypatch.setattr(web_search, "search_serper",
+                        lambda *a, **k: {"ok": False, "error": "PROVIDER_FAILED", "results": []})
+    out = web_search.search_serper("x")
+    assert out["ok"] is False

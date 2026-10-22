@@ -110,11 +110,17 @@ def test_the_response_states_what_the_links_are_and_are_not():
 
 
 def test_search_wording_is_written_the_way_that_actually_works():
-    """实测：查询词决定成败。带年份 + 热词/梗 才有用，"最近爆火的梗" 会按字面返回歌曲。"""
+    """实测：查询词决定成败。
+
+    带年份的写法（"2026 网络热词"）返回的是 4 月与上半年的文章，是"又旧"的来源；现在时间窗
+    交给 tbs=qdr:m，查询词改成"最近/本月/现在最火"这类近期指向词，并保留"是什么梗/出处"这种
+    在实测中能返回解析型文章的措辞。
+    """
     joined = " ".join(hot_topics.SEARCH_QUERIES)
-    assert "2026" in joined
-    assert "网络热词" in joined or "热门梗" in joined
-    assert "最近爆火的梗" not in joined
+    assert "梗" in joined
+    assert any(word in joined for word in ("最近", "本月", "现在最火")), "要有近期指向"
+    assert "上半年" not in joined, "上半年会把结果拉回半年前"
+    assert "最近爆火的梗" not in joined, "这个措辞会按字面返回歌曲《最近》"
 
 
 def test_irrelevant_results_are_dropped_deterministically():
@@ -132,3 +138,17 @@ def test_the_prompt_does_not_ask_for_a_huawei_connection_while_filtering_competi
     assert "不需要你判断" in prompt
     # 也不许用"资料未说明"填充
     assert "不要用" in prompt and "资料未说明" in prompt
+
+
+def test_search_only_looks_at_the_recent_window():
+    """实测：'2026 网络热词' 返回的是 4 月与上半年的文章，正是"又旧"的来源。"""
+    assert hot_topics.SEARCH_FRESHNESS == "qdr:m"
+    import inspect
+    assert "SEARCH_FRESHNESS" in inspect.getsource(hot_topics.organize_from_search)
+
+
+def test_the_prompt_requires_the_material_date_not_a_guess():
+    """实测踩过：Serper 每条都带 date，但提示词没要求用，结果 when 全是 unknown。"""
+    prompt = hot_topics.SEARCH_SYSTEM
+    assert "必须优先填资料里的 date 字段" in prompt
+    assert "不要写 unknown，除非 date 确实为空" in prompt

@@ -27,6 +27,8 @@ No API key: DuckDuckGo lite renders plain HTML tables, with Bing's HTML page as 
 from __future__ import annotations
 
 import html
+import json
+import os
 import re
 import time
 import urllib.parse
@@ -92,16 +94,66 @@ def _parse_bing(body: str) -> list[dict]:
     return rows
 
 
+def _serper_key() -> str:
+    return (os.getenv("SERPER_API_KEY") or "").strip()
+
+
+def _parse_serper(payload: dict) -> list[dict]:
+    rows = []
+    for item in payload.get("organic") or []:
+        rows.append({"title": str(item.get("title") or ""),
+                     "url": str(item.get("link") or ""),
+                     "snippet": str(item.get("snippet") or "")[:400],
+                     "date": str(item.get("date") or "")})
+    return rows
+
+
+def search_serper(query: str, *, limit: int = 8, freshness: str = "qdr:m",
+                  timeout: float = 25.0) -> dict:
+    """Serper (Google) - the provider that actually works, when a key is configured.
+
+    Measured against the free routes: 1.6 s for 10 results with a **date per result** and a
+    ``tbs`` recency filter, where the keyless routes were rate-limited and returned SEO
+    listicles from months earlier. The date is what makes 时效性 answerable instead of guessed.
+    """
+    key = _serper_key()
+    if not key:
+        return {"ok": False, "error": "NO_KEY", "results": []}
+    body = {"q": query, "gl": "cn", "hl": "zh-cn", "num": max(1, min(int(limit), 20))}
+    if freshness:
+        body["tbs"] = freshness          # qdr:d / qdr:w / qdr:m / qdr:y
+    request = urllib.request.Request(
+        "https://google.serper.dev/search", data=json.dumps(body).encode(), method="POST",
+        headers={"X-API-KEY": key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read(2_000_000))
+    except Exception as error:  # noqa: BLE001 - surfaced to the caller, never swallowed
+        return {"ok": False, "error": "PROVIDER_FAILED", "message": str(error)[:160], "results": []}
+    rows = [row for row in _parse_serper(payload) if row["title"] and row["url"]]
+    return {"ok": bool(rows), "provider": "serper", "query": query, "results": rows[:limit],
+            "freshness": freshness, "credits": payload.get("credits"),
+            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "error": "" if rows else "NO_RESULTS"}
+
+
 def search(query: str, *, limit: int = 8, timeout: float = 15.0) -> dict:
     """One query, two providers tried in order. Reports which one answered."""
     query = str(query or "").strip()
     if not query:
         return {"ok": False, "error": "EMPTY_QUERY", "results": []}
+    if _serper_key():
+        # A configured key wins outright: the keyless routes are a fallback, not an equal.
+        outcome = search_serper(query, limit=limit)
+        if outcome.get("ok"):
+            return {**outcome, "attempted": ["serper"]}
+        errors = [f"serper: {outcome.get('error')} {outcome.get('message', '')}".strip()]
+    else:
+        errors = []
     attempts = (
         ("duckduckgo-lite", "https://lite.duckduckgo.com/lite/?q=" + urllib.parse.quote(query), _parse_ddg),
         ("bing-html", "https://www.bing.com/search?q=" + urllib.parse.quote(query), _parse_bing),
     )
-    errors = []
     for name, url, parser in attempts:
         try:
             rows = parser(_get(url, timeout))
@@ -118,11 +170,14 @@ def search(query: str, *, limit: int = 8, timeout: float = 15.0) -> dict:
             "errors": errors, "attempted": [item[0] for item in attempts]}
 
 
-def search_many(queries: list[str], *, limit_each: int = 6) -> dict:
+def search_many(queries: list[str], *, limit_each: int = 6, freshness: str = "qdr:m") -> dict:
     """Several queries, de-duplicated by URL. Used to cover one topic from a few angles."""
     seen, results, providers, errors = set(), [], [], []
     for query in queries:
-        outcome = search(query, limit=limit_each)
+        outcome = (search_serper(query, limit=limit_each, freshness=freshness)
+                   if _serper_key() else search(query, limit=limit_each))
+        if _serper_key() and not outcome.get("ok"):
+            outcome = search(query, limit=limit_each)
         if outcome.get("ok"):
             providers.append(outcome.get("provider"))
             for row in outcome["results"]:

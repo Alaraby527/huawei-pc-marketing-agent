@@ -66,11 +66,14 @@ ORGANIZE_SYSTEM = """你在为华为 PC 的门店营销整理一份「当前热�
 # entry for the song 最近 and a 网易云 track, and "网络热梗 盘点" returned speed-test sites. The
 # year plus 热词/梗 is what works, so the queries are written that way.
 SEARCH_QUERIES = (
-    "2026 网络热词",
-    "2026 最新热门梗",
-    "2026 上半年 网络热词 top",
-    "网络流行语 2026 盘点",
+    "网络热梗 是什么梗",
+    "最近 热梗 盘点 本月",
+    "现在最火的梗",
+    "热梗 出处 含义 解析",
 )
+
+# 只搜最近一个月：过期内容是"又旧"的直接来源（实测'2026 网络热词'返回的是 4 月与上半年的文章）。
+SEARCH_FRESHNESS = "qdr:m"
 
 # A result has to look like it is about internet language at all. Deterministic, and it is what
 # removes the speed-test and music results above.
@@ -83,6 +86,7 @@ SEARCH_SYSTEM = """你在整理一份「当前网络热梗」清单，供后续�
 规则：
 1. 只整理资料里**确实出现**的梗，不得添加资料里没有的梗，不得编造来源与时间。
 2. 摘要是你的事实依据：介绍里提到的时间、出处、含义都必须能在摘要或标题里找到依据。
+   每条资料的 date 字段是它的发布时间，when 要填这个日期（不要写 unknown，除非 date 确实为空）。
 3. 摘要里没有的信息不要推测。**但不要用"资料未说明"这类句子填充**——
    资料没写就少写一点，把已有的信息写清楚写自然。
 4. 介绍要**读起来通顺自然**，像在跟同事讲这个梗，而不是逐条复述资料；
@@ -105,7 +109,7 @@ SEARCH_SYSTEM = """你在整理一份「当前网络热梗」清单，供后续�
 - intro：约 100 字介绍，讲清出处、含义、怎么用；**只能写资料里有的信息**
 - evidence：你依据的是哪条资料（写资料标题）
 - source_urls：对应资料的链接（数组，必须来自给定资料）
-- when：资料里写的时间；资料没写就写 unknown
+- when：**必须优先填资料里的 date 字段**（那是搜索结果自带的发布时间）；date 为空再写 unknown
 
 只输出 JSON：{"topics":[...],"note":"一句话说明这批资料的时间范围与局限"}"""
 
@@ -127,7 +131,7 @@ def organize_from_search(*, force: bool = False) -> dict:
     if cached and not force and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
         return {**cached[1], "cached": True}
 
-    found = search_many(list(SEARCH_QUERIES), limit_each=6)
+    found = search_many(list(SEARCH_QUERIES), limit_each=6, freshness=SEARCH_FRESHNESS)
     if not found.get("ok"):
         return {"ok": False, "error": "SEARCH_FAILED", "search": found,
                 "message": "搜索无结果；不得用模型记忆冒充近期热梗"}
@@ -139,7 +143,7 @@ def organize_from_search(*, force: bool = False) -> dict:
                 "dropped": dropped,
                 "message": "搜索有返回但没有一条是关于网络用语的；不得用无关结果凑清单"}
     kept = [{"n": index + 1, "title": row["title"], "snippet": row["snippet"][:300],
-             "url": row["url"]} for index, row in enumerate(relevant)]
+             "url": row["url"], "date": row.get("date") or ""} for index, row in enumerate(relevant)]
     by_n = {row["n"]: row for row in kept}
     try:
         result, meta = chat_json_messages(

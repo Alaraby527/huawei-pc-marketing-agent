@@ -497,6 +497,33 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ### Added
 
+- **Serper (Google) as the preferred search provider**, configured with `SERPER_API_KEY` from
+  `.private/search.env` (outside the repo, mode 600, never printed or committed). The keyless
+  routes become a fallback rather than an equal. Measured: **1.6 s for 10 results, with a date on
+  each**, against rate-limited keyless routes returning SEO listicles months old.
+- Recency is now enforced by the provider (`tbs=qdr:m`, last month) and the queries are worded for
+  it ("最近/本月/现在最火", "是什么梗/出处/含义"), instead of carrying a year - "2026 网络热词"
+  returned April and first-half articles, which is exactly where "又旧" came from.
+- `date` is carried from each search result into the material and the prompt **requires** using it.
+  First run had every `when` as `unknown` despite Serper returning a date per result.
+
+### Result
+
+The list now contains the meme the web version produced, with a current date and a real source:
+**不烧心文学 2026年10月10日** ("贵是贵点，但吃了不烧心" 等台词掀起模仿风潮，中国媒体称其为
+"不烧心文学"), plus **从夯到拉 / 爱你老己 / 手搓 2026年9月27日** sourced to 《咬文嚼字》责编施隽南.
+Items from undated listicles are marked `unknown` rather than given a guessed date.
+
+### Fixed
+
+- `NameError: name 'os' is not defined` in `app/web_search.py` - `os.getenv` was used without
+  importing `os`. A plain `import` check passed because the error only fires on call, and the
+  endpoint returned a 21-byte error body until it was caught.
+- `.private/search.env` needed `export`: a bare `SERPER_API_KEY=...` sets a shell variable but
+  child processes never see it, so the key silently loaded as missing.
+
+Tests: 566 pass (180 legacy + 386 new/extended).
+
 - **联网搜索 `app/web_search.py`** (no API key) and `organize_from_search`, now the default for
   the 热点榜单 refresh. This is what closes the quality gap, and the reason was measured, not
   guessed: asked for recent memes the main model **refused honestly** ("我的知识截止时间早于该
