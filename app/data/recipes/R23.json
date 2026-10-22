@@ -1,0 +1,34 @@
+{
+  "recipe_id": "R23",
+  "version": "1.0",
+  "name": "静物生活方式",
+  "family": "still_life",
+  "mechanism": "让产品进入可信的日常",
+  "layout": "桌面或阅读角与产品合成",
+  "palette": "木色、米白、自然绿",
+  "environment_details": "日常道具、柔和背景光",
+  "channels": [
+    "xhs",
+    "moments"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "使用与原图角度相容的场景",
+  "avoid": [
+    "没有真实体验资料不写亲测",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。让产品进入可信的日常。布局：桌面或阅读角与产品合成。环境配色：木色、米白、自然绿。细节：日常道具、柔和背景光。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "low",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

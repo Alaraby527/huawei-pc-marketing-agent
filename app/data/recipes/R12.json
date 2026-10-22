@@ -1,0 +1,34 @@
+{
+  "recipe_id": "R12",
+  "version": "1.0",
+  "name": "黏土世界",
+  "family": "clay",
+  "mechanism": "真实产品置于手工道具世界",
+  "layout": "黏土道具围绕硬质产品",
+  "palette": "奶油黄、浅蓝、陶红",
+  "environment_details": "圆润手工道具、细微压痕",
+  "channels": [
+    "xhs",
+    "moments"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "黏土效果仅作用于道具",
+  "avoid": [
+    "不把产品变玩具或重塑外形",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。真实产品置于手工道具世界。布局：黏土道具围绕硬质产品。环境配色：奶油黄、浅蓝、陶红。细节：圆润手工道具、细微压痕。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "low",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

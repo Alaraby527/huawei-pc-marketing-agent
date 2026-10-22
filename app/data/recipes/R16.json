@@ -1,0 +1,34 @@
+{
+  "recipe_id": "R16",
+  "version": "1.0",
+  "name": "知识手账",
+  "family": "notebook",
+  "mechanism": "一页一个问题与答案",
+  "layout": "产品卡片配事实注释区",
+  "palette": "白纸、墨蓝、柠檬黄",
+  "environment_details": "手写线条、标签、索引",
+  "channels": [
+    "xhs",
+    "work_account"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "产品原图不变手绘",
+  "avoid": [
+    "注释只能引用核实事实",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。一页一个问题与答案。布局：产品卡片配事实注释区。环境配色：白纸、墨蓝、柠檬黄。细节：手写线条、标签、索引。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "medium",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

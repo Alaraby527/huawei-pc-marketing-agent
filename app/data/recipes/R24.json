@@ -1,0 +1,35 @@
+{
+  "recipe_id": "R24",
+  "version": "1.0",
+  "name": "超现实波普拼贴",
+  "family": "pop",
+  "mechanism": "以一个超大日常物件建立冲突",
+  "layout": "平涂背景、剪贴道具和真实产品",
+  "palette": "奶油色加一种鲜亮强调色",
+  "environment_details": "粗轮廓、平面色块、单一异常",
+  "channels": [
+    "xhs",
+    "moments",
+    "store_poster"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "产品不去色不受平面滤镜影响",
+  "avoid": [
+    "不照搬黑白化主体规则",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。以一个超大日常物件建立冲突。布局：平涂背景、剪贴道具和真实产品。环境配色：奶油色加一种鲜亮强调色。细节：粗轮廓、平面色块、单一异常。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "low",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

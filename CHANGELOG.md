@@ -4,6 +4,33 @@
 
 ### Added
 
+- **Asset resolver** (`app/assets.py`, package 1's AssetResolver). Roles and rights derived
+  from the knowledge base's own real provenance - `source.kind`, `source.title` and
+  `verification.sha256` - rather than invented. Two honesty rules are load-bearing:
+  **provenance is not a licence**, so `local_official_export` reports
+  `provenance_recorded_terms_unreviewed` and never an approval; and roles are **derived**, with
+  `role_source` saying so. Enforcement follows the budget ledger's pattern:
+  `IMAGE_REQUIRE_ASSET_RIGHTS=1` makes the missing rights decision blocking, off by default and
+  stated as such. Added to `find_product_images` as additive fields plus a shared
+  `pick_reference` used by both the studio and the agent tool.
+- **Recipe release gate** (`app/recipes.py`, 24 recipes copied from package 1 as its NOTICE
+  intends). **All 24 ship `unverified_real_images`, so the production-usable count is 0** and
+  `select` refuses with the reason. Package 1's "首批建议 R01/R02/R04/R06/R09/R16/R22/R23" is
+  exposed as `suggested_first_batch` - a testing suggestion, not an approval - and `approve()`
+  deliberately **cannot** flip `release_status`, because the plan forbids treating an edited
+  JSON as a production approval. Package 1's channel vocabulary maps explicitly onto this
+  project's surfaces, including `moments` mapping to both Moments faces since that package
+  never splits them.
+
+### Fixed
+
+- The asset resolver read images with `.get()`, but `verified_images` returns objects on some
+  paths and dicts on others - the existing code read both through `_image_field`. A legacy test
+  caught the resulting AttributeError taking the whole image tool down; the resolver now reads
+  either shape, and regression tests cover both and a mixed batch.
+
+Tests: 471 pass (180 legacy + 291 new/extended).
+
 - **Cost ledger** (`app/cost_ledger.py`, `cost_reservations`, package 1's budget state
   machine). Reserve before submitting a paid attempt, settle to the real amount, or release an
   attempt that was never charged. Three plan rules are enforced in code: no currency means no

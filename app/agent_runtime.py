@@ -73,7 +73,8 @@ TOOL_SPECS = [
     {"name": "compare_products", "description": "按同一字段口径比较若干型号，不生成综合排名",
      "parameters": {"type": "object", "properties": {"product_ids": {"type": "array", "items": {"type": "string"}}},
                     "required": ["product_ids"]}},
-    {"name": "find_product_images", "description": "查找型号对应的核验产品原图",
+    {"name": "find_product_images",
+     "description": "查找型号对应的核验产品原图（含角色与授权状态；溯源不等于授权）",
      "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}},
                     "required": ["product_id"]}},
     {"name": "generate_scene_image",
@@ -572,10 +573,17 @@ async def _tool_images(ctx, args):
                                                ["屏幕", "接口", "尺寸与重量", "电池"])
     except Exception as error:
         return {"ok": False, "error": "IMAGE_READ_FAILED", "message": str(error)[:160]}
+    # Roles and rights are additive fields: the existing image_id/caption/access_url contract
+    # is unchanged, and the resolver only says more about the same images.
+    from . import assets
+    resolved = assets.resolve(images, product_id=getattr(product, "product_id", ""))
     return {"ok": True, "images": [{"image_id": _image_field(image, "image_id"),
                                     "caption": _image_field(image, "caption"),
                                     "access_url": _image_field(image, "access_url")}
                                    for image in images[:6]],
+            "assets": resolved["assets"][:6],
+            "by_role": resolved["by_role"], "by_rights": resolved["by_rights"],
+            "rights_note": resolved["note"],
             "issues": issues[:3]}
 
 

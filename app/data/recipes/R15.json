@@ -1,0 +1,35 @@
+{
+  "recipe_id": "R15",
+  "version": "1.0",
+  "name": "建筑光影",
+  "family": "architecture",
+  "mechanism": "以建筑比例和光影构图",
+  "layout": "真实产品与柱廊几何呼应",
+  "palette": "石灰、沙白、蓝影",
+  "environment_details": "墙面、窗影、对角线",
+  "channels": [
+    "work_account",
+    "moments",
+    "store_poster"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "光影不能抹除产品标识或改色",
+  "avoid": [
+    "不强制透视拉伸以匹配建筑",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。以建筑比例和光影构图。布局：真实产品与柱廊几何呼应。环境配色：石灰、沙白、蓝影。细节：墙面、窗影、对角线。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "low",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

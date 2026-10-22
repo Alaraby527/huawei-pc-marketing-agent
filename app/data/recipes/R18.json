@@ -1,0 +1,35 @@
+{
+  "recipe_id": "R18",
+  "version": "1.0",
+  "name": "节气自然",
+  "family": "seasonal",
+  "mechanism": "用当季环境表达情绪",
+  "layout": "产品静置与季节背景",
+  "palette": "按季节选择的两种环境色",
+  "environment_details": "日光、风、叶片或天空",
+  "channels": [
+    "xhs",
+    "moments",
+    "store_poster"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "环境不附着于产品材质",
+  "avoid": [
+    "不把虚构天气称当地实况",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。用当季环境表达情绪。布局：产品静置与季节背景。环境配色：按季节选择的两种环境色。细节：日光、风、叶片或天空。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "low",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}

@@ -26,7 +26,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import agent_runtime, image_capabilities, models
+from . import agent_runtime, assets, image_capabilities, models
 from .contracts import Platform
 from .evidence import load_catalog, verified_images
 from .retrieval import get_asset, store_asset
@@ -135,6 +135,9 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
                     "scenario": str(task.get("scenario") or "")},
         "candidates": [row for row in (task.get("candidates") or []) if isinstance(row, dict)],
         "images": images,
+        # Roles and rights are derived from the KB's own provenance and reported as such;
+        # the studio shows them so nobody assumes an official export is an authorisation.
+        "assets": assets.resolve(images, product_id=product_ref.get("product_id", "")),
         "copy": copy,
         "task": {key: task.get(key) for key in ("runner_version", "artifact_count")
                  if task.get(key) is not None},
@@ -189,14 +192,13 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
 
     material = await materials(db, conversation)
     images = material.get("images") or []
-    chosen = next((row for row in images if row.get("image_id") == image_id), None)
+    # One selection rule for the studio and the agent tool, including the rights gate.
+    chosen = assets.pick_reference(images, image_id=image_id)
     if chosen is None:
-        chosen = next((row for row in images
-                       if any(word in str(row.get("caption") or "")
-                              for word in ("主视觉", "正面产品", "精致产品"))), None)
-    if chosen is None:
-        chosen = images[0] if images else None
-    if chosen is None:
+        if images and assets.require_rights():
+            return {"ok": False, "error": "ASSET_RIGHTS_UNVERIFIED",
+                    "message": "素材授权状态未经复核，按 IMAGE_REQUIRE_ASSET_RIGHTS 设置拒绝生成",
+                    "assets": assets.resolve(images)["by_rights"]}
         return {"ok": False, "error": "NO_REFERENCE_IMAGE",
                 "message": "本次创作还没有绑定的产品原图；先在对话里确认产品，或在工作室选择产品"}
 

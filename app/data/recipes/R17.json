@@ -1,0 +1,34 @@
+{
+  "recipe_id": "R17",
+  "version": "1.0",
+  "name": "服务清单",
+  "family": "service",
+  "mechanism": "把门店服务变成易读路径",
+  "layout": "产品区与三步信息区分离",
+  "palette": "白、品牌允许强调色、深灰",
+  "environment_details": "编号、短句、清楚分区",
+  "channels": [
+    "work_account",
+    "store_poster"
+  ],
+  "allowed_routes": [
+    "compose_original",
+    "reference_edit"
+  ],
+  "product_lock": "保持产品全貌与清晰度",
+  "avoid": [
+    "不编造免费服务或服务承诺",
+    "不修改SKU、配色、比例、结构与Logo",
+    "不生成未经核实的卖点、价格或二维码"
+  ],
+  "background_prompt": "为真实产品合成创建独立背景。把门店服务变成易读路径。布局：产品区与三步信息区分离。环境配色：白、品牌允许强调色、深灰。细节：编号、短句、清楚分区。产品预留区保持干净，主体本身由原图后期叠加。本图不出现产品、替代商品、品牌标识、正文、二维码。",
+  "variation_axes": [
+    "环境色",
+    "道具",
+    "留白位置",
+    "标题布局"
+  ],
+  "information_density": "medium",
+  "release_status": "unverified_real_images",
+  "rights_note": "本次原创规则；不附带第三方图片、字体或许可。"
+}
