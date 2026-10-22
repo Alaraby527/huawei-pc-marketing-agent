@@ -4,6 +4,44 @@
 
 ### Added
 
+- **Reference-image generation, wired and gated** (`generate_scene_image`, 13th tool).
+  A knowledge-base *verified* product image becomes the reference, the prompt describes the
+  scene, and the result is returned as an asset labelled `kind = "generated_scene"` with a
+  notice that it is not a product photo. Output stays separate from real product imagery,
+  and there is no compositing path: this is generative re-drawing, as the user chose.
+- **Probe-backed capability registry** (`app/image_capabilities.py`). Capability is recorded
+  per `(model, has_reference_image)` with three states: verified yes, verified no, and
+  unknown. Text-to-image working says nothing about reference input, and the probes prove
+  that matters here: `gpt-image-2.5` accepts a reference image, while `gpt-image-2-w`
+  returns 503 for it but 200 without. An unprobed combination is `unverified` and is never
+  reported as working. A deployment can supply its own evidence file.
+- The registry also selects the request shape: `image_channel` now skips the
+  `/images/edits` attempt that was measured at a 90 s read timeout, saving about a minute
+  and a half per image on this endpoint.
+- **Budget guard**: a reference-image call takes 24-102 s, so the tool refuses early with
+  `INSUFFICIENT_TIME` when the run's remaining budget cannot fit one, rather than starting a
+  call that would strand the delivery.
+
+### Measured (probe record: docs/20)
+
+| probe | result |
+|---|---|
+| `1080x1440` accepted | yes - the plan's exact spec, no resizing needed |
+| returned size | `1086x1448` for a `1080x1440` request (~+0.55%) |
+| transparent background | PNG RGBA (color type 6), but 104 s vs ~24 s |
+| `gpt-image-2.5` + reference | 200, real PNG, 24-102 s |
+| `gpt-image-2-w` + reference | 503 three times |
+| `/images/edits` | 90.8 s read timeout, no response |
+
+### Honest limit
+
+The output is a **generative re-drawing, not a faithful reproduction**: the model, colour,
+round-key keyboard and wallpaper are kept, while body proportions, viewing angle and the
+exact key layout change (a front view came back as a 3/4 perspective). It must not be used
+as evidence of product appearance, ports or keyboard layout.
+
+Tests: 348 pass.
+
 - **Reliable handoff outbox** (`app/runtime/outbox.py`, `agent_outbox_events`, T16). The
   event is written **in the same transaction as the content registration**, as the plan
   requires, so a delivery cannot exist with no record of what should happen next. Delivery

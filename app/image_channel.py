@@ -18,6 +18,8 @@ import os
 import urllib.error
 import urllib.request
 
+from . import image_capabilities
+
 DEFAULT_BASE = os.getenv("IMAGE_API_BASE_URL", "https://maas.qianwenaiapi.com/compatible-mode/v1").rstrip("/")
 DEFAULT_MODEL = os.getenv("IMAGE_MODEL", "qwen-image-3.0-pro")
 
@@ -188,10 +190,17 @@ def _attempt(prompt: str, image_bytes: bytes | None, mime: str, model: str, size
         # Prefer the standard OpenAI edits endpoint (gpt-image family). Some
         # gateways reject multipart (404/405) or drop the connection; in both
         # cases fall through to the image field on /images/generations.
-        try:
-            return _edits(prompt, image_bytes, mime, model, size, n, timeout, base, key)
-        except ImageChannelError:
-            pass
+        #
+        # When the probe registry already records which shape works, follow it: on the
+        # configured endpoint /images/edits does not answer within 90 s while
+        # generations+image answers in ~25-100 s, so trying edits first wastes a minute
+        # and a half on every single image.
+        shape = str((image_capabilities.probe_for(model, True) or {}).get("input_shape") or "")
+        if "edits" in shape or not shape:
+            try:
+                return _edits(prompt, image_bytes, mime, model, size, n, timeout, base, key)
+            except ImageChannelError:
+                pass
     payload = {"model": model, "prompt": prompt[:1800], "size": size,
                "n": max(1, min(int(n), 4))}
     if image_bytes:
@@ -217,7 +226,17 @@ def generate(prompt: str, image_bytes: bytes | None = None, mime: str = "image/p
     """
     if not os.getenv("IMAGE_API_KEY"):
         raise ImageChannelError("图像通道未配置 IMAGE_API_KEY", 503)
-    resolved = model or DEFAULT_MODEL
+    # A reference-image request and a text-to-image request are different capabilities,
+    # probed separately: the same model can do one and not the other.
+    resolved = model or (image_capabilities.reference_model() if image_bytes
+                         else DEFAULT_MODEL)
+    if image_bytes:
+        verdict = image_capabilities.supports_reference(resolved)
+        if verdict is False:
+            info = image_capabilities.describe(resolved, True)
+            raise ImageChannelError(
+                "模型 " + resolved + " 不支持参考图输入，已按探针证据拒绝调用。证据："
+                + str(info.get("evidence") or "")[:140], 503)
     resolved_size = size or size_for_ratio(ratio or 1.0)
     try:
         images = _attempt(prompt, image_bytes, mime, resolved, resolved_size, n, timeout,
@@ -244,9 +263,15 @@ def generate_background(prompt: str, model: str | None = None, size: str | None 
 
 def generate_from_product(product_bytes: bytes, prompt: str, mime: str = "image/png",
                           model: str | None = None, size: str | None = None,
-                          n: int = 1, ratio: float | None = None) -> tuple[list[bytes], str]:
-    """Image-to-image: product photo + prompt -> (scene images, channel label)."""
-    return generate(prompt, product_bytes, mime, model, size, n, ratio=ratio)
+                          n: int = 1, ratio: float | None = None,
+                          timeout: int = 300) -> tuple[list[bytes], str]:
+    """Image-to-image: product photo + prompt -> (scene images, channel label).
+
+    ``timeout`` is the per-request wall clock. A reference-image call took 24-102 s on the
+    configured endpoint, so a caller holding a shorter budget must pass its own limit rather
+    than inherit the 300 s default.
+    """
+    return generate(prompt, product_bytes, mime, model, size, n, ratio=ratio, timeout=timeout)
 
 
 SIZE_CANDIDATES = ["1024x1024", "1024x1365", "1024x1536", "1536x1024", "1365x1024",

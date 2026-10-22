@@ -33,6 +33,7 @@ from .grounding import (_FIELD_ALIASES, _field_hint, _normalized, check_artifact
                         extract_claims, records_from_facts, sanitize_artifact)
 from .model import ModelError, chat_json_messages, chat_tools
 from .posters import render_page
+from .image_channel import RATIO_PRESETS
 from .retrieval import get_asset, store_asset
 
 SYSTEM_PROMPT = """你是华为 PC 营销内容助手。用户表达目标，你负责理解、查证、创作、修改和交付，不要求对方理解工具或走完表单。
@@ -75,6 +76,15 @@ TOOL_SPECS = [
     {"name": "find_product_images", "description": "查找型号对应的核验产品原图",
      "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}},
                     "required": ["product_id"]}},
+    {"name": "generate_scene_image",
+     "description": "用知识库核验产品图作参考、按提示词生成场景图（生成图，不是产品实物照）",
+     "parameters": {"type": "object", "properties": {
+         "product_id": {"type": "string"},
+         "prompt": {"type": "string"},
+         "image_id": {"type": "string"},
+         "size": {"type": "string"},
+         "ratio": {"type": "string", "enum": ["kb", "3:4", "1:1", "4:3", "16:9", "9:16"]}},
+         "required": ["product_id", "prompt"]}},
     {"name": "search_topics", "description": "查找场景相关热点线索，标注实时/兜底来源",
      "parameters": {"type": "object", "properties": {"scenario": {"type": "string"},
                                                       "audience": {"type": "string"}}}},
@@ -569,6 +579,111 @@ async def _tool_images(ctx, args):
             "issues": issues[:3]}
 
 
+async def _generate_scene(ctx, args):
+    """Reference image from the knowledge base + prompt -> a generated scene image.
+
+    This is image-to-image, not compositing: the model re-draws the product inside a new
+    scene. It therefore must not be presented as a product photo. The plan is explicit that
+    prompt constraints are not a pixel-fidelity guarantee, and the probes agree - the output
+    keeps the model, colour and the round-key keyboard, while the body proportions and key
+    layout are re-rendered.
+    """
+    from . import image_capabilities
+    from .image_channel import ImageChannelError, generate_from_product
+
+    product_id = str(args.get("product_id", ""))
+    prompt = str(args.get("prompt", "")).strip()
+    if not prompt:
+        return {"ok": False, "error": "PROMPT_REQUIRED", "message": "需要提示词"}
+    product = _resolve_product(ctx.catalog, product_id, ctx) if ctx.catalog else None
+    if product is None:
+        return {"ok": False, "error": "NO_PRODUCT", "message": "没有匹配的型号，先搜索确认"}
+
+    model = image_capabilities.reference_model()
+    capability = image_capabilities.describe(model, True)
+    if capability.get("supports") is False:
+        return {"ok": False, "error": "CAPABILITY_UNAVAILABLE",
+                "message": "该模型不支持参考图输入，已按探针证据拒绝调用",
+                "capability": capability}
+
+    # A reference-image call takes tens of seconds. Refusing early beats starting a call
+    # that cannot finish inside this run's budget, which would strand the delivery.
+    remaining = None
+    try:
+        remaining = max(0.0, float(ctx.deadline) - time.monotonic())
+    except Exception:  # noqa: BLE001 - a context without a deadline simply skips the guard
+        remaining = None
+    minimum = max(20, int(os.getenv("IMAGE_MIN_SECONDS", "120")))
+    if remaining is not None and remaining < minimum:
+        return {"ok": False, "error": "INSUFFICIENT_TIME",
+                "message": f"本轮剩余 {int(remaining)} 秒，不足一次生图所需的约 {minimum} 秒；"
+                           "先交付文字，或把 AGENT_RUN_BUDGET_SECONDS 调大后重试",
+                "remaining_seconds": int(remaining), "required_seconds": minimum}
+
+    try:
+        images, _ = await verified_images(ctx.catalog, product, Platform.XIAOHONGSHU,
+                                          ["屏幕", "接口", "尺寸与重量"])
+    except Exception:  # noqa: BLE001 - no verified image means no reference, reported below
+        images = []
+    wanted = str(args.get("image_id", ""))
+    reference = next((item for item in (images or [])
+                      if wanted and _image_field(item, "image_id") == wanted), None)
+    if reference is None:
+        reference = next((item for item in (images or [])
+                          if any(word in _image_field(item, "caption")
+                                 for word in ("主视觉", "正面产品", "精致产品"))), None)
+    if reference is None:
+        reference = (images or [None])[0]
+    if reference is None:
+        return {"ok": False, "error": "NO_REFERENCE_IMAGE",
+                "message": "知识库没有该型号的核验图，无法生成场景图（不编造产品外观）"}
+
+    url = _image_field(reference, "access_url")
+    # get_asset returns None once the TTL has passed, so unpack defensively: an expired
+    # reference must produce a clear refusal, not a TypeError inside the tool.
+    fetched = get_asset(url.rsplit("/", 1)[-1]) if "/" in url else None
+    body, mime = fetched if fetched else (None, "")
+    if not body:
+        return {"ok": False, "error": "REFERENCE_EXPIRED",
+                "message": "参考图已过期，请重新查找产品图后再生成",
+                "reference": {"image_id": _image_field(reference, "image_id")}}
+
+    ratio = RATIO_PRESETS.get(str(args.get("ratio", "")).strip())
+    size = str(args.get("size", "")).strip() or None
+    timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "300")))
+    if remaining is not None:
+        timeout = int(max(20, min(timeout, remaining)))
+    started = time.monotonic()
+    try:
+        rendered, channel = await asyncio.to_thread(
+            generate_from_product, body, prompt, mime or "image/png", model, size, 1, ratio,
+            timeout)
+    except ImageChannelError as error:
+        return {"ok": False, "error": "IMAGE_CHANNEL_ERROR", "message": str(error)[:220],
+                "capability": capability}
+    except Exception as error:  # noqa: BLE001 - reported, never disguised as success
+        return {"ok": False, "error": "IMAGE_CHANNEL_ERROR",
+                "message": type(error).__name__ + ": " + str(error)[:180]}
+
+    elapsed = int((time.monotonic() - started) * 1000)
+    out = []
+    for raw in rendered[:4]:
+        try:
+            out.append({"access_url": store_asset(raw, "image/png"), "kind": "generated_scene",
+                        "bytes": len(raw)})
+        except Exception:  # noqa: BLE001
+            continue
+    if not out:
+        return {"ok": False, "error": "NO_IMAGE_RETURNED", "message": "通道没有返回图片"}
+    return {"ok": True, "images": out, "channel": channel, "elapsed_ms": elapsed,
+            "capability": capability,
+            "reference": {"image_id": _image_field(reference, "image_id"),
+                          "caption": _image_field(reference, "caption"),
+                          "model_verified": _image_field(reference, "model_verified")},
+            "notice": "以上为 AI 生成的场景图，不是产品实物照：机身比例、按键布局与接口位置"
+                      "由模型重绘，不得作为产品外观、配色或接口的依据；产品事实一律以知识库为准。"}
+
+
 async def _tool_topics(ctx, args):
     from .hotspot import related_hot_topics
     from .xhs import XhsError, hot_topics
@@ -912,6 +1027,8 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
             result = await _tool_compare(ctx, args)
         elif name == "find_product_images":
             result = await _tool_images(ctx, args)
+        elif name == "generate_scene_image":
+            result = await _generate_scene(ctx, args)
         elif name == "search_topics":
             result = await _tool_topics(ctx, args)
         elif name == "ask_user":
