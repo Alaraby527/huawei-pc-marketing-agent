@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.21.0-ui">
+<link rel="stylesheet" href="/static/style.css?v=0.21.1-ui">
 </head>
 <body>
 <div class="app-shell">
@@ -64,6 +64,19 @@
           <div class="pane-head-title">
             <h2 class="pane-title">对话</h2>
             <p class="pane-sub">先问清需求，再动配置</p>
+          </div>
+          <div class="surface-bar" id="surface-bar">
+            <div class="surface-tabs" id="surface-tabs" role="tablist" aria-label="交付面">
+              <button type="button" class="surface-btn active" data-surface="xiaohongshu">小红书</button>
+              <button type="button" class="surface-btn" data-surface="wechat_article">公众号</button>
+              <button type="button" class="surface-btn" data-surface="moments">朋友圈</button>
+              <button type="button" class="surface-btn" data-surface="store_poster">门店海报</button>
+            </div>
+            <span class="moments-split" id="moments-split" hidden role="group" aria-label="朋友圈类型">
+              <button type="button" data-moments="store_moments" class="active">门店</button>
+              <button type="button" data-moments="personal_moments">个人</button>
+            </span>
+            <span class="lock-state" id="lock-state" hidden></span>
           </div>
           <span class="engine-badge" id="engine-badge">规则引擎</span>
         </div>
@@ -127,18 +140,6 @@
           <button type="button" data-action="再短一点">再短一点</button>
           <button type="button" data-action="换一版">换一版</button>
           <button type="button" data-action="刷新">刷新材料</button>
-        </div>
-
-        <div class="surface-bar" id="surface-bar">
-          <span class="surface-label">交付面</span>
-          <div class="surface-tabs" id="surface-tabs" role="tablist" aria-label="交付面">
-            <button type="button" class="surface-btn active" data-surface="xiaohongshu">小红书</button>
-            <button type="button" class="surface-btn" data-surface="wechat_article">公众号</button>
-            <button type="button" class="surface-btn" data-surface="personal_moments">朋友圈·个人</button>
-            <button type="button" class="surface-btn" data-surface="store_moments">朋友圈·门店</button>
-            <button type="button" class="surface-btn" data-surface="store_poster">门店海报</button>
-          </div>
-          <span class="lock-state" id="lock-state" hidden></span>
         </div>
 
         <div class="starter-row" id="starter-row">
@@ -291,7 +292,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.21.0-ui" defer></script>
-<script src="/static/workspace.js?v=0.21.0-ui" defer></script>
+<script src="/static/app.js?v=0.21.1-ui" defer></script>
+<script src="/static/workspace.js?v=0.21.1-ui" defer></script>
 </body>
 </html>

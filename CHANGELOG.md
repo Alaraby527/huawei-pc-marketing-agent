@@ -2,24 +2,20 @@
 
 ## 0.17.0 — 2026-10-21
 
-### Changed (delivery surfaces: moved and flattened)
+### Fixed (the row the user actually meant)
 
-Chosen form for "keep it but change it" on the surface row:
+The row visible under the 热点榜单 section heading was **not** the delivery-surface row - it was
+`SECTION_TABS.hot`, the old hotspot plan's five "scenario views" (小红书/公众号/朋友圈·个人/
+朋友圈·门店/门店海报). They look almost identical to the surface tabs (same pill shape, same
+active colour), which is why two rounds of reading the screenshots blamed the wrong element. Those
+five views were never wired to data, so they are now removed; the hot section's own row (热梗/
+抖音热榜/微博热搜/知乎热榜/小红书热榜) is the one that stays.
 
-- **Moved out of the title bar to just above the composer** - DOM order is now
-  `pane-head → chat-log → surface-bar → starter-row → composer`. The title row goes back to just
-  对话 + subtitle, and the surface control sits where it is actually used, next to where the copy
-  gets written.
-- **Flattened to five tabs**: 小红书 / 公众号 / 朋友圈·个人 / 朋友圈·门店 / 门店海报. 朋友圈 used to
-  open a 门店/个人 choice, which cost an extra step and forced `currentSurface()` to carry a
-  `moments` ambiguity. With the two surfaces split out, a tab's id *is* the surface id.
-- That also fixes a highlight bug found while doing it: `loadSurfaceLock` mapped both
-  `personal_moments` and `store_moments` back to `'moments'`, so locking one of them highlighted the
-  wrong tab. It now matches on the exact surface.
-- A leftover `if (split && key === 'moments')` block and the old click branch still referenced the
-  removed `split`, which would have thrown on every surface click - caught before shipping.
+Reverted the previous commit's relocation of the delivery surfaces: they are back in the title bar
+with 朋友圈 opening a 门店/个人 choice, which is the form the user said was fine. Keeping bug fixes
+that did not depend on the layout.
 
-Tests: 566 pass (180 legacy + 386 new/extended).
+Tests: 564 pass (180 legacy + 384 new/extended).
 
 ### Fixed
 

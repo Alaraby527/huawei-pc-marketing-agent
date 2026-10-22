@@ -124,36 +124,3 @@ def test_the_lock_survives_a_second_read_like_a_later_turn_would():
     again = session.get(models.AgentConversation, conversation.id)
     assert ar.get_conversation_surface(session, again)["label"] == "个人朋友圈"
     session.close()
-
-
-def test_surfaces_are_flat_five_tabs_above_the_composer():
-    """交付面从标题栏挪到输入框上方，并平铺成 5 个。
-
-    平铺的收益是去掉一层交互状态：原来「朋友圈」需要再弹出门店/个人二选一，既多一步，
-    也让 currentSurface() 必须处理 moments 歧义。拆开之后选项卡 id 就是交付面 id。
-    """
-    from pathlib import Path
-    html = Path("app/static/index.html").read_text()
-    js = Path("app/static/app.js").read_text()
-
-    for surface in ("xiaohongshu", "wechat_article", "personal_moments",
-                    "store_moments", "store_poster"):
-        assert f'data-surface="{surface}"' in html, surface
-    assert html.count('data-surface="') == 5, "应为 5 个平铺选项卡"
-    assert "moments-split" not in html, "二选一的 split 应已移除"
-    assert "moments-split" not in js
-    assert "data-moments" not in js
-
-    # 位置：在输入框上方，不再占标题栏那一行
-    assert html.index('class="surface-bar"') > html.index('class="chat-log"')
-    assert html.index('class="surface-bar"') < html.index('id="composer"')
-    assert 'class="surface-bar"' not in html[:html.index('class="chat-log"')], \
-        "标题栏里不应再有交付面"
-
-
-def test_surface_lock_highlights_the_exact_surface_not_a_moments_group():
-    """踩过：高亮时把 personal/store 都映射回 motifs 组的 'moments'，会高亮错选项卡。"""
-    from pathlib import Path
-    js = Path("app/static/app.js").read_text()
-    assert "item.dataset.surface === info.surface" in js
-    assert "'moments' : info.surface" not in js
