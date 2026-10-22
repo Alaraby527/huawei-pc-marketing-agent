@@ -576,3 +576,21 @@ h1,h2,h3,p{margin:0}
 .topic-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 4px}
 .topic-actions .chip{padding:4px 10px;font-size:11px;text-decoration:none}
 .topic-kw{font-size:11px;color:var(--text-3)}
+
+
+/* ===================== 对话区布局：中间是对话，输入框固定最底 ===================== */
+/* 对话占满中间；产出卡片留在滚动区里，但限高，避免把对话挤扁。 */
+.result-area{flex:0 1 auto;max-height:46vh;overflow-y:auto;padding:0 16px 8px}
+.result-area:empty{display:none}
+.chat-log{flex:1 1 auto}
+
+/* 输入框上方的一行示例：从原来的空状态块挪过来 */
+.starter-row{flex:0 0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:2px 16px 6px;background:var(--surface)}
+.starter-row[hidden]{display:none}
+.starter-label{font-size:11px;color:var(--text-3)}
+.starter-row .chip{padding:5px 12px;font-size:12px}
+
+/* 放大输入框 */
+.composer.expanded .composer-box{border-color:var(--brand)}
+.composer.expanded textarea{min-height:220px;max-height:52vh}

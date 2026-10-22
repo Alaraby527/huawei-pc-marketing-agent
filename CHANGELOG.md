@@ -366,7 +366,22 @@ admission saw the others (`compared` 4/5/6) with a 0-2 ms lock wait.
   `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
   so it is neither retried blindly nor reported as a success.
 
-### Changed (UI restructure per the user's design)
+### Changed (chat pane layout, per the screenshots)
+
+- Removed the empty-state block ("先说说写给谁" / "告诉我人群和用途…") entirely, as asked.
+- The two example buttons moved out of it and now sit **just above the composer**, where the arrow
+  pointed, labelled "不知道怎么写？"; they hide once a conversation starts so they stop taking up
+  space.
+- The composer is now **last in the pane**, so it is pinned to the bottom, and the chat log fills
+  the middle. The deliverable card lives in the same scrolling middle but is capped at 46vh so it
+  cannot squeeze the conversation.
+- Added a **composer expand toggle** (⤢ in the composer bar): long copy is easier to edit with a
+  220px–52vh input than a two-line one.
+- Fixed a **duplicate `id="image-results"`** left behind by the earlier work-panel migration: two
+  elements shared the id, so `$('image-results')` only ever reached the first and the second was
+  dead markup. Removed with the rest of the layout work.
+
+Tests: 553 pass (180 legacy + 373 new/extended).
 
 - Removed, as asked: the topbar 小红书 button, the sidebar menu items (热点搜索 / 小红书工作区 /
   自动化 / 插件市场), the five-step indicator (01 需求澄清 … 05 导出交付), and the whole right-hand

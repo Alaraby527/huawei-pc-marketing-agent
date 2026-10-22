@@ -277,7 +277,6 @@
     quickActions.hidden = true;
     $('candidate-board').hidden = true;
     $('draft-card').hidden = true;
-    $('plan-empty').hidden = false;
     $('image-results').hidden = true;
     $('image-results').innerHTML = '';
     $('cover-result').hidden = true;
@@ -379,6 +378,11 @@
   function sidebarIsOpen() {
     return isNarrow() ? document.body.classList.contains('sidebar-open')
       : !$('sidebar').classList.contains('collapsed');
+  }
+
+  function hideStarterRow() {
+    const row = $('starter-row');
+    if (row) row.hidden = true;   // 已经开始对话，示例不再需要占位置
   }
 
   function setBusy(busy) {
@@ -484,7 +488,6 @@
     $('image-results').innerHTML = '';
     const content = artifact.content;
     const card = $('draft-card');
-    $('plan-empty').hidden = true;
     $('candidate-board').hidden = true;
     card.hidden = false;
     $('draft-eyebrow').textContent = '交付物 · v' + artifact.latest_revision;
@@ -521,7 +524,6 @@
   function renderV2Candidates(candidates) {
     const board = $('candidate-board');
     if (!candidates || !candidates.length) { board.hidden = true; return; }
-    $('plan-empty').hidden = true;
     $('draft-card').hidden = true;
     board.hidden = false;
     board.innerHTML = candidates.map((candidate, index) =>
@@ -537,7 +539,6 @@
 
   function renderV2Plan(plan, selected) {
     if (!plan) return;
-    $('plan-empty').hidden = true;
     $('candidate-board').hidden = true;
     const card = $('draft-card');
     card.hidden = false;
@@ -781,13 +782,11 @@
 
   function renderCandidates(result) {
     const board = $('candidate-board');
-    const empty = $('plan-empty');
     const draftCard = $('draft-card');
     if (result.draft || !result.candidates || !result.candidates.length) {
       if (!result.candidates || !result.candidates.length) board.hidden = true;
       return;
     }
-    empty.hidden = true;
     draftCard.hidden = true;
     board.hidden = false;
     const budgetNames = { not_limited: '不限预算', verified: '预算内已核实', unverified: '价格待核实' };
@@ -815,15 +814,14 @@
 
   function renderDraft(result) {
     const card = $('draft-card');
-    const empty = $('plan-empty');
     const board = $('candidate-board');
     const draft = result.draft;
     if (!draft) {
       card.hidden = true;
-      if (!result.candidates || !result.candidates.length) empty.hidden = false;
+      // 空状态块已按要求删除：没有草稿也没有候选时，对话区保持只有对话本身。
+      if (!result.candidates || !result.candidates.length) board.hidden = true;
       return;
     }
-    empty.hidden = true;
     board.hidden = true;
     card.hidden = false;
     const slots = result.slots || {};
@@ -1653,11 +1651,24 @@
     send(text);
   });
 
-  $('plan-empty').addEventListener('click', (event) => {
+  // 示例按钮从空状态挪到了输入框上方；开始对话后收起，不再占位置。
+  on('starter-row', 'click', (event) => {
     const button = event.target.closest('button[data-example]');
     if (!button) return;
     input.value = button.dataset.example;
     form.requestSubmit();
+  });
+
+  // 放大输入框：长文案编辑时用
+  on('composer-expand', 'click', () => {
+    const box = document.querySelector('.composer');
+    const expanded = box.classList.toggle('expanded');
+    const button = $('composer-expand');
+    if (button) {
+      button.title = expanded ? '还原输入框' : '放大输入框';
+      button.textContent = expanded ? '⤡' : '⤢';
+    }
+    input.focus();
   });
 
   $('hot-list').addEventListener('click', (event) => {

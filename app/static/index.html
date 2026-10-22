@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.18.0-ui3">
+<link rel="stylesheet" href="/static/style.css?v=0.18.0-ui4">
 </head>
 <body>
 <div class="app-shell">
@@ -87,49 +87,7 @@
           </div>
         </div>
 
-        <div class="options-wrap" id="options-wrap" hidden></div>
-
-        <form class="composer" id="composer">
-          <div class="composer-box">
-            <textarea id="input" rows="2" placeholder="今天帮你做些什么？ @添加上下文，/调用技能与指令" required></textarea>
-            <div class="composer-bar">
-              <div class="composer-left">
-                <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
-                <span class="context-pill" id="kb-pill" title="知识库状态"><span class="status-dot" id="kb-dot"></span><span id="kb-pill-text">知识库：检测中…</span></span>
-              </div>
-              <div class="composer-right">
-                <label class="model-pick" title="选择生成模型">
-                  <span class="model-dot" aria-hidden="true"></span>
-                  <select id="model-select" aria-label="模型选择"></select>
-                </label>
-                <button type="submit" id="send" class="send-btn" aria-label="发送" disabled>
-                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
-        <div class="ctx-menu" id="ctx-menu" hidden>
-          <button type="button" data-ctx="kb"><strong>官方知识库</strong><span id="kb-ctx-text">检测中…</span></button>
-          <button type="button" data-ctx="hot"><strong>热点搜索</strong><span>打开小红书热点榜单并带入对话</span></button>
-        </div>
-        <div class="quick-actions" id="quick-actions" hidden>
-          <button type="button" data-action="通过">通过，可以发布</button>
-          <button type="button" data-action="再短一点">再短一点</button>
-          <button type="button" data-action="换一版">换一版</button>
-          <button type="button" data-action="刷新">刷新材料</button>
-        </div>
-
         <div class="result-area" id="result-area">
-          <div class="empty-state" id="plan-empty">
-            <div class="empty-icon">✦</div>
-            <h3>先说说写给谁</h3>
-            <p>告诉我人群和用途，我会从知识库推荐几款真实型号；你选一款、确认方案后，再生成推文和原图。</p>
-            <div class="empty-actions">
-              <button class="chip" data-example="大学新生，上课和写论文，偏好轻薄">用示例开始</button>
-              <button class="chip" data-example="职场办公，经常出差开会，重视便携和接口">职场办公示例</button>
-            </div>
-          </div>
           <div class="candidate-board" id="candidate-board" hidden></div>
           <article class="draft-card" id="draft-card" hidden>
             <div class="draft-head">
@@ -169,8 +127,47 @@
             </div>
             <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
           </article>
-            <div class="image-results" id="image-results" hidden></div>
         </div>
+
+        <div class="options-wrap" id="options-wrap" hidden></div>
+
+        <div class="ctx-menu" id="ctx-menu" hidden>
+          <button type="button" data-ctx="kb"><strong>官方知识库</strong><span id="kb-ctx-text">检测中…</span></button>
+          <button type="button" data-ctx="hot"><strong>热点搜索</strong><span>打开小红书热点榜单并带入对话</span></button>
+        </div>
+        <div class="quick-actions" id="quick-actions" hidden>
+          <button type="button" data-action="通过">通过，可以发布</button>
+          <button type="button" data-action="再短一点">再短一点</button>
+          <button type="button" data-action="换一版">换一版</button>
+          <button type="button" data-action="刷新">刷新材料</button>
+        </div>
+
+        <div class="starter-row" id="starter-row">
+          <span class="starter-label">不知道怎么写？</span>
+          <button type="button" class="chip" data-example="大学新生，上课和写论文，偏好轻薄">用示例开始</button>
+          <button type="button" class="chip" data-example="职场办公，经常出差开会，重视便携和接口">职场办公示例</button>
+        </div>
+        <form class="composer" id="composer">
+          <div class="composer-box">
+            <textarea id="input" rows="2" placeholder="今天帮你做些什么？ @添加上下文，/调用技能与指令" required></textarea>
+            <div class="composer-bar">
+              <div class="composer-left">
+                <button type="button" class="composer-icon" id="context-toggle" title="添加上下文" aria-label="添加上下文">＋</button>
+                <span class="context-pill" id="kb-pill" title="知识库状态"><span class="status-dot" id="kb-dot"></span><span id="kb-pill-text">知识库：检测中…</span></span>
+              </div>
+              <div class="composer-right">
+                <label class="model-pick" title="选择生成模型">
+                  <span class="model-dot" aria-hidden="true"></span>
+                  <select id="model-select" aria-label="模型选择"></select>
+                </label>
+                <button type="button" class="composer-icon" id="composer-expand" title="放大输入框" aria-label="放大输入框">⤢</button>
+                <button type="submit" id="send" class="send-btn" aria-label="发送" disabled>
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
 
       </section>
 
@@ -299,7 +296,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.18.0-ui3" defer></script>
-<script src="/static/workspace.js?v=0.18.0-ui3" defer></script>
+<script src="/static/app.js?v=0.18.0-ui4" defer></script>
+<script src="/static/workspace.js?v=0.18.0-ui4" defer></script>
 </body>
 </html>
