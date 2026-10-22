@@ -311,6 +311,7 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
                         "note": "批准必须来自 releases.json 里记录的决定。"}
             text = spec["composed_prompt"]
             recipe_used = {"recipe_id": spec["recipe_id"], "approved": True,
+                           "style_transform": spec.get("style_transform"),
                            "product_clause": spec["product_clause"]}
         else:
             surface = agent_runtime.get_conversation_surface(db, conversation).get("surface") or ""
@@ -318,10 +319,12 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
                                                                  "error": "NO_SURFACE_LOCKED"}
             if picked.get("ok"):
                 row = picked["recipe"]
-                text = recipe_lib.prompt_for(row["recipe_id"])["composed_prompt"]
+                spec = recipe_lib.prompt_for(row["recipe_id"])
+                text = spec["composed_prompt"]
                 recipe_used = {"recipe_id": row["recipe_id"], "name": row.get("name"),
                                "approved": True, "surface": surface,
-                               "product_clause": recipe_lib.PRODUCT_CLAUSE}
+                               "style_transform": spec.get("style_transform"),
+                               "product_clause": spec["product_clause"]}
             else:
                 # 没有已批准配方：退回通用提示词，并把这件事如实带出去，不假装用了配方。
                 text = build_prompt(

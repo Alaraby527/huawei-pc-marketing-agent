@@ -82,3 +82,36 @@ def test_studio_refuses_an_unapproved_recipe_instead_of_downgrading():
     source = inspect.getsource(studio.generate_image)
     assert "不得用于生产输出" in source
     assert "why_no_recipe" in source, "没用配方时要如实说明原因"
+
+
+def test_stylised_recipes_may_change_the_art_style():
+    """用户明确：漫画这类"换个画风是允许的，合适的融合到对应场景里面去"。
+
+    风格化配方本身就是重绘（黏土/像素/纸艺/波普…），硬要求外观像素级不变会和风格互相打架。
+    """
+    stylised = {"R03": "miniature", "R11": "paper", "R12": "clay", "R13": "pixel",
+                "R24": "pop", "R02": "collage", "R07": "riso", "R08": "surreal",
+                "R06": "geometric"}
+    for rid, family in stylised.items():
+        spec = recipes.prompt_for(rid)
+        assert spec["style_transform"] is True, rid
+        assert spec["product_clause"] == recipes.STYLE_CLAUSE, rid
+        assert "允许按该风格重绘产品外观" in spec["composed_prompt"]
+        assert "不得出现替代商品" in spec["composed_prompt"], "换画风不等于可以不认产品"
+        assert recipes.load()[rid]["family"] == family
+
+
+def test_realistic_recipes_keep_the_users_sentence_verbatim():
+    """写实类照用户原话执行，一个字不改。"""
+    for rid in ("R01", "R05", "R09", "R10", "R15", "R23"):
+        spec = recipes.prompt_for(rid)
+        assert spec["style_transform"] is False, rid
+        assert spec["product_clause"] == recipes.PRODUCT_CLAUSE, rid
+        assert "大小比例logo外观保持不变" in spec["composed_prompt"]
+
+
+def test_every_recipe_gets_exactly_one_of_the_two_clauses():
+    for rid in sorted(recipes.load()):
+        spec = recipes.prompt_for(rid)
+        assert spec["product_clause"] in (recipes.PRODUCT_CLAUSE, recipes.STYLE_CLAUSE), rid
+        assert spec["product_clause"] in spec["composed_prompt"], rid

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.23.0-studio">
+<link rel="stylesheet" href="/static/style.css?v=0.24.0-layout">
 </head>
 <body>
 <div class="app-shell">
@@ -116,15 +116,10 @@
               </select>
               <input id="image-prompt" class="image-prompt" placeholder="提示词（可选，留空自动生成）">
               <select id="image-style" class="model-select" aria-label="图片风格"></select>
-              <button id="generate-cover" class="btn-secondary">生成 AI 封面氛围图</button>
               <a id="posters-link" class="btn-secondary" href="#" hidden download>下载六页图片 ZIP</a>
               <a id="export-link" class="btn-secondary" href="#" hidden>下载完整报告 ↗</a>
             </div>
             <div class="image-results" id="image-results" hidden></div>
-            <div class="cover-result" id="cover-result" hidden>
-              <img id="cover-image" alt="AI 生成的封面氛围图">
-              <p class="hint">AI 氛围图只做背景装饰，不是产品实拍，也不能用来证明产品外观。</p>
-            </div>
             <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
           </article>
         </div>
@@ -250,6 +245,7 @@
               生成图片
             </button>
             <p class="studio-note" id="studio-image-note">生成的是场景图，不是产品实拍。</p>
+
           </section>
 
           <!-- 右：知识库原图 -->
@@ -377,7 +373,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.23.0-studio" defer></script>
-<script src="/static/workspace.js?v=0.23.0-studio" defer></script>
+<script src="/static/app.js?v=0.24.0-layout" defer></script>
+<script src="/static/workspace.js?v=0.24.0-layout" defer></script>
 </body>
 </html>

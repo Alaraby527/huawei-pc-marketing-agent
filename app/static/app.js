@@ -276,7 +276,6 @@
     $('draft-card').hidden = true;
     $('image-results').hidden = true;
     $('image-results').innerHTML = '';
-    $('cover-result').hidden = true;
     $('publish-state').textContent = '尚未通过核验，不可发布';
     $('publish-state').className = '';
     hideTaskMenu();
@@ -852,8 +851,6 @@
     const key = (draft.title || '') + '|' + (draft.body || '').slice(0, 20);
     if (key !== lastCoverKey) {
       lastCoverKey = key;
-      $('cover-result').hidden = true;
-      $('cover-image').removeAttribute('src');
     }
   }
 
@@ -1236,24 +1233,50 @@
   // ===================== 图文工作室 =====================
   const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false};
 
-  async function loadStudio(force) {
-    if (!sessionId) { toast('先在对话里建一个任务，再进图文工作室'); return; }
-    if (studioState.loaded && !force) return;
+  // 配方与模型跟会话无关，必须无条件先加载。
+  // 踩过的 bug：原来它们和 materials 挤在同一个 Promise.all 里、且被 `if (!sessionId) return`
+  // 挡在前面，于是没有会话时两个下拉是空的——看起来像"点不开的假按钮"。
+  async function loadStudioCatalog() {
+    const recipeHint = $('studio-recipe-hint');
+    const modelChip = $('studio-model-chip');
     try {
-      const [material, recipeData, modelData] = await Promise.all([
-        fetch('/api/v2/conversations/' + sessionId + '/studio').then(r => r.json()),
+      const [recipeData, modelData] = await Promise.all([
         fetch('/api/v1/recipes?approved_only=1').then(r => r.json()),
         fetch('/api/v1/image-models').then(r => r.json()),
       ]);
-      studioState.models = modelData.models || [];
-      renderStudioModels();
-      studioState.images = material.images || [];
       studioState.recipes = recipeData.recipes || [];
+      studioState.models = modelData.models || [];
+    } catch (error) {
+      // 失败要有可见的原因，不能停在"加载中…"让人以为还在转
+      if (recipeHint) recipeHint.textContent = '配方加载失败：' + error;
+      if (modelChip) modelChip.textContent = '模型加载失败';
+      return;
+    }
+    renderStudioRecipes('');
+    renderStudioModels();
+  }
+
+  async function loadStudio(force) {
+    await loadStudioCatalog();
+    if (!sessionId) {
+      const grid = $('studio-kb-grid');
+      if (grid) grid.innerHTML =
+        '<p class="hint">先在对话里建一个任务；本次创作绑定的知识库原图会出现在这里。</p>';
+      const hist = $('studio-history-grid');
+      if (hist) hist.innerHTML = '<p class="hint">还没有生成记录。</p>';
+      return;
+    }
+    if (studioState.loaded && !force) return;
+    try {
+      const material = await fetch('/api/v2/conversations/' + sessionId + '/studio')
+        .then(r => r.json());
+      studioState.images = material.images || [];
       studioState.loaded = true;
 
       const surface = material.surface || '';
       const chip = $('studio-surface-chip');
       if (chip) chip.textContent = '交付面：' + (surface ? surfaceLabel(surface) : '未锁定');
+      renderStudioRecipes(surface);   // 按交付面过滤配方
 
       const copyBox = $('studio-copy-text');
       if (copyBox && !copyBox.value) {
@@ -1273,6 +1296,11 @@
     const chip = $('studio-model-chip');
     if (!sel) return;
     const rows = studioState.models || [];
+    if (!rows.length) {
+      sel.innerHTML = '<option value="">（模型列表为空）</option>';
+      if (chip) chip.textContent = '模型列表为空';
+      return;
+    }
     sel.innerHTML = rows.map(row =>
       '<option value="' + escapeHtml(row.model) + '"' +
       (row.preferred_reference ? ' selected' : '') + '>' +
@@ -1286,13 +1314,16 @@
     if (sel && chosen.model) sel.value = chosen.model;
   }
 
+  // 版式：16 族各 4 个版式。族变了自动刷新版式列表，所以用户只需两步。
   function renderStudioRecipes(surface) {
     const sel = $('studio-recipe');
     const hint = $('studio-recipe-hint');
     if (!sel) return;
-    const list = studioState.recipes.filter(row =>
+    const all = studioState.recipes || [];
+    const list = all.filter(row =>
       !surface || !(row.surfaces || []).length || (row.surfaces || []).includes(surface));
-    const usable = list.length ? list : studioState.recipes;
+    const usable = list.length ? list : all;
+    // 即使配方一个都没加载到，也要保留"通用风格"这一项，避免出现空下拉。
     sel.innerHTML = '<option value="">通用风格（不用配方）</option>' + usable.map(row =>
       '<option value="' + escapeHtml(row.recipe_id) + '">' + escapeHtml(row.name) +
       (row.approved ? '' : '（未批准）') + '</option>').join('');
@@ -1653,34 +1684,6 @@
     }
   }
 
-  async function generateCover() {
-    const draft = lastResult && lastResult.draft;
-    if (!draft) return;
-    const slots = lastResult.slots || {};
-    const button = $('generate-cover');
-    button.disabled = true;
-    button.textContent = '生成中…';
-    try {
-      const prompt = '小红书封面氛围背景，主题「' + (draft.title || '') + '」，场景' + (slots.scenario || '') +
-        '，受众' + (slots.audience || '') + '，华为品牌蓝与浅灰，留白，光影柔和，无文字，无产品主体。';
-      const response = await fetch('/api/v1/covers/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || '生成失败');
-      $('cover-image').src = data.access_url;
-      $('cover-result').hidden = false;
-      toast('封面氛围图已生成');
-    } catch (error) {
-      toast(error.message || '封面生成失败');
-    } finally {
-      button.disabled = false;
-      button.textContent = '生成 AI 封面氛围图';
-    }
-  }
-
   function switchTab(name) {
     const workTabs = $('work-tabs');
     if (!workTabs) return;   // 工作栏已删除
@@ -1941,7 +1944,6 @@
     $('image-prompt').disabled = !ai;
     $('generate-images').textContent = ai ? '一键生图' : '使用知识库原图';
   });
-  $('generate-cover').addEventListener('click', generateCover);
 
   $('new-task').addEventListener('click', newTask);
   $('task-list').addEventListener('click', (event) => {
@@ -1968,6 +1970,7 @@
   });
   $('task-list').addEventListener('scroll', hideTaskMenu);
   bindStudio();
+  loadStudioCatalog();   // 配方与模型与会话无关，进页面就先填好
   on('hot-scenario-tabs', 'click', (event) => {
     const button = event.target.closest('[data-hot-mode]');
     if (button) loadHotMode(button.getAttribute('data-hot-mode'));

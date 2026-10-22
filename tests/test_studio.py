@@ -379,3 +379,63 @@ def test_the_frontend_actually_sends_count_and_size_and_fills_models():
     assert "'/api/v1/image-models'" in js
     html = Path("app/static/index.html").read_text()
     assert 'id="studio-count"' in html and 'value="4"' in html
+
+
+def test_catalog_loading_is_not_gated_behind_a_session():
+    """实测 bug：配方/模型下拉是空的，看起来像"点不开的假按钮"。
+
+    根因是它们和 materials 挤在同一个 Promise.all 里、且被 `if (!sessionId) return` 挡在前面。
+    但配方列表和模型列表**与会话无关**——所以必须无条件先加载。
+    """
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+
+    assert "async function loadStudioCatalog()" in js
+    # 目录加载必须在 session 判断之前
+    catalog_at = js.index("  async function loadStudio(force) {")
+    body = js[catalog_at:catalog_at + 900]
+    assert body.index("await loadStudioCatalog()") < body.index("if (!sessionId)"), \
+        "必须先加载目录，再判断会话"
+    # 页面初始化时也要加载（这样即便没进过板块，下拉也已就绪）
+    assert js.count("loadStudioCatalog()") >= 3, "定义 + 初始化 + 进板块，至少 3 处"
+    # 失败要有可见原因，不能停在"加载中…"
+    assert "配方加载失败" in js and "模型列表为空" in js
+
+
+def test_every_studio_control_is_bound():
+    """用户反馈"全是假的按钮"，所以逐个钉住：每个控件都必须有事件绑定。"""
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+    html = Path("app/static/index.html").read_text()
+    for control in ("studio-kb-grid", "studio-prompt", "studio-generate", "studio-optimize",
+                    "studio-history-refresh", "studio-copy", "studio-regen",
+                    "studio-history-grid"):
+        assert f'id="{control}"' in html, control
+        assert f"on('{control}'" in js, f"{control} 没有绑定事件"
+    assert "\n  bindStudio();" in js, "bindStudio 必须被调用"
+
+
+def test_recipe_select_always_has_at_least_one_option():
+    """空下拉会被当成坏控件，所以永远保留"通用风格"这一项。"""
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+    assert "'<option value=\"\">通用风格（不用配方）</option>'" in js
+    assert "（模型列表为空）" in js, "模型为空时也要给出可见结果"
+
+
+def test_layout_document_is_complete_and_documented():
+    """版式产出的是排版文档而不是图片，结构要能直接交给编辑器。"""
+    from app import design_library
+    built = design_library.build_document("V04-C1", {}, "HUAWEI MateBook 14")
+    native = built["native_payload"]
+    assert native["objects"], "必须有元素，否则文档是空的"
+    assert built["engine"] == "vue-fabric-editor"
+    manifest = built["manifest"]
+    for key in ("canvas", "fonts", "lockedLayers", "assets", "source"):
+        assert key in manifest, key
+    sidecar = built["sidecar"]
+    assert sidecar["layout_id"] == "V04-C1"
+    checks = design_library.check_document(built)
+    assert checks.get("passed") is True or checks.get("ok") is not False
+
+

@@ -139,7 +139,7 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                                                manifest=args.get("manifest", {}))
             return _clip(rednote.create_design_document(db, ctx, payload))
         if name == "generate_image":
-            from . import image_channel, image_edit
+            from . import image_channel
             from .conversation import service as conversation_service
             from .retrieval import get_asset, store_asset
             session = conversation_service.sessions.get(str(args.get("conversation_id") or ""))
@@ -160,20 +160,17 @@ def dispatch(db: Session, ctx: WorkspaceContext, name: str, args: dict) -> dict:
                 style=style, subject=draft_title or slots.get("instructions", "").split("\n")[0],
                 scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
                 facts=facts, extra=args.get("extra", ""))
-            if image_channel.configured():
-                target_ratio = image_channel.reference_ratio(stored[0])
-                results, used = image_channel.generate_from_product(stored[0], prompt, stored[1],
-                                                                    None, None,
-                                                                    int(args.get("n", 1) or 1),
-                                                                    target_ratio)
-                channel = "image_api" if used == "primary" else "image_api_fallback"
-            elif image_edit.has_alpha(stored[0]):
-                results = image_edit.generate_scene_image(stored[0], style, args.get("prompt", ""))
-                channel = "dashscope-scene"
-            else:
-                results = image_edit.edit_image(stored[0], prompt, stored[1], None,
-                                                int(args.get("n", 1) or 1), None)
-                channel = "dashscope-edit"
+            # 只走图生图（产品原图 + 提示词）。用户明确"其他不要"，
+            # 所以移除了 dashscope 的 scene / edit 回退分支。
+            if not image_channel.configured():
+                return {"error": "CAPABILITY_DISABLED",
+                        "message": "生图通道未配置；本工具只支持图生图（产品原图 + 提示词）"}
+            target_ratio = image_channel.reference_ratio(stored[0])
+            results, used = image_channel.generate_from_product(stored[0], prompt, stored[1],
+                                                                None, None,
+                                                                int(args.get("n", 1) or 1),
+                                                                target_ratio)
+            channel = "image_api" if used == "primary" else "image_api_fallback"
             return _clip({"images": [store_asset(content, "image/png") for content in results],
                           "channel": channel, "prompt": prompt,
                           "note": "生成图只作氛围背景，不是产品实拍"})

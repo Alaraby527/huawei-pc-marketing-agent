@@ -801,6 +801,29 @@ Tests: 579 pass (180 legacy + 399 new/extended).
 
 Tests: 583 pass (180 legacy + 403 new/extended).
 
+### 配方按族区分产品条款 + 只保留图生图
+
+- **风格化配方允许换画风。** 用户明确"漫画这些换个画风是允许的，合适的融合到对应场景里面去"。
+  所以按族选条款：写实类（杂志编辑/电影叙事/植物共生/静物…15 个）**逐字执行用户原话**
+  "产品要求和原图中的产品一致，大小比例logo外观保持不变。"；风格化类（黏土/像素/纸艺/波普/
+  微缩/拼贴/套印/超现实/几何 共 9 个）用 `STYLE_CLAUSE`——仍要求是同一款产品、型号特征与
+  logo 位置一致、不得出现替代商品，但**允许按风格重绘外观**。理由：这些风格本身就是重绘，
+  硬要求像素级不变会和风格互相打架（实测 R06 几何把屏幕改成同色系、R13 像素做了风格化，
+  那都是对的）。
+- **只保留图生图（产品原图 + 提示词）。** 用户明确"其他不要"。因此删除：
+  - 纯氛围图接口 `POST /api/v1/covers/generate` 与界面上的"生成 AI 封面氛围图"按钮/结果块
+  - `POST /api/v1/images/generate` 里的 composite（背景+叠原图）、scene、edit 模式与
+    dashscope 回退；现在只剩 `generate_from_product`
+  - `tools.py` 的 `generate_image` 里同样的 dashscope scene/edit 回退
+  保留 `generate_background` / `generate_cover_image` 两个函数本身，因为它们仍被其它
+  含产品参考的路径引用，删掉会连带破坏那些路径。
+- **撤掉图文工作室里的"六页图文版式"板块**（用户认为图文搭配鸡肋、不要单独一栏）：
+  删除该 UI 区块、三个 JS 函数与绑定、以及我为它加的 `/api/v1/design-layouts` 与
+  `/studio/layout` 两个接口。`design_library` 的 64 个版式**保留**——agent 工具
+  （`tools.py`）仍在使用它们。
+
+Tests: 590 pass (180 legacy + 410 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

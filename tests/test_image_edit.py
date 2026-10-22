@@ -31,30 +31,6 @@ def _session_with_image(sid: str, token: str):
     return session
 
 
-def test_generate_images_uses_product_photo_and_prompt(monkeypatch):
-    monkeypatch.setenv('LLM_API_KEY', 'test-key')
-    token = store_asset(PNG, 'image/png')
-    _session_with_image('img-session-1', token)
-    calls = {}
-
-    def fake_edit(image_bytes, prompt, mime='image/png', size=None, n=1, model=None, **kwargs):
-        calls['prompt'] = prompt
-        calls['image_bytes'] = image_bytes
-        return [PNG]
-
-    monkeypatch.setattr('app.image_edit.edit_image', fake_edit)
-    monkeypatch.setattr('app.image_edit.has_alpha', lambda data: False)
-    response = client.post('/api/v1/images/generate',
-                           json={'session_id': 'img-session-1', 'style': 'campus', 'n': 1})
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data['images'] and data['images'][0].startswith('/api/v1/assets/')
-    assert '校园' in data['prompt']
-    assert calls['image_bytes'] == PNG
-    assert '氛围背景' in data['note']
-    service.sessions.pop('img-session-1', None)
-
-
 def test_generate_images_requires_reference(monkeypatch):
     monkeypatch.setenv('LLM_API_KEY', 'test-key')
     response = client.post('/api/v1/images/generate', json={'session_id': 'missing-session'})
@@ -168,25 +144,45 @@ def test_ratio_preset_3_4_is_available():
     assert image_channel.RATIO_PRESETS["kb"] is None
 
 
-def test_transparent_cutout_uses_guaranteed_composite(monkeypatch):
-    import io as _io
-    from PIL import Image
 
+
+def test_generate_images_only_supports_image_to_image(monkeypatch):
+    """只保留图生图（产品原图 + 提示词）。
+
+    合成（背景+叠原图）、scene、edit 这些模式已删除；留着等于又开一条不走向同结果的生成
+    路径，而本项目已经在"两条路径不一致"上吃过亏（热点榜单刷新对、回来就错）。
+    """
     monkeypatch.setenv('IMAGE_API_KEY', 'test-image-key')
     token = store_asset(PNG, 'image/png')
-    _session_with_image('img-session-composite', token)
-    monkeypatch.setattr('app.image_edit.has_alpha', lambda data: True)
-    background = _io.BytesIO()
-    Image.new('RGB', (1024, 1024), (220, 225, 230)).save(background, format='PNG')
-    monkeypatch.setattr('app.image_channel.generate_background',
-                        lambda *a, **k: ([background.getvalue()], 'primary'))
-    data = client.post('/api/v1/images/generate', json={
-        'session_id': 'img-session-composite', 'source': 'ai', 'style': 'clean_desk',
-        'mode': 'composite', 'ratio': '3:4'}).json()
-    assert data['channel'] == 'image_api_composite'
-    assert data['mode'] == 'composite_guaranteed'
-    assert '0.750' in data['ratio']
-    image = client.get(data['images'][0]).content
-    with Image.open(_io.BytesIO(image)) as rendered:
-        assert abs(rendered.width / rendered.height - 3 / 4) < 0.005
-    service.sessions.pop('img-session-composite', None)
+    _session_with_image('img-session-i2i', token)
+    calls = {}
+
+    def fake_from_product(image_bytes, prompt, mime='image/png', model=None, size=None,
+                          n=1, ratio=None, **kwargs):
+        calls['prompt'] = prompt
+        calls['image_bytes'] = image_bytes
+        return [PNG], 'primary'
+
+    monkeypatch.setattr('app.image_channel.generate_from_product', fake_from_product)
+    monkeypatch.setattr('app.image_channel.configured', lambda: True)
+    response = client.post('/api/v1/images/generate',
+                           json={'session_id': 'img-session-i2i', 'style': 'campus', 'n': 1})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data['mode'] == 'img2img'
+    assert data['channel'] == 'image_api'
+    assert data['images'], '图生图必须产出图片'
+    assert calls['image_bytes'] == PNG, '必须把产品原图送进去'
+    assert calls['prompt'], '必须带提示词'
+    service.sessions.pop('img-session-i2i', None)
+
+
+def test_the_removed_modes_are_gone_from_the_endpoint():
+    """composite / scene / edit 与 dashscope 回退都不应再存在于该接口。"""
+    import inspect
+    from app import main
+    source = inspect.getsource(main.generate_images)
+    for gone in ('generate_background', '_composite', 'image_edit.edit_image',
+                 'image_edit.generate_scene_image', 'dashscope'):
+        assert gone not in source, gone
+    assert 'generate_from_product' in source

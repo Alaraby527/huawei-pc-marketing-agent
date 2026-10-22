@@ -702,3 +702,9 @@ h1,h2,h3,p{margin:0}
 .studio-card-actions{display:flex;gap:6px}
 .studio-card-actions .studio-btn{padding:4px 10px;font-size:11px}
 @media (max-width:1180px){.studio-grid{grid-template-columns:1fr}}
+
+
+/* 六页图文版式：紧凑三步 */
+.studio-layout-block{display:flex;flex-direction:column;gap:6px;margin-top:4px;padding-top:10px;
+  border-top:1px dashed var(--divider-strong)}
+.studio-layout-actions{display:flex;gap:8px;flex-wrap:wrap}

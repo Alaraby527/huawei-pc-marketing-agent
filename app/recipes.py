@@ -29,6 +29,17 @@ APPROVED_STATUSES = ("approved", "released")
 # 用户逐张验收时要求写进提示词的那一句（原话，不改写）。
 PRODUCT_CLAUSE = "产品要求和原图中的产品一致，大小比例logo外观保持不变。"
 
+# 风格化类配方：用户明确"换个画风是允许的，合适的融合到对应场景里面去"。
+# 这些风格本身就是重绘（黏土/像素/纸艺/波普…），要求外观像素级不变会和风格互相打架——
+# 实测里 R06 几何构成把屏幕改成了同色系、R13 像素也做了风格化，那都是对的。
+# 所以这类配方换成 STYLE_CLAUSE：仍要求产品正确且可识别，但允许按风格重绘。
+STYLE_TRANSFORM_FAMILIES = ("clay", "pixel", "paper", "pop", "miniature", "collage",
+                            "riso", "surreal", "geometric")
+
+STYLE_CLAUSE = ("产品必须来自参考图中的同一款产品：型号特征、机身比例关系与 logo 位置保持一致，"
+                "不得出现替代商品或其他品牌。本配方属于风格化呈现，允许按该风格重绘产品外观，"
+                "但要自然地融合进场景，让人一眼仍能认出是这台机器。")
+
 # 配方原文里有一句与上面直接冲突：它写着"本图不出现产品、替代商品、品牌标识"，
 # 因为包 1 的设计前提是"只出背景，产品后期合成"。我们要的是产品在图里，所以构建提示词时
 # 把这一句替换掉——这不是我自造的约束，是用户那句要求能成立的必要条件。
@@ -192,10 +203,15 @@ def prompt_for(recipe_id: str, *, product_note: str = "") -> dict:
     # 用户那句要求在构建时注入；同时把与之冲突的"本图不出现产品…"替换掉。
     if CONFLICTING_CLAUSE in raw:
         raw = raw.replace(CONFLICTING_CLAUSE, REPLACEMENT_CLAUSE)
+    # 按族选用不同的产品条款：风格化类允许换画风，写实类严格要求外观不变。
+    family = str(row.get("family") or "")
+    style_transform = family in STYLE_TRANSFORM_FAMILIES
+    clause = STYLE_CLAUSE if style_transform else PRODUCT_CLAUSE
     return {"ok": True, "recipe_id": row["recipe_id"], "approved": is_approved(row["recipe_id"]),
-            "background_prompt": raw,
-            "product_clause": PRODUCT_CLAUSE,
-            "composed_prompt": (raw + "\n" + PRODUCT_CLAUSE).strip(),
+            "background_prompt": raw, "family": family,
+            "style_transform": style_transform,
+            "product_clause": clause,
+            "composed_prompt": (raw + "\n" + clause).strip(),
             "product_lock": row.get("product_lock"),
             "avoid": row.get("avoid") or [],
             "variation_axes": row.get("variation_axes") or [],

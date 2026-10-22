@@ -20,7 +20,7 @@ from .intake import Intake
 from .ima import ImaClient, ImaError, configured
 from .local_kb import default_client, kb_source, local_kb_ready
 from .conversation import Turn, service, DialogueError, ask
-from .model import image_configured, generate_cover_image, ModelError, allowed_models, default_model, model_catalog
+from .model import image_configured, ModelError, allowed_models, default_model, model_catalog
 from .posters import pages_for, render_page, zip_bytes
 from . import db as db_layer
 from . import models
@@ -362,62 +362,19 @@ async def generate_images(payload: image_edit.GenerateRequest):
         audience=slots.get("audience", ""), facts=facts, extra=payload.extra)
     channel = "image_api"
     mode = "img2img"
+    # 只支持图生图（产品原图 + 提示词）。用户明确"其他不要"：
+    # 所以不再提供 合成（背景+叠原图）、scene、edit 这些其它模式。
+    if not image_channel.configured():
+        return JSONResponse(status_code=503, content={
+            "code": "CAPABILITY_DISABLED",
+            "message": "生图通道未配置 IMAGE_API_KEY；本应用的配图只支持图生图（产品原图 + 提示词）"})
     try:
-        if image_channel.configured():
-            try:
-                # Default is image-to-image so the product blends into the
-                # scene/style; composite (pixel-identical product) is opt-in.
-                preserve = (os.getenv("IMAGE_PRESERVE_PRODUCT") or "").strip().lower() == "composite"
-                if preserve or payload.mode == "composite":
-                    # Transparent cutouts: generate the background only, then
-                    # composite the original product pixels back, so size,
-                    # ratio, logo and ports are guaranteed unchanged.
-                    background_prompt = (channel_prompt +
-                                         "。背景中不要出现任何笔记本电脑、平板、手机或其他数码产品实体，"
-                                         "只保留环境、桌面与生活道具；不要出现软件界面或品牌图标")
-                    backgrounds, used = await asyncio.to_thread(
-                        image_channel.generate_background, background_prompt, payload.model,
-                        payload.size, payload.n, target_ratio)
-                    results = [image_edit._composite(body, background) for background in backgrounds]
-                    channel = "image_api_composite" if used == "primary" else "image_api_composite_fallback"
-                    mode = "composite_guaranteed"
-                else:
-                    results, used = await asyncio.to_thread(image_channel.generate_from_product, body,
-                                                            channel_prompt, mime, payload.model,
-                                                            payload.size, payload.n, target_ratio)
-                    channel = "image_api" if used == "primary" else "image_api_fallback"
-                prompt = channel_prompt
-            except image_channel.ImageChannelError:
-                if not image_edit.configured():
-                    raise
-                channel = "dashscope_fallback"
-                prompt = payload.prompt or image_edit.build_prompt(
-                    scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
-                    objective=slots.get("objective", ""), title=subject, facts=facts,
-                    style=payload.style, extra=payload.extra)
-                if image_edit.has_alpha(body):
-                    mode = "scene"
-                    results = await asyncio.to_thread(image_edit.generate_scene_image, body,
-                                                      payload.style, payload.prompt or "")
-                else:
-                    mode = "edit"
-                    results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
-                                                      payload.size, payload.n, payload.model)
-        else:  # DashScope fallback keeps the previous behaviour
-            channel = "dashscope"
-            prompt = payload.prompt or image_edit.build_prompt(
-                scene=slots.get("scenario", ""), audience=slots.get("audience", ""),
-                objective=slots.get("objective", ""), title=subject, facts=facts,
-                style=payload.style, extra=payload.extra)
-            if payload.mode == "scene" or (payload.mode == "auto" and image_edit.has_alpha(body)):
-                mode = "scene"
-                results = await asyncio.to_thread(image_edit.generate_scene_image, body,
-                                                  payload.style, payload.prompt or "")
-            else:
-                mode = "edit"
-                results = await asyncio.to_thread(image_edit.edit_image, body, prompt, mime,
-                                                  payload.size, payload.n, payload.model)
-    except (image_channel.ImageChannelError, image_edit.ImageEditError) as error:
+        results, used = await asyncio.to_thread(
+            image_channel.generate_from_product, body, channel_prompt, mime,
+            payload.model, payload.size, payload.n, target_ratio)
+        channel = "image_api" if used == "primary" else "image_api_fallback"
+        prompt = channel_prompt
+    except image_channel.ImageChannelError as error:
         return JSONResponse(status_code=error.status, content={"code": "IMAGE_GENERATE_FAILED",
                                                                "message": error.message})
     if target_ratio:
@@ -431,20 +388,6 @@ async def generate_images(payload: image_edit.GenerateRequest):
             "prompt": prompt, "model": payload.model or os.getenv("IMAGE_MODEL", image_channel.DEFAULT_MODEL),
             "images": urls,
             "note": "生成图只作氛围背景，不是产品实拍；产品外观以原图为准，发布前需人工核对。"}
-
-
-@app.post("/api/v1/covers/generate")
-async def generate_cover(payload: dict):
-    if not image_configured():
-        return JSONResponse(status_code=503, content={"message": "AI封面氛围图功能未开启或未配置"})
-    prompt = str(payload.get("prompt", ""))[:400] or "简约数码桌搭氛围"
-    try:
-        body, mime = await asyncio.to_thread(generate_cover_image, prompt)
-    except ModelError as error:
-        return JSONResponse(status_code=502, content={"message": str(error)})
-    from .retrieval import store_asset
-    url = store_asset(body, mime)
-    return {"status": "ok", "access_url": url, "note": "仅为背景氛围图，不代表产品实拍，不得用于证明产品外观"}
 
 
 # ---------------------------------------------------------------- Rednote workspace (M1)
