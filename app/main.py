@@ -20,8 +20,6 @@ from .intake import Intake
 from .ima import ImaClient, ImaError, configured
 from .local_kb import default_client, kb_source, local_kb_ready
 from .conversation import Turn, service, DialogueError, ask
-from .hotspot import related_hot_terms, related_hot_topics
-from .xhs import XhsError, configured as xhs_configured, hot_topics as xhs_hot_topics, login_qrcode, login_status
 from .model import image_configured, generate_cover_image, ModelError, allowed_models, default_model, model_catalog
 from .posters import pages_for, render_page, zip_bytes
 from . import db as db_layer
@@ -35,7 +33,7 @@ from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
 from . import design_library
 from . import image_edit
 from . import hot_topics, image_channel
-from . import hotspot_api
+from . import hot_charts, hotspot_api
 from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
@@ -152,7 +150,6 @@ async def readiness():
         "configured": {
             "ima_credentials": configured(),
             "local_kb_ready": local_kb_ready(),
-            "xhs_mcp": xhs_configured(),
             "llm_credentials": bool(os.getenv("LLM_API_KEY")),
             "llm_endpoint_and_model": bool(os.getenv("LLM_BASE_URL") and os.getenv("LLM_MODEL")),
         },
@@ -225,7 +222,7 @@ async def create_task(task: Task):
         "can_publish": False,
     })
 
-@app.get("/api/v1/hotspots")
+
 def hotspots(scenario: str = "", audience: str = ""):
     topics = related_hot_topics(scenario, audience)
     mode = topics[0].get("data_mode", "editorial_fallback") if topics else "editorial_fallback"
@@ -237,35 +234,7 @@ def hotspots(scenario: str = "", audience: str = ""):
         note = "公开热榜暂不可用；以下为编辑内容方向，不是实时热点，也不代表传播效果"
     return {"topics": topics, "terms": [topic["title"] for topic in topics], "data_mode": mode, "note": note}
 
-@app.get("/api/v1/xhs/status")
-async def xhs_status():
-    try:
-        return {"status": "ok", **await login_status()}
-    except XhsError as error:
-        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
 
-@app.get("/api/v1/xhs/login/qrcode")
-async def xhs_qrcode():
-    try:
-        return {"status": "ok", **await login_qrcode()}
-    except XhsError as error:
-        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
-
-@app.get("/api/v1/xhs/login/status")
-async def xhs_login_status():
-    try:
-        return {"status": "ok", **await login_status()}
-    except XhsError as error:
-        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
-
-@app.get("/api/v1/xhs/hot")
-async def xhs_hot(scenario: str = "", audience: str = ""):
-    try:
-        topics = await xhs_hot_topics(scenario, audience)
-        return {"status": "ok", "topics": topics, "data_mode": "live_xhs",
-                "note": "来自当前实例已授权小红书账号的实时搜索；笔记标题和互动数仅作话题线索，不替代产品事实"}
-    except XhsError as error:
-        return JSONResponse(status_code=error.status, content={"status": "unavailable", "message": error.message})
 
 @app.get("/api/v1/conversations/{session_id}/export")
 async def export_result(session_id: str, format: str = "text"):
@@ -857,9 +826,20 @@ def v2_set_surface(conversation_id: str, payload: dict | None = None, db=Depends
 
 
 @app.get("/api/v1/hot-topics")
-async def hot_topics_cached(limit: int = 50, refresh: int = 0):
-    """当前热点清单：取公开热榜 + 模型整理。不带 refresh 时用缓存。"""
-    return await asyncio.to_thread(hot_topics.organize, limit=limit, force=bool(refresh))
+async def hot_topics_cached(refresh: int = 0):
+    """当前热梗清单。
+
+    与刷新按钮走**同一条**路径（联网搜索 + 模型整理），只是默认读缓存。此前这里调的是旧的
+    「读榜单」路径，于是刷新出来的清单一离开板块再回来就变回报错——两条路径不一致。
+    """
+    return await asyncio.to_thread(hot_topics.organize_from_search, force=bool(refresh))
+
+
+@app.get("/api/v1/hot-charts")
+async def hot_charts_endpoint(platforms: str = ""):
+    """各平台原始榜单（抖音/微博/知乎/小红书）：现在在榜什么，不只是热梗。"""
+    names = [item.strip() for item in platforms.split(",") if item.strip()] or None
+    return await asyncio.to_thread(hot_charts.fetch_many, names, 50)
 
 
 @app.post("/api/v1/hot-topics/refresh")

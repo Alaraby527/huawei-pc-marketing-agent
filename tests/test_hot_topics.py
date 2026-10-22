@@ -152,3 +152,25 @@ def test_the_prompt_requires_the_material_date_not_a_guess():
     prompt = hot_topics.SEARCH_SYSTEM
     assert "必须优先填资料里的 date 字段" in prompt
     assert "不要写 unknown，除非 date 确实为空" in prompt
+
+
+def test_charts_are_separate_from_memes_and_say_so():
+    """榜单报事件、不是热梗 —— 实测四个榜单里几乎没有梗（抖音 1/49）。"""
+    import inspect
+    from app import hot_charts
+    import inspect
+    source = inspect.getsource(hot_charts)
+    assert "不是热梗" in source, "要明确告诉用户榜单不等于热梗"
+    assert "它不产出热梗" in source, "模块文档要说明它不产热梗"
+    assert set(hot_charts.FEEDS) == {"douyin", "weibo", "zhihu", "rednote"}
+    # 只用实测可用的源：baidu 404、bili 500、toutiao 超时
+    assert "baidu" not in hot_charts.FEEDS and "bili" not in hot_charts.FEEDS
+
+
+def test_the_cached_endpoint_uses_the_same_path_as_refresh():
+    """实测 bug：GET 走读榜单、刷新走联网搜索，于是刷新出来的一离开板块就变回报错。"""
+    import inspect
+    from app import main
+    source = inspect.getsource(main.hot_topics_cached)
+    assert "organize_from_search" in source
+    assert "organize(" not in source.replace("organize_from_search", "")

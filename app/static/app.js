@@ -47,8 +47,6 @@
   let selectedHotIndex = -1;
   let wizardHotspot = null;
   let optionsRenderedAt = 0;
-  let xhsPollTimer = null;
-  let xhsTopicsActive = false;
   let turnInFlight = false;
   const SEND_ICON = sendBtn.innerHTML;
 
@@ -1063,7 +1061,6 @@
   }
 
   async function loadHotspots(slots) {
-    if (xhsTopicsActive || hotTopics.length) return;
     const scenario = (slots && slots.scenario) || '';
     const audience = (slots && slots.audience) || '';
     const key = scenario + '|' + audience;
@@ -1078,49 +1075,6 @@
       renderHotTopics(data.topics || [], note);
     } catch (error) {
       renderHotTopics([], '热点暂不可用');
-    }
-  }
-
-  function openXhsModal(message) {
-    $('xhs-modal').hidden = false;
-    if (message) $('xhs-status').textContent = message;
-  }
-
-  function closeXhsModal() {
-    $('xhs-modal').hidden = true;
-    if (xhsPollTimer) {
-      clearInterval(xhsPollTimer);
-      xhsPollTimer = null;
-    }
-  }
-
-  async function loadXhsTopics() {
-    const slots = (lastResult && lastResult.slots) || {};
-    try {
-      const response = await fetch('/api/v1/xhs/hot?scenario=' +
-        encodeURIComponent(slots.scenario || '') + '&audience=' + encodeURIComponent(slots.audience || ''));
-      const data = await response.json();
-      if (response.status === 401) {
-        xhsTopicsActive = false;
-        openXhsModal(data.message || '请先扫码登录小红书');
-        return xhsLogin();
-      }
-      if (!response.ok) {
-        xhsTopicsActive = false;
-        return loadPublicHotspots('小红书暂不可用，以下为公开热榜参考');
-      }
-      const topics = data.topics || [];
-      if (!topics.length) {
-        xhsTopicsActive = false;
-        return loadPublicHotspots('小红书未返回相关笔记，以下为公开热榜参考');
-      }
-      xhsTopicsActive = true;
-      const xhsBtn = $('xhs-login');
-      if (xhsBtn) xhsBtn.textContent = '小红书已连接';
-      renderHotTopics(topics, '小红书实时笔记');
-    } catch (error) {
-      xhsTopicsActive = false;
-      return loadPublicHotspots('小红书连接失败，以下为公开热榜参考');
     }
   }
 
@@ -1281,7 +1235,7 @@
       'active', item.dataset.section === (hot ? 'hot' : (studio ? 'studio'
         : (workspace ? '' : 'chat')))));
     renderSectionTabs(hot ? 'hot' : (studio ? 'studio' : 'chat'));
-    if (hot) loadOrganizedTopics(false);
+    if (hot) { renderHotModeTabs(); loadHotMode(hotMode === 'topics' ? 'topics' : hotMode); }
     if (workspace && window.WorkspaceApp) window.WorkspaceApp.open();
   }
 
@@ -1302,16 +1256,19 @@
   // 热点榜单：点刷新 = 取公开热榜 + 让模型整理成热点清单（不排序、不打分）
   async function loadOrganizedTopics(force) {
     const note = $('hot-source-note');
-    if (note) note.textContent = force ? '正在取源并让模型整理…（约 10–60 秒）' : '正在加载热点清单…';
     const list = $('hot-list');
-    if (list) list.innerHTML = '<p class="hint">加载中…</p>';
+    // 只有真的点刷新才提示"正在搜索"；进出板块读的是服务端缓存，不该让人等
+    if (force) {
+      if (note) note.textContent = '正在联网搜索并整理…（约 10–60 秒）';
+      if (list) list.innerHTML = '<p class="hint">搜索中…</p>';
+    }
     try {
       const response = force
         ? await fetch('/api/v1/hot-topics/refresh', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ limit: 50 }),
+            body: JSON.stringify({ source: 'search' }),
           })
-        : await fetch('/api/v1/hot-topics?limit=50');
+        : await fetch('/api/v1/hot-topics');
       const data = await response.json();
       renderOrganizedTopics(data);
     } catch (error) {
@@ -1387,89 +1344,69 @@
     }
   }
 
-  async function loadHotList() {
+  // 热点板块：热梗（联网搜索）+ 各平台原始榜单（抖音/微博/知乎/小红书）
+  const CHART_PLATFORMS = [
+    ['douyin', '抖音热榜'], ['weibo', '微博热搜'],
+    ['zhihu', '知乎热榜'], ['rednote', '小红书热榜'],
+  ];
+  let hotMode = 'topics';       // topics（热梗）| 某个平台
+  let chartCache = {};
+
+  function renderHotModeTabs() {
+    const wrap = $('hot-scenario-tabs');
+    if (!wrap) return;
+    const items = [['topics', '热梗（联网搜索）'], ...CHART_PLATFORMS];
+    wrap.innerHTML = items.map(([key, label]) =>
+      '<button type="button" class="section-tab' + (key === hotMode ? ' active' : '') +
+      '" data-hot-mode="' + key + '">' + escapeHtml(label) + '</button>').join('');
+  }
+
+  async function loadHotMode(mode) {
+    hotMode = mode;
+    renderHotModeTabs();
     const note = $('hot-source-note');
-    note.textContent = '正在加载小红书热点…';
+    const list = $('hot-list');
+    if (mode === 'topics') return loadOrganizedTopics(false);
+    if (chartCache[mode]) return renderChart(mode, chartCache[mode]);
+    if (note) note.textContent = '正在取「' + (CHART_PLATFORMS.find(p => p[0] === mode) || [])[1] + '」…';
+    if (list) list.innerHTML = '<p class="hint">加载中…</p>';
     try {
-      const status = await fetch('/api/v1/xhs/status').then(r => r.json()).catch(() => ({}));
-      if (!status.configured) {
-        return loadPublicHotspots('小红书未配置，以下为公开热榜参考');
-      }
-      if (!status.logged_in) {
-        return loadPublicHotspots('未登录小红书，以下为公开热榜参考；扫码后显示实时笔记');
-      }
-      return loadXhsTopics();
+      const data = await fetch('/api/v1/hot-charts?platforms=' + mode).then(r => r.json());
+      const board = (data.boards || [])[0] || {};
+      chartCache[mode] = data;
+      renderChart(mode, data);
     } catch (error) {
-      return loadPublicHotspots('热点加载失败，以下为公开热榜参考');
+      if (note) note.textContent = '取榜单失败';
+      if (list) list.innerHTML = '<p class="hint">取榜单失败，请点刷新重试。</p>';
     }
   }
 
-  function startXhsPoll() {
-    if (xhsPollTimer) clearInterval(xhsPollTimer);
-    const started = Date.now();
-    xhsPollTimer = setInterval(async () => {
-      try {
-        const response = await fetch('/api/v1/xhs/login/status');
-        const data = await response.json();
-        if (data.logged_in) {
-          closeXhsModal();
-          toast('小红书已连接');
-          loadXhsTopics();
-          return;
-        }
-        const waited = Date.now() - started;
-        if (waited > 15000 && waited < 200000) {
-          $('xhs-status').textContent = waited > 40000
-            ? '仍未登录：手机已确认也没反应时，通常是云端风控；可改用服务端 Cookie 导入（见连接上线指南）或先用公开热榜'
-            : '等待扫码；如果已经扫码，请在手机上点“确认登录”';
-        }
-        if (waited > 200000) {
-          $('xhs-status').textContent = '二维码已过期，请点“刷新二维码”重新获取';
-          clearInterval(xhsPollTimer);
-          xhsPollTimer = null;
-        }
-      } catch (error) {
-        // Keep polling; a transient network error should not close the dialog.
-      }
-    }, 2000);
-  }
-
-  async function xhsLogin() {
-    if (xhsPollTimer) {
-      clearInterval(xhsPollTimer);
-      xhsPollTimer = null;
+  function renderChart(mode, data) {
+    const note = $('hot-source-note');
+    const list = $('hot-list');
+    const board = (data.boards || [])[0] || {};
+    const label = (CHART_PLATFORMS.find(p => p[0] === mode) || [])[1] || mode;
+    if (note) {
+      note.textContent = board.ok
+        ? label + ' · ' + board.count + ' 条在榜原文 · 抓取于 ' + (data.fetched_at || '').slice(11, 16)
+        : label + ' · ' + (board.note || '本次没有返回内容');
     }
-    try {
-      const response = await fetch('/api/v1/xhs/login/qrcode');
-      const data = await response.json();
-      if (!response.ok) {
-        toast(data.message || '小红书未配置');
-        openXhsModal(data.message || '小红书未配置');
-        return;
-      }
-      if (data.is_logged_in) {
-        closeXhsModal();
-        return loadXhsTopics();
-      }
-      if (!data.qr_image) {
-        openXhsModal('未获取到二维码，请稍后重试');
-        return;
-      }
-      $('xhs-qr').src = data.qr_image;
-      $('xhs-status').textContent = '请用小红书 App 扫码登录，并在手机上点“确认登录”';
-      openXhsModal();
-      startXhsPoll();
-    } catch (error) {
-      toast('小红书连接失败');
-      openXhsModal('小红书连接失败，请检查 MCP 服务');
-    }
+    if (!list) return;
+    list.innerHTML = (board.items || []).length
+      ? (board.items || []).map(item =>
+          '<article class="topic-card chart-card">' +
+          '<div class="topic-head"><span class="topic-kind">#' + escapeHtml(String(item.rank)) + '</span>' +
+          '<strong>' + escapeHtml(item.title) + '</strong></div>' +
+          (item.hot ? '<p class="topic-gist">热度 ' + escapeHtml(String(item.hot)) + '</p>' : '') +
+          (item.url ? '<div class="topic-actions"><a class="chip" href="' + escapeHtml(item.url) +
+            '" target="_blank" rel="noopener">打开原文 ↗</a></div>' : '') +
+          '</article>').join('')
+      : '<p class="hint">' + escapeHtml(board.note || '本次没有返回内容。') + '</p>';
   }
 
   async function loadXhsStatus() {
-    const button = $('xhs-login');
     if (!button) return;   // 顶栏的小红书按钮已按用户要求删除
     try {
-      const response = await fetch('/api/v1/xhs/status');
       const data = await response.json();
       if (!response.ok || !data.configured) {
         button.textContent = '小红书未配置';
@@ -1692,19 +1629,13 @@
 
   on('hot-back', 'click', () => switchView('chat'));
   on('studio-back', 'click', () => switchView('chat'));
-  $('hot-refresh').addEventListener('click', () => loadOrganizedTopics(true));
-  $('hot-connect').addEventListener('click', xhsLogin);
+  $('hot-refresh').addEventListener('click', () => {
+    // 刷新按钮只对"热梗"有意义；平台榜单刷新就重新取源
+    if (hotMode === 'topics') return loadOrganizedTopics(true);
+    chartCache[hotMode] = null;
+    return loadHotMode(hotMode);
+  });
 
-  on('xhs-refresh', 'click', xhsLogin);
-  $('xhs-fallback').addEventListener('click', () => {
-    closeXhsModal();
-    switchView('hot');
-    toast('已切换到公开热榜参考');
-  });
-  $('xhs-close').addEventListener('click', closeXhsModal);
-  $('xhs-modal').addEventListener('click', (event) => {
-    if (event.target.id === 'xhs-modal') closeXhsModal();
-  });
 
   const surfaceTabs = $('surface-tabs');
   if (surfaceTabs) surfaceTabs.addEventListener('click', (event) => {
@@ -1858,6 +1789,10 @@
     }
   });
   $('task-list').addEventListener('scroll', hideTaskMenu);
+  on('hot-scenario-tabs', 'click', (event) => {
+    const button = event.target.closest('[data-hot-mode]');
+    if (button) loadHotMode(button.getAttribute('data-hot-mode'));
+  });
   on('task-batch-toggle', 'click', () => setBatchMode(!batchMode));
   on('task-batch-cancel', 'click', () => setBatchMode(false));
   on('task-batch-delete', 'click', deleteSelectedTasks);

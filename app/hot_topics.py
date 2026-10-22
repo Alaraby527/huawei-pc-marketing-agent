@@ -245,11 +245,11 @@ def fetch_source_items(limit: int = 50) -> dict:
     The source caps at 20 entries; asking for 50 cannot change that, and pretending otherwise
     would misreport the board size.
     """
-    from .hotspot import _fetch_source
+    from .hot_charts import fetch
 
-    rows = _fetch_source("rednote", limit) or []
-    items = [{"rank": item.get("rank"), "title": item.get("title"), "hot": item.get("heat"),
-              "url": item.get("url") or "", "source": item.get("source") or "60s-rednote"}
+    rows = fetch("rednote", limit) or []
+    items = [{"rank": item.get("rank"), "title": item.get("title"), "hot": item.get("hot"),
+              "url": item.get("url") or "", "source": "60s-rednote"}
              for item in rows if item.get("title")]
     return {"items": items, "requested": limit, "available": len(items),
             "source": "60s-rednote（公开聚合）",

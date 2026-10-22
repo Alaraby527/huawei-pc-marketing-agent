@@ -495,7 +495,29 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ## 0.16.0 — 2026-10-21
 
+### Removed
+
+- **The Xiaohongshu MCP is gone**: `app/xhs.py`, `app/hotspot.py`, `/api/v1/xhs/*` (status,
+  login qrcode, login status, hot) and `/api/v1/hotspots`, plus the 连接小红书 button, the QR
+  modal and the polling code. It was measured to be useless: the cloud IP triggers risk control,
+  the upstream MCP has no interface to submit the SMS code, and its chart contains no memes.
+
 ### Added
+
+- **`app/hot_charts.py` + `GET /api/v1/hot-charts`**: the raw public charts (抖音/微博/知乎/小红书)
+  that the user asked to keep, as their own cards. Only the sources measured to work are listed -
+  baidu 404, bili 500, toutiao times out. Each board reports its own success, and a board that
+  returned nothing says so rather than looking empty.
+
+### Fixed
+
+- **The hot list vanished when leaving the section.** `GET /api/v1/hot-topics` still called the old
+  chart path while the refresh button called the new search path, so a refresh was correct but
+  coming back re-loaded the broken version - which is the duplicated error and empty cards in the
+  screenshot. Both now call `organize_from_search`, and the cached read is the same data, so the
+  list survives navigating to 对话 and back until 刷新 is pressed again.
+
+Tests: 559 pass (180 legacy + 379 new/extended).
 
 - **Serper (Google) as the preferred search provider**, configured with `SERPER_API_KEY` from
   `.private/search.env` (outside the repo, mode 600, never printed or committed). The keyless

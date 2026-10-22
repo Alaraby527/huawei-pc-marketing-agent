@@ -746,19 +746,22 @@ async def _generate_scene(ctx, args):
 
 
 async def _tool_topics(ctx, args):
-    from .hotspot import related_hot_topics
-    from .xhs import XhsError, hot_topics
-    scenario = str(args.get("scenario", ""))
-    audience = str(args.get("audience", ""))
-    try:
-        topics = await hot_topics(scenario, audience, 6)
-        return {"ok": True, "topics": topics, "data_mode": "live_xhs",
-                "note": "小红书关键词搜索结果，不是官方热榜"}
-    except XhsError:
-        topics = await asyncio.to_thread(related_hot_topics, scenario, audience, 6)
-        mode = topics[0].get("data_mode", "editorial_fallback") if topics else "editorial_fallback"
-        return {"ok": True, "topics": topics, "data_mode": mode,
-                "note": "实时笔记不可用，已回退公开/编辑方向，非实时热榜"}
+    """热点线索：默认走联网搜索（能拿到当期热梗），可切到原始榜单。"""
+    from . import hot_charts, hot_topics
+
+    platform = str(args.get("platform") or "").strip()
+    if platform:
+        rows = await asyncio.to_thread(hot_charts.fetch, platform, 20)
+        return {"ok": bool(rows), "topics": rows, "data_mode": "chart:" + platform,
+                "note": "该平台当下在榜条目原文；榜单报事件，不等于热梗。"}
+    result = await asyncio.to_thread(hot_topics.organize_from_search)
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error"),
+                "message": result.get("message") or "搜索不可用",
+                "note": "拿不到就如实说拿不到，不要用模型记忆冒充当期热点。"}
+    return {"ok": True, "topics": result.get("topics") or [], "data_mode": "web_search",
+            "providers": (result.get("source") or {}).get("providers"),
+            "note": result.get("notice") or ""}
 
 
 def _apply_patch(content: dict, patch: dict) -> dict:
