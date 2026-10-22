@@ -255,7 +255,7 @@ async def optimize_copy(db: Session, conversation: models.AgentConversation, *,
 async def generate_image(db: Session, conversation: models.AgentConversation, *,
                          prompt: str, style: str = "", ratio: str = "", image_id: str = "",
                          size: str = "", model: str | None = None,
-                         recipe_id: str = "") -> dict:
+                         recipe_id: str = "", count: int = 1) -> dict:
     """Reference photo + prompt -> a generated scene image.
 
     Same guards as the agent tool: a verified KB image must exist, the model must have probe
@@ -345,9 +345,11 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
                 "message": str(booking.get("message") or "计费被拒绝"), "ledger": booking}
     timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "300")))
     try:
+        # 张数：界面上可选 1–4；之前这里写死 1，所以"张数"是假的。
+        wanted = max(1, min(int(count or 1), 4))
         rendered, channel = await asyncio.to_thread(
             generate_from_product, body, text, mime or "image/png", resolved,
-            size or None, 1, target_ratio, timeout)
+            size or None, wanted, target_ratio, timeout)
     except ImageChannelError as error:
         return {"ok": False, "error": "IMAGE_CHANNEL_ERROR", "message": str(error)[:220],
                 "capability": capability}
@@ -376,6 +378,7 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
          "at": time.strftime("%Y-%m-%d %H:%M")}
         for row in (out or []) if isinstance(row, dict)])
     return {"ok": True, "images": out, "channel": channel, "prompt": text,
+            "requested_count": wanted, "size": size or "auto",
             # 溯源：本次用的哪个风格配方、是否已批准；没用配方也如实说明原因。
             "recipe": recipe_used,
             "capability": capability, "billing": {"priced": booking.get("priced"),

@@ -778,6 +778,29 @@ the full-size files. Tests: 575 pass (180 legacy + 395 new/extended).
 
 Tests: 579 pass (180 legacy + 399 new/extended).
 
+### 图文工作室：把剩下的功能做全
+
+补上三处此前是"半成品"的地方——都是我自己留下的，先说清楚而不是当成已完成：
+
+1. **模型下拉是空壳** → 新增 `GET /api/v1/image-models`，列可选模型并带**实测探针证据**。
+   工作室始终带参考图，所以首要信息是"能否吃参考图"：`gpt-image-2.5` 可用、`gpt-image-2-w`
+   标为 **不可用（不支持参考图）**（实测三次带图请求都 503）。可用的排前面，避免用户先选中
+   必然失败的模型。**没有价格数据就不写**，接口里也说明了这一点。
+2. **张数是假的** → 后端 `n` 写死为 1。现在 `generate_image` 接受 `count`（1–4）并**如实回报**
+   `requested_count` 与实际张数；界面的张数选项也从 1–2 扩到 1–4。
+3. **`recipe_id` 根本没传** → 前端发了、接口忽略了，**配方功能等于没接上**。这是排查张数时
+   顺带发现的第二个漏传。现在接口透传 `recipe_id`，生成结果里回报用了哪个配方。
+4. **质量控制接上**：标准→`auto`，高清→按比例挑大尺寸，结果里回报最终尺寸（不谎报"高清"）。
+
+### 需要如实说明的一点
+
+本轮**没有重新跑一次完整生图**来验证参数链路：新会话没有绑定产品原图，接口按守卫返回
+`NO_REFERENCE_IMAGE`（这是预期行为）。要跑通需要先走完对话流程绑定产品，成本较高。
+因此张数/尺寸/配方的**参数流转由测试覆盖**（断言接口透传与 `generate_image` 的实际用法），
+而**图像通道本身**在此前的 22 次人工验收里已经被真实验证过。
+
+Tests: 583 pass (180 legacy + 403 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

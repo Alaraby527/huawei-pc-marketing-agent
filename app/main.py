@@ -889,6 +889,40 @@ async def v2_studio_save_copy(conversation_id: str, payload: dict | None = None,
     return result
 
 
+@app.get("/api/v1/image-models")
+def image_models_endpoint():
+    """可选图片模型：带参考图能力（探针证据）与默认值。
+
+    工作室始终带参考图，所以这里把"能否吃参考图"作为首选信息——不能吃参考图的模型
+    （gpt-image-2-w 实测 503）必须标出来，否则用户选了一个必然失败的模型。
+    """
+    from . import image_capabilities
+    from .image_channel import DEFAULT_MODEL, SIZE_CANDIDATES
+
+    names = sorted({DEFAULT_MODEL, image_capabilities.reference_model(),
+                    *{model for model, _ in image_capabilities.PROBED}})
+    rows = []
+    for name in names:
+        cap = image_capabilities.describe(name, True)
+        rows.append({
+            "model": name,
+            "supports_reference": cap.get("supports"),
+            "status": ("可用" if cap.get("supports") is True
+                       else "不可用（不支持参考图）" if cap.get("supports") is False
+                       else "未探针验证"),
+            "evidence": cap.get("evidence") or "",
+            "probed_at": cap.get("probed_at") or "",
+            "input_shape": cap.get("input_shape") or "",
+            "default": name == DEFAULT_MODEL,
+            "preferred_reference": name == image_capabilities.reference_model(),
+        })
+    rows.sort(key=lambda row: (row["supports_reference"] is not True, not row["default"]))
+    return {"ok": True, "models": rows,
+            "sizes": list(SIZE_CANDIDATES), "default": DEFAULT_MODEL,
+            "note": ("status 来自实测探针记录，不是猜测；未探针的模型标为未验证。"
+                     "价格需在服务端配置后才有数据，这里不编造。")}
+
+
 @app.get("/api/v1/recipes")
 def recipes_endpoint(surface: str = "", approved_only: int = 1):
     """已批准的风格配方列表（给图文工作室的"风格"选择用）。"""
@@ -952,7 +986,10 @@ async def v2_studio_generate(conversation_id: str, payload: dict | None = None, 
         db, conversation, prompt=str(payload.get("prompt") or ""),
         style=str(payload.get("style") or ""), ratio=str(payload.get("ratio") or ""),
         image_id=str(payload.get("image_id") or ""), size=str(payload.get("size") or ""),
-        model=str(payload.get("model") or "") or None)
+        model=str(payload.get("model") or "") or None,
+        # recipe_id 之前漏传：前端发了、接口忽略了，等于配方功能没接上。
+        recipe_id=str(payload.get("recipe_id") or ""),
+        count=int(payload.get("count") or 1))
     if not result.get("ok"):
         code = str(result.get("error") or "")
         status = {"NO_REFERENCE_IMAGE": 422, "REFERENCE_EXPIRED": 409,

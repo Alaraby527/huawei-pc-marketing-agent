@@ -334,3 +334,48 @@ def test_the_studio_view_has_three_columns_and_no_placeholder():
     # 左栏三个按钮
     for button in ("studio-regen", "studio-optimize", "studio-copy"):
         assert button in html, button
+
+
+def test_the_endpoint_passes_recipe_and_count_through():
+    """踩过：前端发了 recipe_id，接口却忽略了，等于配方功能没接上。"""
+    import inspect
+    from app import main
+    source = inspect.getsource(main.v2_studio_generate)
+    assert 'recipe_id=str(payload.get("recipe_id") or "")' in source
+    assert 'count=int(payload.get("count") or 1)' in source
+
+
+def test_count_is_capped_and_reported():
+    """张数之前写死为 1，"张数"是假的。现在要真的传下去，且如实回报。"""
+    import inspect
+    from app import studio
+    source = inspect.getsource(studio.generate_image)
+    assert "wanted = max(1, min(int(count or 1), 4))" in source
+    assert '"requested_count": wanted' in source
+    assert '"size": size or "auto"' in source
+    assert "generate_from_product, body, text, mime or \"image/png\", resolved,\n            size or None, wanted" in source
+
+
+def test_image_models_endpoint_reports_probe_evidence_not_guesses():
+    """工作室始终带参考图，所以"能否吃参考图"是首要信息；不能吃的必须标出来。"""
+    from app.main import image_models_endpoint
+    data = image_models_endpoint()
+    assert data["ok"] is True
+    by = {row["model"]: row for row in data["models"]}
+    assert by["gpt-image-2.5"]["supports_reference"] is True
+    assert by["gpt-image-2-w"]["supports_reference"] is False
+    assert "不支持参考图" in by["gpt-image-2-w"]["status"]
+    assert by["gpt-image-2.5"]["evidence"], "必须带探针证据"
+    assert "不编造" in data["note"], "没有价格数据就要说明，不能编"
+    # 可用的排在前面，避免用户先看到必然失败的模型
+    assert data["models"][0]["supports_reference"] is True
+
+
+def test_the_frontend_actually_sends_count_and_size_and_fills_models():
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+    assert "renderStudioModels" in js and "studioState.models" in js
+    assert "count: count," in js and "size: size," in js and "recipe_id:" in js
+    assert "'/api/v1/image-models'" in js
+    html = Path("app/static/index.html").read_text()
+    assert 'id="studio-count"' in html and 'value="4"' in html

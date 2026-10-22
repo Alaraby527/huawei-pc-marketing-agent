@@ -1234,16 +1234,19 @@
   }
 
   // ===================== 图文工作室 =====================
-  const studioState = {refs: [], images: [], recipes: [], generated: [], loaded: false};
+  const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false};
 
   async function loadStudio(force) {
     if (!sessionId) { toast('先在对话里建一个任务，再进图文工作室'); return; }
     if (studioState.loaded && !force) return;
     try {
-      const [material, recipeData] = await Promise.all([
+      const [material, recipeData, modelData] = await Promise.all([
         fetch('/api/v2/conversations/' + sessionId + '/studio').then(r => r.json()),
         fetch('/api/v1/recipes?approved_only=1').then(r => r.json()),
+        fetch('/api/v1/image-models').then(r => r.json()),
       ]);
+      studioState.models = modelData.models || [];
+      renderStudioModels();
       studioState.images = material.images || [];
       studioState.recipes = recipeData.recipes || [];
       studioState.loaded = true;
@@ -1263,6 +1266,24 @@
     } catch (error) {
       toast('图文工作室加载失败');
     }
+  }
+
+  function renderStudioModels() {
+    const sel = $('studio-model');
+    const chip = $('studio-model-chip');
+    if (!sel) return;
+    const rows = studioState.models || [];
+    sel.innerHTML = rows.map(row =>
+      '<option value="' + escapeHtml(row.model) + '"' +
+      (row.preferred_reference ? ' selected' : '') + '>' +
+      escapeHtml(row.model) + ' · ' + escapeHtml(row.status) + '</option>').join('');
+    const usable = rows.filter(row => row.supports_reference === true);
+    const chosen = rows.find(row => row.preferred_reference) || usable[0] || rows[0] || {};
+    if (chip) {
+      chip.textContent = usable.length + ' 个可用参考图' +
+        (chosen.evidence ? ' · 依据：' + chosen.probed_at + ' 探针' : '');
+    }
+    if (sel && chosen.model) sel.value = chosen.model;
   }
 
   function renderStudioRecipes(surface) {
@@ -1344,12 +1365,23 @@
     const note = $('studio-image-note');
     if (note) note.textContent = '正在生成…';
     try {
+      // 质量→尺寸：标准用 auto，高清按比例挑一个大尺寸。如实回报最终用的尺寸。
+      const count = Number(($('studio-count') || {}).value || 1);
+      const quality = ($('studio-quality') || {}).value || 'standard';
+      const ratio = ($('studio-ratio') || {}).value || '';
+      let size = '';
+      if (quality === 'high') {
+        size = ratio === 'portrait' ? '1080x1440'
+             : ratio === 'landscape' ? '1440x1080' : '1024x1536';
+      }
       const payload = {
         prompt: prompt,
         image_id: (studioState.images[studioState.refs[0]] || {}).image_id || '',
         recipe_id: ($('studio-recipe') || {}).value || '',
-        ratio: ($('studio-ratio') || {}).value || '',
+        ratio: ratio,
         model: ($('studio-model') || {}).value || '',
+        count: count,
+        size: size,
       };
       const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/image',
         {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1361,7 +1393,9 @@
       }
       const used = data.recipe || {};
       if (note) {
-        note.textContent = '已生成。' + (used.recipe_id
+        note.textContent = '已生成 ' + ((data.images || []).length) + ' 张（请求 ' +
+          (data.requested_count || 1) + ' 张，尺寸 ' + (data.size || 'auto') + '）。' +
+          (used.recipe_id
           ? '风格配方：' + (used.recipe_name || used.recipe_id)
           : '未使用配方（' + (used.why_no_recipe || '无已批准配方') + '）') +
           '；生成的是场景图，不是产品实拍。';
