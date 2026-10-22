@@ -177,7 +177,7 @@ def limits_check(surface_id: str, *, body_chars: int | None = None,
             notes.append(f"{label} {headline_chars} 字超过建议上限 {cap} 字（建议值，非平台规则）")
     return {"ok": True, "surface": surface_id, "notes": notes,
             "limits_are": LIMITS_DISCLAIMER,
-            "conflicts": [item for item in SPEC_CONFLICTS if item["surface"] == surface_id]} 
+            "conflicts": [item for item in SPEC_CONFLICTS if item["surface"] == surface_id]}
 
 
 def describe() -> dict:
