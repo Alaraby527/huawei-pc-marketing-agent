@@ -2,7 +2,27 @@
 
 ## 0.17.0 — 2026-10-21
 
-### Added
+### Fixed
+
+- **The test suite was not hermetic.** Running the app requires sourcing the private
+  environment (`KB_SOURCE=local`, `LOCAL_KB_ZIP`, the model and image credentials), and those
+  same variables changed what the tests did: with a real knowledge base configured, a test that
+  simulates a **knowledge-base failure** no longer failed, so its assertion flipped. Measured
+  both ways on one file - **69 passed in 56 s** with a clean environment, **1 failed in 103 s**
+  with the private environment sourced - which is exactly the shape of a "flake" that is really
+  an environment dependency. `tests/conftest.py` now clears the ambient settings for every test,
+  so a test that wants the real knowledge base or an image channel must ask for it explicitly.
+  After the fix: **516 passed in 64.7 s** clean and **516 passed in 59.6 s** with the private
+  environment sourced.
+- The studio's material projection dropped the KB's `source` provenance, so every asset's rights
+  status degraded to `unknown`. Worse, the field was read through `_image_field`, which returns
+  `str(value)` - so the mapping arrived as the repr of a dict and the resolver could not read
+  `kind` at all. Now read without stringifying: the studio reports
+  `provenance_recorded_terms_unreviewed` with the real `sha256`, which is both more informative
+  and more truthful than `unknown`.
+
+Tests: 516 pass (180 legacy + 336 new/extended), identical with and without the private
+environment sourced.
 
 - **Export pack** (`app/export_bundle.py`, package 3's step 8). Produces the five files -
   bundle, claim map, review, manifest, approval - and binds an approval to a

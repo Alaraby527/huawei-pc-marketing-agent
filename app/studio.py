@@ -90,6 +90,18 @@ def _latest_artifact(db: Session, conversation_id: str):
     return artifact, revision
 
 
+def _raw_field(row, key: str):
+    """Read a field without stringifying it.
+
+    ``agent_runtime._image_field`` returns ``str(value)``, which is right for ids and captions
+    but destroyed the ``source`` mapping here: the resolver received the repr of a dict as a
+    string and could no longer find ``kind``, so every rights status degraded to "unknown".
+    """
+    if isinstance(row, dict):
+        return row.get(key)
+    return getattr(row, key, None)
+
+
 async def materials(db: Session, conversation: models.AgentConversation) -> dict:
     """Everything the studio needs to open on this conversation."""
     state = db.get(models.AgentTaskState, conversation.id)
@@ -104,11 +116,15 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
         try:
             rows, _ = await verified_images(catalog, product, Platform.XIAOHONGSHU,
                                             ["屏幕", "接口", "尺寸与重量", "电池"])
+            # `source` is carried through deliberately: it holds the provenance that the
+            # asset resolver reads. Dropping it degraded every rights status to "unknown",
+            # losing the more truthful "provenance recorded, terms unreviewed".
             images = [{"image_id": agent_runtime._image_field(row, "image_id"),
                        "caption": agent_runtime._image_field(row, "caption"),
                        "access_url": agent_runtime._image_field(row, "access_url"),
                        "model_verified": agent_runtime._image_field(row, "model_verified"),
-                       "verification": agent_runtime._image_field(row, "verification")}
+                       "verification": _raw_field(row, "verification"),
+                       "source": _raw_field(row, "source")}
                       for row in (rows or [])]
         except Exception:  # noqa: BLE001 - no image is a normal state, reported as empty
             images = []

@@ -261,3 +261,34 @@ def test_an_edit_without_an_explicit_id_continues_the_existing_artifact(monkeypa
     artifacts = session.scalars(select(models.AgentArtifact)).all()
     assert len(artifacts) == 1
     session.close()
+
+
+def test_provenance_survives_into_the_studio_materials(monkeypatch):
+    """Dropping `source` degraded every rights status to "unknown".
+
+    The KB records where an image came from; the studio must not throw that away, or the
+    rights report becomes less truthful than the data it came from.
+    """
+    async def catalog():
+        return _Catalog()
+
+    async def fake_images(*args, **kwargs):
+        return [{"image_id": "I-1", "caption": "原野绿多彩配色", "model_verified": True,
+                 "access_url": "/api/v1/assets/tok",
+                 "source": {"kind": "local_official_export", "title": "原野绿多彩配色_04.png"},
+                 "verification": {"method": "local_official_export_index", "sha256": "b" * 64}}], None
+
+    monkeypatch.setattr(studio, "_catalog", catalog)
+    monkeypatch.setattr(studio, "verified_images", fake_images)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    session.add(models.AgentTaskState(conversation_id=conversation.id, stage="completed",
+                                      data={"candidates": [{"product_id": "P-studio",
+                                                            "model": _Product.model}]}))
+    session.commit()
+    data = _run(studio.materials(session, conversation))
+    from app import assets
+    assert data["images"][0]["source"]["kind"] == "local_official_export"
+    assert data["assets"]["by_rights"] == {assets.RIGHTS_PROVENANCE_ONLY: 1}
+    assert data["assets"]["assets"][0]["sha256"] == "b" * 64
+    session.close()
