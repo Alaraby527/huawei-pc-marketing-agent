@@ -115,7 +115,8 @@ def sweep(pairs: list[dict], thresholds: list[float] | None = None) -> list[dict
     return [evaluate(pairs, value) for value in sorted(thresholds)]
 
 
-def recommend(pairs: list[dict], max_false_positive_rate: float = 0.01) -> dict:
+def recommend(pairs: list[dict], max_false_positive_rate: float = 0.01,
+              labels_confirmed: bool = True) -> dict:
     """The lowest threshold whose false-positive rate fits the budget.
 
     Lowest, not "best": the cheaper failure here is a missed duplicate (a human still sees
@@ -137,6 +138,17 @@ def recommend(pairs: list[dict], max_false_positive_rate: float = 0.01) -> dict:
                 "note": "没有任何阈值同时满足误杀预算与召回；不得据此启用拦截"}
     chosen = min(usable, key=lambda row: row["threshold"])
     gap = separation(pairs)
+    if not labels_confirmed:
+        # Labels authored by the system under test are not independent evidence. The numbers
+        # are still reported, because they are informative, but they can never be presented
+        # as a finished calibration or used to switch on a blocking threshold.
+        chosen = {**chosen, "threshold": chosen["threshold"]}
+        return {"calibrated": False, "provisional": True,
+                "reason": "labels_not_human_confirmed",
+                "threshold": chosen["threshold"], "metrics": chosen, "sweep": results,
+                "separation": gap, "warning_threshold": chosen["threshold"],
+                "note": "标签为 ai_first_pass、未经人工确认：数字仅供参考，"
+                        "不得据此启用拦截阈值"}
     # When the sample separates cleanly the chosen value is the grid floor, not a finding.
     at_floor = bool(gap.get("separable")) and chosen["threshold"] <= min(
         row["threshold"] for row in results)

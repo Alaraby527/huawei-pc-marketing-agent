@@ -149,6 +149,11 @@ def main() -> int:
     parser.add_argument("--constructed", action="store_true",
                         help="calibrate the lexical layer on by-construction pairs")
     parser.add_argument("--max-false-positive-rate", type=float, default=0.01)
+    parser.add_argument("--from-labelled", type=Path,
+                        help="a labelled JSONL sheet: run the sweep on it")
+    parser.add_argument("--metric", default="semantic_similarity",
+                        choices=("similarity", "semantic_similarity"),
+                        help="which layer's score to calibrate")
     parser.add_argument("--include-chat", action="store_true",
                         help="also include replies that produced no deliverable")
     parser.add_argument("--json", action="store_true")
@@ -164,6 +169,26 @@ def main() -> int:
             print(f"注意：只有 {summary['pairs']} 组候选，方案建议 200 组人工标注文本对；"
                   "样本不足时不要据此外推阈值。")
 
+    if args.from_labelled:
+        rows = calibration.load_pairs(args.from_labelled)
+        labelled = [row for row in rows if row.get("label") in ("duplicate", "distinct")
+                    and row.get(args.metric) is not None]
+        if not labelled:
+            print(f"没有可用于 {args.metric} 的标注样本")
+            return 2
+        confirmed = all(bool(row.get("confirmed_by_human")) for row in labelled)
+        pairs = [{"pair_id": row.get("pair_id", ""), "label": row["label"],
+                  "similarity": float(row[args.metric])} for row in labelled]
+        result = calibration.recommend(pairs, args.max_false_positive_rate,
+                                       labels_confirmed=confirmed)
+        result["metric"] = args.metric
+        result["label_source"] = sorted({str(row.get("label_source") or "") for row in labelled})
+        result["human_confirmed"] = confirmed
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
+              else calibration.format_report(result))
+        print(f"（指标：{args.metric}｜标签来源：{result['label_source']}｜"
+              f"人工确认：{'是' if confirmed else '否'}）")
+
     if args.constructed:
         pairs = _constructed_pairs()
         result = calibration.recommend(pairs, args.max_false_positive_rate)
@@ -172,7 +197,7 @@ def main() -> int:
                                 "结论只对字面层有效，不得据此声称语义去重已完成")
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
               else calibration.format_report(result) + "\n" + result["disclaimer"])
-    if not args.sheet and not args.constructed:
+    if not args.sheet and not args.constructed and not args.from_labelled:
         parser.print_help()
     return 0
 

@@ -4,6 +4,31 @@
 
 ### Added
 
+- **First-pass pair labelling** (`scripts/label_pairs.py`) and calibration from a labelled
+  sheet (`calibrate_dedup.py --from-labelled --metric`). Labels authored by the system under
+  test carry `label_source = "ai_first_pass"` and `confirmed_by_human = false`, and the
+  calibration **refuses to conclude** while any label is unconfirmed: enabling a blocking
+  threshold on them would be grading its own exam. Only the most similar pairs are labelled,
+  because pairs far apart tell a threshold nothing.
+
+### Measured on 23 real labelled pairs
+
+| layer | duplicates (n=7) | distinct (n=16) | separable |
+|---|---|---|---|
+| literal (MinHash) | 0.047-0.109 | 0.047-0.125 | **no — fully interleaved** |
+| semantic (embedding) | 0.721-0.910 (median 0.822) | 0.389-0.833 (median 0.664) | no, but only one negative sits above the lowest positive |
+
+The literal layer has **no discriminative power on real deliverables**: both classes occupy
+the same range. The semantic layer's best measured operating point is **0.75** — precision
+86%, recall 86%, false-positive rate 6%, false-negative rate 14%.
+
+This also corrects the earlier constructed sample, which suggested a clean split at 0.5: on
+real data the classes overlap (`gap = -0.11`). It is a good illustration of why the plan
+insists on human-labelled real pairs rather than convenient ones.
+
+Thresholds remain **unapplied**. Enabling one requires confirmed labels.
+
+
 - **Semantic similarity layer** (`app/runtime/semantic.py`, `agent_content_embeddings`,
   T13). The literal layer cannot see a paraphrase: measured against the live embedding
   endpoint, a rewritten post that makes the same points scores **0.0000** on character
