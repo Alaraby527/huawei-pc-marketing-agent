@@ -4,6 +4,25 @@
 
 ### Added
 
+- **Cost ledger** (`app/cost_ledger.py`, `cost_reservations`, package 1's budget state
+  machine). Reserve before submitting a paid attempt, settle to the real amount, or release an
+  attempt that was never charged. Three plan rules are enforced in code: no currency means no
+  billing, an unestimatable cost **blocks submission** rather than being guessed, and an
+  unknown charge stays counted and flagged for reconciliation instead of being zeroed
+  ("不能简单将预留清零"). All paid attempts of one request share one ceiling, which comes from
+  the server environment.
+- **One deliberate, visible deviation.** The plan says a paid call is forbidden before a
+  production budget exists, which strictly means blocking. Enforcement is off by default
+  (`IMAGE_BILLING_ENFORCE=1` turns the plan's rule binding) because the user is actively using
+  image generation for acceptance and silently refusing every request would break it. Until
+  then each attempt is still recorded as `unpriced`, so unpriced spend is visible and can
+  never be mistaken for accounted money. Verified live: generation still succeeds and the row
+  reads `priced: false, state: unpriced`.
+- Surface/platform separation, the 20-method catalogue and the placeholder gate (details in
+  the commit for those changes).
+
+Tests: 449 pass (180 legacy + 269 new/extended).
+
 - **Reference-image generation, wired and gated** (`generate_scene_image`, 13th tool).
   A knowledge-base *verified* product image becomes the reference, the prompt describes the
   scene, and the result is returned as an asset labelled `kind = "generated_scene"` with a

@@ -220,6 +220,18 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
         style=style, subject=material["product"].get("model", ""),
         scene=material["product"].get("scenario", ""),
         audience=material["product"].get("audience", ""))
+    # Account for the paid attempt before submitting it. When no budget is configured this
+    # records an observation instead of blocking (see cost_ledger.enforce for why, and how to
+    # make the plan's rule binding).
+    from . import cost_ledger
+    booking = cost_ledger.record(
+        db, request_id=str(conversation.id), estimated=None,
+        idempotency_key="img:" + str(conversation.id) + ":" + str(int(time.time() * 1000)),
+        conversation_id=conversation.id, purpose="studio_image",
+        provider=image_capabilities.reference_model())
+    if not booking.get("ok"):
+        return {"ok": False, "error": booking.get("error") or "BILLING_BLOCKED",
+                "message": str(booking.get("message") or "计费被拒绝"), "ledger": booking}
     timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "300")))
     try:
         rendered, channel = await asyncio.to_thread(
@@ -240,8 +252,15 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
             continue
     if not out:
         return {"ok": False, "error": "NO_IMAGE_RETURNED", "message": "生图通道没有返回图片"}
+    if booking.get("reservation_id") and not booking.get("priced"):
+        # The provider reports token usage, so the observation can carry the measured charge
+        # proxy instead of staying empty.
+        cost_ledger.mark_unpriced(db, booking["reservation_id"], None,
+                                  note="模型 " + resolved + "，用量由供应商 usage 字段提供")
     return {"ok": True, "images": out, "channel": channel, "prompt": text,
-            "capability": capability,
+            "capability": capability, "billing": {"priced": booking.get("priced"),
+                                                  "state": booking.get("state"),
+                                                  "note": booking.get("message", "")},
             "reference": {"image_id": chosen.get("image_id"), "caption": chosen.get("caption"),
                           "access_url": chosen.get("access_url")},
             "notice": "以上为 AI 生成的场景图，不是产品实物照：机身比例、按键布局与接口位置由"

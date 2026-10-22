@@ -477,6 +477,37 @@ class AgentSeqCounter(Base):
 # publication under concurrency - are NOT exercised here.
 
 
+class CostReservation(Base):
+    """A budget reservation, taken *before* a paid attempt is submitted.
+
+    The plan is specific about the accounting: reserve inside the transaction before submit,
+    then settle to the real amount or release it; every paid attempt of one request shares
+    that request's budget; and an unknown cost becomes a reconciliation item rather than being
+    zeroed. Zeroing an unknown charge is how a system quietly spends money it cannot account
+    for, so ``state='unknown'`` is a first-class outcome here.
+    """
+    __tablename__ = "cost_reservations"
+    __table_args__ = (UniqueConstraint("tenant_id", "idempotency_key",
+                                       name="uq_cost_idempotency"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    request_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True, default="")
+    purpose: Mapped[str] = mapped_column(String(40), default="image_generate")
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(20), index=True, default="reserved")
+    currency: Mapped[str] = mapped_column(String(8), default="")
+    estimated: Mapped[float] = mapped_column(Float, nullable=True, default=None)
+    actual: Mapped[float] = mapped_column(Float, nullable=True, default=None)
+    provider: Mapped[str] = mapped_column(String(60), default="")
+    note: Mapped[str] = mapped_column(String(300), default="")
+    needs_reconciliation: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                        nullable=True, default=None)
+
+
 class HotspotSource(Base):
     """A candidate public source. Disabled and pending until someone approves it.
 
