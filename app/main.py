@@ -864,9 +864,12 @@ async def hot_topics_cached(limit: int = 50, refresh: int = 0):
 
 @app.post("/api/v1/hot-topics/refresh")
 async def hot_topics_refresh(payload: dict | None = None):
-    """刷新：重新取源并让模型整理。"""
-    limit = int((payload or {}).get("limit") or 50)
-    return await asyncio.to_thread(hot_topics.organize, limit=limit, force=True)
+    """刷新：默认走联网搜索（能拿到真实热梗），传 source=chart 才读榜单。"""
+    source = str((payload or {}).get("source") or "search")
+    if source == "chart":
+        limit = int((payload or {}).get("limit") or 50)
+        return await asyncio.to_thread(hot_topics.organize, limit=limit, force=True)
+    return await asyncio.to_thread(hot_topics.organize_from_search, force=True)
 
 
 @app.get("/api/v1/hot-topics/status")

@@ -107,3 +107,28 @@ def test_the_response_states_what_the_links_are_and_are_not():
     source = inspect.getsource(hot_topics.organize)
     assert "link_note" in source
     assert "不能由服务端抓取内容" in source
+
+
+def test_search_wording_is_written_the_way_that_actually_works():
+    """实测：查询词决定成败。带年份 + 热词/梗 才有用，"最近爆火的梗" 会按字面返回歌曲。"""
+    joined = " ".join(hot_topics.SEARCH_QUERIES)
+    assert "2026" in joined
+    assert "网络热词" in joined or "热门梗" in joined
+    assert "最近爆火的梗" not in joined
+
+
+def test_irrelevant_results_are_dropped_deterministically():
+    """实测噪声：'网络热梗 盘点' 返回过测速网站，'最近爆火的梗' 返回过同名歌曲。"""
+    assert hot_topics.is_relevant("2026 上半年网络热词 TOP30", "一个个爆梗正在成为暗号")
+    assert hot_topics.is_relevant("100 条 2026 最新热门梗", "奶绿波：高速堵车刷屏梗")
+    assert not hot_topics.is_relevant("测速网 - 专业测网速", "网速测试 宽带提速")
+    assert not hot_topics.is_relevant("最近（李圣杰2006年演唱的歌曲）", "收录于专辑")
+
+
+def test_the_prompt_does_not_ask_for_a_huawei_connection_while_filtering_competitors():
+    """实测反讽 bug：模型把『剔除竞品』读成『只收与华为 PC 相关的梗』，交回 0 条。"""
+    prompt = hot_topics.SEARCH_SYSTEM
+    assert "不是让你只收与华为 PC 相关的梗" in prompt
+    assert "不需要你判断" in prompt
+    # 也不许用"资料未说明"填充
+    assert "不要用" in prompt and "资料未说明" in prompt

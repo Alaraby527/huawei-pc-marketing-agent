@@ -497,6 +497,42 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ### Added
 
+- **联网搜索 `app/web_search.py`** (no API key) and `organize_from_search`, now the default for
+  the 热点榜单 refresh. This is what closes the quality gap, and the reason was measured, not
+  guessed: asked for recent memes the main model **refused honestly** ("我的知识截止时间早于该
+  时段……不能凭推测编造", zero topics), and **no chart is a meme corpus** - 小红书 0/20, 微博 0/50,
+  抖音 1/49, 知乎 0/30 items about memes. The web version of the same model produced a good list
+  because it could search; the difference was never the prompt.
+- Search also removes the fabrication problem from the previous round. With bare chart titles as
+  the only input, a 100-character intro could only be invented - every intro claimed what "大家"
+  was discussing, and all 19 were fabricated while reading plausibly. Search snippets give real
+  sentences to work from, and the model now grounds each claim: 奶绿波 "形容高速堵车时车流密集"
+  (2026-04-08), 酸黄瓜 "自嘲普通、收入不高", 龙虾 "AI 智能体 OpenClaw 的昵称".
+
+### Fixed
+
+- **The prompt asked for information that did not exist, then forbade inventing it.** With only a
+  title as input, "为什么好玩、大家在讨论什么" could only be fabricated - confirmed by counting
+  "讨论" in the output: 19 of 19 intros. Now the intro is grounded in search snippets and the model
+  is told not to pad with "资料未说明" either.
+- **An ironic prompt bug that produced 0 topics:** the rule "涉及其他数码品牌的内容不要——我们只做
+  华为 PC" was read as "only include memes related to Huawei PC", so the model answered "摘要中未出现
+  任何与华为 PC 相关的具体梗，故无可整理条目". Now stated explicitly that the brand rule is about
+  *excluding* competitors and that relevance to Huawei PC is not the model's call at this stage.
+- **Search queries reworded after measuring them:** "2026 网络热词" returned the 数英 热词 TOP30, a
+  头条 新词解析 and a 知乎 100-条 list, while "最近爆火的梗" returned a Baidu Baike entry for the
+  *song* 最近 and a 网易云 track. Irrelevant results are now dropped deterministically, and the
+  count of dropped items is reported.
+
+### Known limit
+
+The keyless route is **intermittent**: DuckDuckGo lite started answering with HTTP 202 +
+`anomaly`/`challenge` after repeated use, and Bing's HTML page is the working fallback. Failures
+are reported as `SEARCH_FAILED` / `NO_RELEVANT_RESULTS` - never as an empty list pretending to be
+success, and never by falling back to the model's memory. A search API key would make this stable.
+
+Tests: 569 pass (180 legacy + 389 new/extended).
+
 - **每条热点带约 100 字短文、来源链接与真实搜索词.** The intro explains what the topic is, why
   it is fun and what people discuss, and is instructed to expand only from the given entries -
   no invented names, numbers or incidents. Verified live: 19 topics, intros of 95-119 characters.

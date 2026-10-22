@@ -59,6 +59,136 @@ ORGANIZE_SYSTEM = """你在为华为 PC 的门店营销整理一份「当前热�
 只输出 JSON：
 {"topics":[...],"excluded_note":"一句话说明剔除了哪几类","note":"一句话说明这份清单的性质"}"""
 
+# The angles that actually surface memes. A chart cannot: see app/web_search.py for the four
+# charts that were checked and the zero meme items they contained.
+# Wording decides whether this works. Measured on Bing: "2026 网络热词" returned the 数英
+# 热词 TOP30, a 头条 新词解析 and a 知乎 100-条 list, while "最近爆火的梗" returned a Baidu Baike
+# entry for the song 最近 and a 网易云 track, and "网络热梗 盘点" returned speed-test sites. The
+# year plus 热词/梗 is what works, so the queries are written that way.
+SEARCH_QUERIES = (
+    "2026 网络热词",
+    "2026 最新热门梗",
+    "2026 上半年 网络热词 top",
+    "网络流行语 2026 盘点",
+)
+
+# A result has to look like it is about internet language at all. Deterministic, and it is what
+# removes the speed-test and music results above.
+RELEVANCE_TERMS = ("梗", "热词", "流行语", "网络用", "黑话", "热梗")
+
+SEARCH_SYSTEM = """你在整理一份「当前网络热梗」清单，供后续营销选题参考。
+**不要**在整理阶段判断这些梗能不能用在华为 PC 上——先把梗本身整理清楚。
+下面是从公开网页搜索到的真实结果（标题 + 摘要 + 链接），这些是**有出处的资料**，不是榜单条目。
+
+规则：
+1. 只整理资料里**确实出现**的梗，不得添加资料里没有的梗，不得编造来源与时间。
+2. 摘要是你的事实依据：介绍里提到的时间、出处、含义都必须能在摘要或标题里找到依据。
+3. 摘要里没有的信息不要推测。**但不要用"资料未说明"这类句子填充**——
+   资料没写就少写一点，把已有的信息写清楚写自然。
+4. 介绍要**读起来通顺自然**，像在跟同事讲这个梗，而不是逐条复述资料；
+   但每一个事实（时间、出处、含义）都必须能在资料里找到依据。
+5. 跳过新闻事件类（时政、事故、股市、赛事比分、明星绯闻、纪念日、社会争议）。
+6. 涉及其他数码、手机、电脑品牌的内容不要——我们只做华为 PC。
+   **注意区分**：这条是让你**剔除拿别的品牌说事的梗**，不是让你只收与华为 PC 相关的梗。
+   资料里的梗跟华为 PC 有没有关系**不需要你判断**，那是我们后面的事；
+   你的任务就是把资料里出现的热梗如实整理出来。
+   实测教训：上一版因为这句话写得含糊，模型回复"摘要中未出现任何与华为 PC 相关的具体梗，
+   故无可整理条目"，交回 0 条。
+7. 优先「好玩、有梗、能会心一笑」的。
+
+不排序、不打分、不显示热度值。
+
+每条输出：
+- topic：梗名
+- kind：玩梗 / 生活方式 / 共鸣场景 / 其他
+- gist：一句话说明
+- intro：约 100 字介绍，讲清出处、含义、怎么用；**只能写资料里有的信息**
+- evidence：你依据的是哪条资料（写资料标题）
+- source_urls：对应资料的链接（数组，必须来自给定资料）
+- when：资料里写的时间；资料没写就写 unknown
+
+只输出 JSON：{"topics":[...],"note":"一句话说明这批资料的时间范围与局限"}"""
+
+
+def organize_from_search(*, force: bool = False) -> dict:
+    """Search the live web for memes, then let the model organise what it found.
+
+    This is the path that works. A chart gave bare titles with no meme in them; search gives
+    dated articles ("出自红果短剧平台AI生成短剧，于2026年下半年席卷全网"), which is both the
+    recency signal and the grounding for the intro.
+    """
+    import json as _json
+
+    from .model import ModelError, chat_json_messages
+    from .web_search import search_many
+
+    key = "search"
+    cached = _CACHE.get(key)
+    if cached and not force and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
+        return {**cached[1], "cached": True}
+
+    found = search_many(list(SEARCH_QUERIES), limit_each=6)
+    if not found.get("ok"):
+        return {"ok": False, "error": "SEARCH_FAILED", "search": found,
+                "message": "搜索无结果；不得用模型记忆冒充近期热梗"}
+    relevant = [row for row in found["results"] if is_relevant(row["title"], row["snippet"])]
+    dropped = [{"title": row["title"], "url": row["url"], "reason": "not_about_slang"}
+               for row in found["results"] if row not in relevant]
+    if not relevant:
+        return {"ok": False, "error": "NO_RELEVANT_RESULTS", "search": found,
+                "dropped": dropped,
+                "message": "搜索有返回但没有一条是关于网络用语的；不得用无关结果凑清单"}
+    kept = [{"n": index + 1, "title": row["title"], "snippet": row["snippet"][:300],
+             "url": row["url"]} for index, row in enumerate(relevant)]
+    by_n = {row["n"]: row for row in kept}
+    try:
+        result, meta = chat_json_messages(
+            SEARCH_SYSTEM, [{"role": "user", "content": _json.dumps({"results": kept}, ensure_ascii=False)}],
+            schema_hint="只输出 JSON", model=None)
+    except ModelError as error:
+        return {"ok": False, "error": "MODEL_FAILED", "message": str(error)[:200],
+                "search": found, "note": "搜索成功但整理失败；不要用未整理的搜索结果冒充清单"}
+    topics = []
+    for row in (result or {}).get("topics") or []:
+        if not isinstance(row, dict):
+            continue
+        urls = [str(u) for u in (row.get("source_urls") or []) if str(u).startswith("http")]
+        # Only URLs that really came back from the search: the model does not get to invent links.
+        urls = [u for u in urls if u in {item["url"] for item in kept}] or []
+        if not urls:
+            for item in kept:
+                if str(row.get("evidence") or "")[:20] and str(row["title"])[:20] in str(row.get("evidence")):
+                    urls = [item["url"]]
+                    break
+        text = " ".join([str(row.get("topic") or ""), str(row.get("gist") or ""),
+                         str(row.get("intro") or "")])
+        brand = hits_other_brand(text)
+        if brand:
+            continue
+        topics.append({"topic": str(row.get("topic") or "")[:80],
+                       "kind": str(row.get("kind") or KIND_OTHER)[:12],
+                       "gist": str(row.get("gist") or "")[:200],
+                       "intro": str(row.get("intro") or "")[:300],
+                       "evidence": str(row.get("evidence") or "")[:120],
+                       "when": str(row.get("when") or "unknown")[:20],
+                       "links": urls[:3], "keywords": [str(row.get("topic") or "")[:40]]})
+    out = {"ok": True, "topics": topics, "topic_count": len(topics),
+           "source": {"kind": "web_search", "providers": found.get("providers"),
+                      "result_count": len(kept), "queries": found.get("queries"),
+                      "fetched_at": found.get("fetched_at"),
+                      "time_note": "时间是资料的发布时间/资料内提到的时间，不是平台的榜单更新时间"},
+           "search_results": kept, "dropped_irrelevant": dropped, "model_note": str((result or {}).get("note") or "")[:200],
+           "usage": (meta or {}).get("usage") or {}, "cached": False,
+           "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "rules": {"prefer": "好玩、有梗、有共鸣", "skip": "新闻事件类",
+                     "never": "涉及其他数码/手机/电脑品牌"},
+           "notice": ("清单来自公开网页搜索结果，经模型整理；每条都能对应回搜到的资料。"
+                      "梗的流行时间以资料记载为准。"),
+           "link_note": "链接是搜到的资料页（百科/知乎/头条等），可直接点开核对。"}
+    _CACHE[key] = (time.monotonic(), out)
+    return out
+
+
 # Refresh is explicit (a button), so a short cache only prevents double-clicking from paying twice.
 CACHE_TTL_SECONDS = int(os.getenv("HOT_TOPICS_TTL_SECONDS", "600") or 600)
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -66,6 +196,12 @@ _CACHE: dict[str, tuple[float, dict]] = {}
 
 def reset_cache() -> None:
     _CACHE.clear()
+
+
+def is_relevant(title: str, snippet: str = "") -> bool:
+    """Whether a search result is plausibly about internet slang rather than a literal match."""
+    text = f"{title} {snippet}"
+    return any(term in text for term in RELEVANCE_TERMS)
 
 
 def hits_other_brand(text: str) -> str:
