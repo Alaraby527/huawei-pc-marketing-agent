@@ -468,6 +468,31 @@ class AgentSeqCounter(Base):
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AgentOutboxEvent(Base):
+    """A reliable handoff record, written in the *same* transaction as the content.
+
+    The plan requires this: registering content and recording the handoff event must commit
+    together, or a delivery can exist with no record of what should happen next. Delivery to
+    a consumer happens separately with bounded retries, so a consumer being down delays the
+    event instead of losing it.
+
+    state: pending | delivered | failed
+    """
+    __tablename__ = "agent_outbox_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(40), index=True, default="default")
+    event_type: Mapped[str] = mapped_column(String(60), index=True, default="")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String(20), index=True, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                          nullable=True, default=None)
+
+
 class AgentContentEmbedding(Base):
     """Vector memory for the semantic layer, one row per run and view.
 

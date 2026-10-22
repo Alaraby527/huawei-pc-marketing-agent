@@ -69,7 +69,13 @@ def _recover_orphaned_runs() -> int:
         if released:
             print(f"[startup] released {released} lease(s) left by a previous process")
         count = lg_runner.recover_orphaned_runs(session)
+        # Handoff events queued by a previous process are delivered now. There is no
+        # external consumer in this codebase, so this records them as handed off; it does
+        # not claim a push to a system that does not exist.
+        drained = lg_runner.outbox.drain(session)
         session.commit()
+        if drained.get("delivered"):
+            print(f"[startup] delivered {drained['delivered']} outbox event(s)")
         if count:
             print(f"[startup] marked {count} interrupted run(s) as needs_reconciliation "
                   f"(resumable via POST /api/v2/runs/{{id}}/resume)")
@@ -806,6 +812,25 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
     return await agent_runtime.run_turn(db, conversation, payload.message,
                                         model=payload.model,
                                         idempotency_key=payload.idempotency_key)
+
+
+@app.get("/api/v2/outbox")
+def v2_outbox(db=Depends(v2_db)):
+    """Pending handoff events and their delivery state."""
+    stats = lg_runner.outbox.stats(db)
+    rows = lg_runner.outbox.pending(db, limit=20)
+    return {**stats, "pending": [
+        {"id": row.id, "run_id": row.run_id, "event_type": row.event_type,
+         "attempts": row.attempts, "created_at": row.created_at.isoformat() if row.created_at else None}
+        for row in rows]}
+
+
+@app.post("/api/v2/outbox/drain")
+def v2_outbox_drain(db=Depends(v2_db)):
+    """Deliver pending events now. Bounded attempts; failures stay visible."""
+    counters = lg_runner.outbox.drain(db)
+    db.commit()
+    return {**counters, **lg_runner.outbox.stats(db)}
 
 
 @app.post("/api/v2/runs/{run_id}/resume")

@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from .. import db as db_layer
-from . import dedup, semantic
+from . import dedup, outbox, semantic
 
 
 class LockUnavailable(RuntimeError):
@@ -246,6 +246,15 @@ def admit_delivery(*, workspace_id: str, conversation_id: str, run_id: str,
                     _insert_embedding(connection, conversation_id=conversation_id,
                                       run_id=run_id, workspace_id=workspace_id,
                                       embedding=embedding)
+                # Same transaction as the registration: the plan requires the handoff record
+                # to commit with the content, or a delivery can exist with no record of it.
+                outbox.enqueue(connection, conversation_id=conversation_id, run_id=run_id,
+                               workspace_id=workspace_id,
+                               event_type=outbox.CONTENT_REGISTERED,
+                               payload={"artifact_id": artifact_id,
+                                        "duplicate_kind": result.get("kind"),
+                                        "semantic_kind": semantic_result.get("kind"),
+                                        "blocks": False})
             info["locked"] = True
             info["lock_wait_ms"] = int((time.monotonic() - started) * 1000)
             info["rechecked"] = bool(info["stale_snapshot"] or attempt > 0)

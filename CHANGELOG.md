@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Reliable handoff outbox** (`app/runtime/outbox.py`, `agent_outbox_events`, T16). The
+  event is written **in the same transaction as the content registration**, as the plan
+  requires, so a delivery cannot exist with no record of what should happen next. Delivery
+  happens separately with bounded attempts (`LG_OUTBOX_MAX_ATTEMPTS`); an unavailable
+  consumer delays the event rather than losing it, and one that exhausts its attempts stays
+  visible as `failed` with its error. Read-only `GET /api/v2/outbox` and
+  `POST /api/v2/outbox/drain` expose it, and pending events are drained at startup.
+
+  It does **not** push to any external system: there is no CRM, publishing or analytics
+  integration in this codebase, so the default handler records the handoff as done and
+  nothing more. Claiming a real external handoff would misstate what is connected.
+
+Tests: 333 pass (180 legacy + 153 new/extended).
+
 - **First-pass pair labelling** (`scripts/label_pairs.py`) and calibration from a labelled
   sheet (`calibrate_dedup.py --from-labelled --metric`). Labels authored by the system under
   test carry `label_source = "ai_first_pass"` and `confirmed_by_human = false`, and the
