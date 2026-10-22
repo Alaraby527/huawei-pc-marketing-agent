@@ -482,6 +482,27 @@ Tests: 533 pass (180 legacy + 353 new/extended).
 
 ### Added
 
+- **Delivery-surface suggestion with confirmation** (`suggest_surface`, tool 14). The user's
+  rule has two halves and both are enforced: when the intent is unclear the assistant works out
+  the right surface and offers it, and when the user has already been explicit it must not switch
+  on its own. A lock *is* the explicit choice, so the tool returns `skipped: already_locked`,
+  records nothing and says so - verified live, where a locked run replied "这个交付面是你最初就
+  锁定的方向，我直接按它交付" with no suggestion attached.
+- The suggestion never switches anything by itself: it is proposed, the UI asks, and only a
+  confirmed click locks the surface, moves the tab and updates the conversation's instruction.
+  Both halves were verified against the live model: unlocked and vague produced a suggestion with
+  a real reason, locked produced none.
+
+### Fixed
+
+- The suggestion was lost whenever a run ended in `waiting_user`. It was only carried out through
+  `finalize`, which a paused run never reaches - and "work out the surface while asking a
+  question" is the common case, not an edge one. Found by running it: the tool had been called,
+  the suggestion recorded, and the payload contained nothing. It is now also written to the run's
+  events, and `_surface_suggestion` prefers the candidate and falls back to the event.
+
+Tests: 544 pass (180 legacy + 364 new/extended).
+
 - **Real task history**: the sidebar now lists backend v2 conversations (`GET /api/v2/conversations`) with auto titles, stage, message count and last-updated time. Clicking a task restores its messages, artifacts, candidates, plan and images, so multi-turn work actually continues.
 - **Task menu (⋯)**: pin/unpin (pinned tasks stay on top), rename, and delete (also removes messages, runs, artifacts, revisions, tool executions and task state server-side).
 - `PATCH /api/v2/conversations/{id}` and `DELETE /api/v2/conversations/{id}`.

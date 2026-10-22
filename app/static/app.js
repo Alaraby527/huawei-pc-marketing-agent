@@ -565,6 +565,43 @@
       escapeHtml(image.caption || '知识库原图') + '</figcaption></figure>').join('');
   }
 
+  // 交付面建议：先问用户，确认后才切换。UI 自动跳到对应选项卡，底层锁定也跟着改。
+  function renderSurfaceSuggestion(messageEl, suggestion) {
+    if (!messageEl || !suggestion || !suggestion.surface) return;
+    if (suggestion.surface === selectedPlatform
+        && $('lock-state') && !$('lock-state').hidden) return;   // 已经是它，不必再问
+    const card = document.createElement('div');
+    card.className = 'surface-suggest';
+    const note = suggestion.unconfirmed && suggestion.open_question
+      ? '<span class="suggest-warn">' + escapeHtml(suggestion.open_question) + '</span>' : '';
+    card.innerHTML =
+      '<span class="suggest-icon">✦</span>' +
+      '<div class="suggest-text">' +
+      '<strong>这次要做「' + escapeHtml(suggestion.label || suggestion.surface) + '」吗？</strong>' +
+      '<span>' + escapeHtml(suggestion.reason || '根据前面的对话判断') + '</span>' + note +
+      '</div>' +
+      '<div class="suggest-actions">' +
+      '<button type="button" class="chip active" data-switch="' +
+      escapeHtml(suggestion.surface) + '">切换过去</button>' +
+      '<button type="button" class="chip" data-keep="1">保持当前</button>' +
+      '</div>';
+    messageEl.appendChild(card);
+    card.addEventListener('click', async (event) => {
+      if (event.target.closest('[data-keep]')) { card.remove(); return; }
+      const button = event.target.closest('[data-switch]');
+      if (!button) return;
+      const target = button.getAttribute('data-switch');
+      card.querySelectorAll('button').forEach((item) => { item.disabled = true; });
+      await lockSurface(target);          // 后端锁定
+      await loadSurfaceLock();            // 选项卡与状态跟着动
+      card.remove();
+      addMessage('assistant', '<p class="hint">已切换到「' +
+        escapeHtml(surfaceLabel(target)) + '」，接下来的内容按这个交付面写。</p>');
+      toast('已切换到' + surfaceLabel(target));
+    });
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
   function renderV2Actions(messageEl, actions) {
     if (!messageEl || !actions || !actions.length) return;
     const row = document.createElement('div');
@@ -616,6 +653,7 @@
       const messageEl = addMessage('assistant', '<p>' +
         escapeHtml(data.reply || '已完成').replace(/\n/g, '<br>') + '</p>' + eventTrace(data.events));
       renderV2Actions(messageEl, data.actions);
+      renderSurfaceSuggestion(messageEl, data.surface_suggestion);
       if (data.candidates && data.candidates.length) {
         renderV2Candidates(data.candidates);
       } else {

@@ -319,6 +319,10 @@ def build_graph(saver, ctx: RuntimeContext):
                         reply = reply + "\n\n" + UNVERIFIED_NUMBER_NOTICE
 
         candidate["reply"] = reply
+        # A proposed delivery surface travels with the result so the UI can ask the user.
+        suggestion = getattr(ctx.tool_ctx, "surface_suggestion", None)
+        if suggestion:
+            candidate["surface_suggestion"] = suggestion
         return {"status": status, "output_candidate": candidate,
                 "stop_reason": state.get("stop_reason") or ""}
 

@@ -553,6 +553,22 @@ def _register_content_memory(db: Session, conversation: models.AgentConversation
                 "detail": type(exc).__name__}
 
 
+def _surface_suggestion(run: models.AgentRun, candidate: dict) -> dict | None:
+    """The run's delivery-surface suggestion, from the candidate or the recorded event.
+
+    The event is the fallback because a run that ends in ``waiting_user`` never reaches
+    finalize, and offering a surface at the same moment as asking a question is the normal
+    case rather than an edge one. Found by running it: the tool was called, the suggestion was
+    recorded, and the payload had nothing.
+    """
+    if candidate.get("surface_suggestion"):
+        return candidate["surface_suggestion"]
+    for event in reversed(list(run.events or [])):
+        if event.get("type") == "surface_suggestion":
+            return {key: value for key, value in event.items() if key not in ("type", "at")}
+    return None
+
+
 def _finish_run(db: Session, conversation: models.AgentConversation, run: models.AgentRun,
                 status: str, reply: str, telemetry: str, ctx: RuntimeContext,
                 state: dict | None = None) -> None:
@@ -600,6 +616,7 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
                          unverified_experience=candidate.get("unverified_experience") or [],
                          unverified_numbers=candidate.get("unverified_numbers") or [],
                          unsupported_numbers=candidate.get("unsupported_numbers") or [],
+                         surface_suggestion=_surface_suggestion(run, candidate),
                          actions=list((payload.get("pending_question") or {}).get("options")
                                       or []) if status == STATUS_WAITING_USER else [])
     agent_runtime._event(run, "run_finished", status=status, stop_reason=telemetry)

@@ -89,6 +89,14 @@ TOOL_SPECS = [
     {"name": "search_topics", "description": "查找场景相关热点线索，标注实时/兜底来源",
      "parameters": {"type": "object", "properties": {"scenario": {"type": "string"},
                                                       "audience": {"type": "string"}}}},
+    {"name": "suggest_surface",
+     "description": "当用户没说清要做哪个交付面时建议一个并交用户确认（用户已明确指定就不要调用）",
+     "parameters": {"type": "object", "properties": {
+         "surface": {"type": "string",
+                     "enum": ["xiaohongshu", "wechat_article", "personal_moments",
+                              "store_moments", "store_poster", "work_account"]},
+         "reason": {"type": "string"}},
+         "required": ["surface", "reason"]}},
     {"name": "ask_user", "description": "保存一个会改变结果的问题并暂停任务",
      "parameters": {"type": "object", "properties": {"question": {"type": "string"},
                                                       "options": {"type": "array", "items": {"type": "string"}}},
@@ -143,6 +151,9 @@ class ToolContext:
     # Every product whose evidence was actually read. A reply may legitimately compare
     # several models, so prose validation must span all of them rather than the first.
     read_product_ids: list = field(default_factory=list)
+    # A proposed delivery surface for the UI to confirm. Set only when the user has NOT already
+    # chosen one: an explicit choice must never be second-guessed, and re-asking would be noise.
+    surface_suggestion: dict | None = None
 
 
 def _now():
@@ -588,6 +599,45 @@ async def _tool_images(ctx, args):
             "by_role": resolved["by_role"], "by_rights": resolved["by_rights"],
             "rights_note": resolved["note"],
             "issues": issues[:3]}
+
+
+def _tool_suggest_surface(ctx, args):
+    """Propose a delivery surface for the UI to confirm. Never switches anything itself.
+
+    The switch happens only after the user confirms, because the surface changes the required
+    length, structure and fields - silently moving the conversation would rewrite the brief
+    under the user's feet. And if a surface is already locked, the user has been explicit:
+    suggesting another would second-guess a decision already made, so this records nothing and
+    says so plainly.
+    """
+    from . import surfaces
+
+    surface_id = str(args.get("surface") or "").strip()
+    reason = str(args.get("reason") or "").strip()[:200]
+    if not surface_id:
+        return {"ok": False, "error": "SURFACE_REQUIRED", "message": "需要指定交付面"}
+    state = ctx.db.get(models.AgentTaskState, ctx.conversation.id)
+    locked = str((dict(state.data or {}) if state else {}).get("surface") or "").strip()
+    if locked:
+        return {"ok": True, "skipped": "already_locked", "locked": locked,
+                "message": "用户已明确指定交付面，不重复建议；按已锁定的交付面继续。"}
+    info = surfaces.resolve(surface_id)
+    if info.get("error") or not info.get("surface"):
+        return {"ok": False, "error": "UNKNOWN_SURFACE",
+                "message": info.get("error") or "交付面有歧义，请明确到具体交付面",
+                "ambiguous": info.get("ambiguous") or [],
+                "available": [row["surface"] for row in surfaces.describe()["surfaces"]]}
+    ctx.surface_suggestion = {"surface": info["surface"], "label": info["label"],
+                              "platform": info.get("platform"), "reason": reason,
+                              "unconfirmed": bool(info.get("unconfirmed")),
+                              "open_question": info.get("open_question", "")}
+    # Recorded on the run immediately, not only in the final candidate: a run that pauses to
+    # ask a question never reaches finalize, and "work out the surface while asking" is exactly
+    # the common case. Verified live - the tool ran, the suggestion was lost.
+    _event(ctx.run, "surface_suggestion", **ctx.surface_suggestion)
+    return {"ok": True, "suggested": info["surface"], "label": info["label"],
+            "requires_confirmation": True,
+            "message": "已提出交付面建议，等用户在界面上确认后再切换；不要在回复里替用户决定。"}
 
 
 async def _generate_scene(ctx, args):
@@ -1042,6 +1092,8 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
             result = await _generate_scene(ctx, args)
         elif name == "search_topics":
             result = await _tool_topics(ctx, args)
+        elif name == "suggest_surface":
+            result = _tool_suggest_surface(ctx, args)
         elif name == "ask_user":
             result = {"ok": True, "question": str(args.get("question", "")),
                       "options": args.get("options") or []}
