@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Export pack** (`app/export_bundle.py`, package 3's step 8). Produces the five files -
+  bundle, claim map, review, manifest, approval - and binds an approval to a
+  ``content_hash`` over the exact material it covers, because package 1 requires that any
+  change to a source image, the copy, the recipe or a size **invalidates** the previous
+  approval. An approval that survives an edit is not an approval of what ships, so
+  ``approval_state`` compares the bound material with the current one and **names the fields
+  that changed**.
+- Two rules from the packages are enforced rather than described: a caller-supplied
+  ``approved=true`` is **not trusted** without a named approver whose hash matches, and the
+  claim map reports unsupported claims instead of dropping them - silently omitting one is how
+  an unevidenced number reaches a customer.
+- Files are written through an **injected** saver (the agent's own `_save_artifact`), so the
+  export inherits its revision numbering and fact check instead of opening a parallel, weaker
+  write path. `save` refuses outright when no saver is supplied.
+
+Tests: 515 pass (180 legacy + 335 new/extended).
+
 - **Business input validation** (`app/briefs.py`, package 3's config readers). Three outcomes
   rather than two: a **gap** means a core input is absent and names who must supply it; a
   **blocked** means the input exists but is stale, contradictory or unauthorised. The package's
