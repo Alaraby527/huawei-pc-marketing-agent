@@ -30,6 +30,18 @@ def test_no_runtime_database_is_tracked():
     assert not offenders, f"runtime state must not be committed: {offenders}"
 
 
+def test_no_malformed_database_path_is_tracked():
+    """A bad path join once created a directory literally named "sqlite:" in the repo."""
+    try:
+        output = subprocess.run(["git", "-C", str(ROOT), "ls-files"],
+                                capture_output=True, text=True, timeout=20, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("git is not available in this environment")
+    offenders = [line for line in output.splitlines()
+                 if line.startswith("sqlite:") or line.endswith((".sqlite-shm", ".sqlite-wal"))]
+    assert not offenders, f"stray database paths must not be committed: {offenders}"
+
+
 def test_expected_data_files_are_tracked():
     """data/ stays in the image (Dockerfile copies it), so it must not vanish entirely."""
     tracked = set(_tracked_data_files())

@@ -23,3 +23,10 @@ data/*.db
 data/*.db-*
 data/*.sqlite
 data/*.sqlite-*
+
+# A malformed sqlite URL (e.g. "sqlite:/var/..." from a bad path join) creates a directory
+# literally named "sqlite:". Keep it, and any stray URL-shaped path, out of the repo.
+sqlite:*
+*:/var/*
+*.sqlite-shm
+*.sqlite-wal

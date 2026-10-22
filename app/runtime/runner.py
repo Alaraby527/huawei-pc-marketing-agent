@@ -27,7 +27,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .. import agent_runtime, db as db_layer, models
-from . import RUNNER_VERSION, admission, dedup, lease, ledger, semantic
+from . import (RUNNER_VERSION, admission, dedup, lease, ledger, outbox,
+               semantic)
 from .context import RuntimeContext, build_context
 from .errors import error_marker, public_error
 from .graph import build_graph
@@ -225,6 +226,9 @@ async def execute_run(db: Session, conversation: models.AgentConversation,
         except Exception:  # noqa: BLE001 - a broken session must not block the release
             db.rollback()
         _release_lease(run.id)
+        # Deliver handoff events produced by this run. Draining only at startup would leave
+        # them pending indefinitely, which is not what an outbox is for.
+        _drain_outbox()
 
 
 async def _heartbeat_loop(run_id: str) -> None:
@@ -240,6 +244,21 @@ async def _heartbeat_loop(run_id: str) -> None:
             session.rollback()
         finally:
             session.close()
+
+
+def _drain_outbox() -> dict:
+    """Best-effort delivery of pending handoff events; never breaks a delivery."""
+    session = db_layer.session_factory()()
+    try:
+        session.execute(sql_text("PRAGMA busy_timeout=1000"))
+        counters = outbox.drain(session)
+        session.commit()
+        return counters
+    except Exception:  # noqa: BLE001 - a stuck handoff is visible via the outbox endpoint
+        session.rollback()
+        return {"delivered": 0, "retried": 0, "failed": 0}
+    finally:
+        session.close()
 
 
 def _release_lease(run_id: str) -> None:
