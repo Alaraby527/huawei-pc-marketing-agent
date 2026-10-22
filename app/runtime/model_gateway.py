@@ -83,6 +83,21 @@ REVIEWER_SYSTEM_PROMPT = """你是独立审校，负责检查，不负责说服�
 SCHEMA_HINT = "只输出一个 JSON 对象；action 必须是 tool/ask/reply 之一；工具名必须来自 tools。"
 
 
+def _commit_quietly(db: Session) -> None:
+    """End the write transaction after an observability write.
+
+    SQLite allows one writer. A session that writes an attempt row and does not commit
+    holds the write lock for the rest of the run — tens of seconds — and other concurrent
+    runs then fail with "database is locked". Committing here keeps the write short. A
+    failure is not swallowed silently: the session is rolled back so it stays usable, and
+    the next terminal write reports the problem.
+    """
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 class Decision:
     """Normalized outcome of one decision step, whatever wire protocol it used."""
 
@@ -172,6 +187,7 @@ class ModelGateway:
                                       kind="decide", model_id=self.model_id,
                                       protocol_mode=protocol, usage={}, latency_ms=latency,
                                       ok=False, error=str(native_error))
+                _commit_quietly(self.db)
                 return Decision(tool_calls=[], content="", protocol_mode=protocol, usage={},
                                 model_id=self.model_id, latency_ms=latency), str(native_error)
             protocol = "json_compat"
@@ -186,6 +202,7 @@ class ModelGateway:
                                       kind="decide", model_id=self.model_id,
                                       protocol_mode=protocol, usage={}, latency_ms=latency,
                                       ok=False, error=str(json_error))
+                _commit_quietly(self.db)
                 return Decision(tool_calls=[], content="", protocol_mode=protocol, usage={},
                                 model_id=self.model_id, latency_ms=latency), str(json_error)
             tool_calls, content = _json_decision_to_tool_calls(result)
@@ -197,6 +214,7 @@ class ModelGateway:
                               model_id=self.model_id, protocol_mode=protocol, usage=usage,
                               latency_ms=latency, ok=True)
         self.last_protocol_mode = protocol
+        _commit_quietly(self.db)
         return Decision(tool_calls=tool_calls, content=content, protocol_mode=protocol,
                         usage=usage, model_id=self.model_id, latency_ms=latency), error_text
 
@@ -223,6 +241,7 @@ class ModelGateway:
                               model_id=self.model_id, protocol_mode="json_compat",
                               usage=usage,
                               latency_ms=int((time.monotonic() - started) * 1000), ok=True)
+        _commit_quietly(self.db)
         return result, ""
 
 

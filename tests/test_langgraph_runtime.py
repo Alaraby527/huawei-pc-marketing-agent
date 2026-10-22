@@ -1203,3 +1203,31 @@ def test_dedup_can_be_turned_off(monkeypatch):
     data = _send(_new_conversation()["conversation_id"], "写个标题").json()
     assert data["duplicate"]["kind"] == "not_run"
     assert data["status"] == "completed"
+
+
+def test_a_database_conflict_ends_the_run_honestly(monkeypatch):
+    """A broken session must not become a 500 with the run stuck in `running`."""
+    from sqlalchemy.exc import PendingRollbackError
+
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+
+    def exploding(*args, **kwargs):
+        raise PendingRollbackError("This Session's transaction has been rolled back")
+
+    # monkeypatch restores the real function automatically at teardown.
+    monkeypatch.setattr("app.runtime.runner.ledger.record_attempt", exploding)
+    cid = _new_conversation()["conversation_id"]
+    response = client.post(f"/api/v2/conversations/{cid}/messages",
+                           json={"message": "写个标题"})
+
+    assert response.status_code == 200, "a storage conflict must not surface as a 500"
+    data = response.json()
+    assert data["status"] == "failed"
+    assert "冲突" in data["reply"]
+
+    session = db_layer.session_factory()()
+    run = session.query(models.AgentRun).filter(
+        models.AgentRun.conversation_id == cid).order_by(
+        models.AgentRun.created_at.desc()).first()
+    assert run is not None and run.status == "failed", "the run must not stay running"
+    session.close()

@@ -4,6 +4,48 @@
 
 ### Added
 
+- **Final admission with a real critical section** (`app/runtime/admission.py`, T15). The
+  dedup evidence was previously read outside any lock, so two concurrent runs could both
+  see a history without the other and both be admitted. Admission now computes the
+  fingerprint outside the lock, then takes a short scope lock, **re-reads the committed
+  history inside it**, decides, and registers in the same transaction. Postgres uses
+  `pg_advisory_xact_lock` as the plan specifies; that branch is **not exercised here** (no
+  Postgres or Docker in this environment) and is not claimed to work.
+- `LG_ADMISSION_LOCK_TIMEOUT` (2 s) and `LG_ADMISSION_RECHECKS` (2), matching the plan's
+  policy example.
+
+### Fixed
+
+Three concurrency defects found by firing three identical requests at the running server:
+
+- **Two concurrent runs collided on SQLite's single writer** and one became
+  `sqlite3.OperationalError: database is locked` -> `PendingRollbackError` -> HTTP 500, with
+  the run left in `running`. SQLite connections now set a busy timeout (5 s) and enable WAL.
+- **The graph swallowed storage errors as a failed decision**, so the session stayed
+  unusable and the run's own terminal write failed too. `SQLAlchemyError` is now re-raised
+  so the run can be finished honestly after a rollback.
+- **A failed terminal write was returned as HTTP 200 with `status: running` and an empty
+  reply.** The handler now verifies the run reached a terminal state and otherwise reports
+  an explicit failure instead of handing back a running payload.
+- **Write transactions were held for the whole run** (the first ledger write happened
+  before the first model call and nothing committed until the end, holding SQLite's write
+  lock for ~60 s). Model attempts and tool executions now commit as they are written.
+
+- **Two concurrent turns on one conversation raced on the task-state row.** Both read
+  "no row" and both inserted, and one died on `UNIQUE constraint failed:
+  agent_task_states.conversation_id`. This was the cause of a test that failed about one run
+  in four. The write is now a collision-tolerant upsert (savepoint, then a fresh re-read).
+  Verified by running that test 24 times: 0 failures.
+- `next_seq` allocated the counter with an `UPDATE` followed by a separate `SELECT`, so a
+  reading transaction holding a pre-increment snapshot could hand out the same number
+  twice. The increment now returns the value it wrote, in one statement. This hardening was
+  applied while investigating the flake above; it was **not** the cause of it.
+
+Verified by three concurrent live requests: 0 x HTTP 500, 0 x "database is locked",
+0 x PendingRollbackError, all three reached a terminal state with real replies, and each
+admission saw the others (`compared` 4/5/6) with a 0-2 ms lock wait.
+
+
 - **Independent review pass** (`review` graph node, plan G7/T08). It runs on the finalised
   text with its own context — the delivered copy plus the allowed facts and conditions,
   never the author's conversation or self-assessment — and it checks the whole text rather

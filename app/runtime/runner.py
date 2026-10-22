@@ -22,14 +22,15 @@ import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .. import agent_runtime, db as db_layer, models
-from . import RUNNER_VERSION, dedup, ledger
+from . import RUNNER_VERSION, admission, dedup, ledger
 from .context import RuntimeContext, build_context
 from .errors import error_marker, public_error
 from .graph import build_graph
-from .state import (STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
+from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
                     STATUS_NEEDS_RECONCILIATION, STATUS_RUNNING, STATUS_WAITING_USER,
                     initial_state)
 
@@ -253,6 +254,28 @@ async def execute_run(db: Session, conversation: models.AgentConversation,
         except Exception:  # noqa: BLE001 - nothing more can be done at this point
             db.rollback()
         raise
+    except SQLAlchemyError as error:
+        # Two concurrent runs can collide on SQLite's single writer. The session is then
+        # unusable until it is rolled back, and the terminal state cannot be written on it:
+        # without this the request became a 500 and the run stayed `running` forever.
+        db.rollback()
+        status = STATUS_FAILED
+        telemetry = "database_conflict"
+        reply = "写入记录时发生冲突，本轮没有完成。请重新发送这条消息，我不会用旧内容冒充结果。"
+        try:
+            _finish_run(db, conversation, run, status, reply, telemetry, ctx, {})
+            db.commit()
+        except Exception:  # noqa: BLE001 - the honest failure matters more than the record
+            db.rollback()
+        payload = agent_runtime.run_payload(db, run)
+        if str(payload.get("status")) not in FINAL_STATUSES:
+            # The terminal write itself did not land. Returning the raw payload would hand
+            # the client HTTP 200 with `running` and an empty reply — a silent failure.
+            payload = {**payload, "status": STATUS_FAILED, "stop_reason": "database_conflict",
+                       "content_status": None, "can_publish": False,
+                       "reply": "写入记录时发生冲突，本轮没有完成。请重新发送这条消息，"
+                                "我不会用旧内容冒充结果。"}
+        return payload
     except Exception as error:  # noqa: BLE001 - reported honestly, never faked as success
         status = STATUS_FAILED
         telemetry = error_marker(str(error) or type(error).__name__)
@@ -340,14 +363,14 @@ def _register_content_memory(db: Session, conversation: models.AgentConversation
             text = reply + "\n" + json.dumps(loaded.get("content"), ensure_ascii=False)
     try:
         sketch = dedup.fingerprint(text)
-        history = ledger.recent_fingerprints(
-            db, workspace_id=conversation.workspace_id, exclude_run_id=run.id)
-        result = dedup.compare(sketch, history)
-        ledger.save_fingerprint(db, conversation_id=conversation.id, run_id=run.id,
-                                workspace_id=conversation.workspace_id,
-                                artifact_id=str(artifact_ref.get("artifact_id") or ""),
-                                sketch=sketch)
-        return result
+        # The admission pass opens its own connection and takes a write lock, so this
+        # session must not still be holding one: any pending write from the run is
+        # committed first, otherwise BEGIN IMMEDIATE would simply time out.
+        db.commit()
+        return admission.admit_delivery(
+            workspace_id=conversation.workspace_id, conversation_id=conversation.id,
+            run_id=run.id, artifact_id=str(artifact_ref.get("artifact_id") or ""),
+            sketch=sketch)
     except Exception as exc:  # noqa: BLE001 - dedup must never break a delivery
         return {"mode": dedup.mode(), "kind": "error", "calibrated": False, "blocks": False,
                 "detail": type(exc).__name__}
@@ -430,10 +453,25 @@ def _sync_task_state(db: Session, conversation: models.AgentConversation, status
     if payload.get("images"):
         data["images"] = payload["images"]
     if state_row is None:
-        db.add(models.AgentTaskState(conversation_id=conversation.id, stage=status, data=data))
-    else:
-        state_row.stage = status
-        state_row.data = data
+        try:
+            # Read-then-insert races: two concurrent turns on one conversation both see no
+            # row and both insert, and one dies on the unique constraint. The savepoint
+            # keeps that collision from poisoning the caller's transaction.
+            with db.begin_nested():
+                db.add(models.AgentTaskState(conversation_id=conversation.id, stage=status,
+                                             data=data))
+                db.flush()
+            return
+        except IntegrityError:
+            # Another turn created it in between. Re-read through a fresh statement: the
+            # identity map would otherwise keep answering "no such row".
+            state_row = db.scalars(select(models.AgentTaskState).where(
+                models.AgentTaskState.conversation_id == conversation.id)).first()
+            if state_row is None:
+                # It has not committed yet; that transaction writes its own state.
+                return
+    state_row.stage = status
+    state_row.data = data
     db.flush()
 
 

@@ -59,14 +59,42 @@ def configured() -> bool:
     return bool(database_url())
 
 
+def _apply_sqlite_pragmas(engine) -> None:
+    """WAL plus a busy timeout, so concurrent runs wait instead of failing.
+
+    SQLite still allows only one writer at a time, so this reduces collisions rather than
+    removing the limit; a real deployment uses the configured Postgres target.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        try:
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            except Exception:  # noqa: BLE001 - in-memory databases cannot use WAL
+                pass
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+        finally:
+            cursor.close()
+
+
 def engine():
     global _engine, _session_factory
     url = database_url()
     if not url:
         raise RuntimeError("DATABASE_URL 未配置")
     if _engine is None or str(_engine.url) != url:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        # `timeout` is pysqlite's busy timeout: without it two concurrent runs collide on
+        # SQLite's single writer and one of them fails immediately with "database is locked"
+        # instead of waiting its turn.
+        connect_args = ({"check_same_thread": False, "timeout": 5.0}
+                        if url.startswith("sqlite") else {})
         _engine = create_engine(url, pool_pre_ping=True, future=True, connect_args=connect_args)
+        if url.startswith("sqlite"):
+            _apply_sqlite_pragmas(_engine)
         _session_factory = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False, future=True)
     return _engine
 

@@ -21,6 +21,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from sqlalchemy.exc import SQLAlchemyError
 
 from .. import agent_runtime
 from . import ledger
@@ -76,6 +77,11 @@ def build_graph(saver, ctx: RuntimeContext):
         if done:
             try:
                 decision, error = call.result()
+            except SQLAlchemyError:
+                # A storage failure is not a failed decision. Swallowing it here leaves the
+                # session unusable, so the run's own terminal write fails as well and the
+                # request becomes a 500 with the run stuck in `running`.
+                raise
             except Exception as exc:  # noqa: BLE001 - reported as a failed decision
                 decision, error = None, str(exc)
         else:
@@ -165,6 +171,7 @@ def build_graph(saver, ctx: RuntimeContext):
             arguments = parse_tool_arguments(call["arguments"])
             outcome = await ctx.tools.run(name, arguments, call_uid=call["call_uid"])
             observations.append({"tool": name, "call_uid": call["call_uid"], **outcome})
+            _commit_quietly(ctx.db)
             serialized = json.dumps(outcome, ensure_ascii=False, default=str)
             if len(serialized) > TOOL_RESULT_LIMIT:
                 # Mark the cut: a silently truncated tool result reads as complete and
@@ -394,6 +401,18 @@ def build_graph(saver, ctx: RuntimeContext):
     graph.add_edge("finalize", "review")
     graph.add_edge("review", END)
     return graph.compile(checkpointer=saver)
+
+
+def _commit_quietly(db) -> None:
+    """Keep the write transaction short: SQLite has a single writer.
+
+    Tool executions write ledger rows; leaving them uncommitted holds the write lock for
+    the whole run and makes concurrent runs fail instead of waiting.
+    """
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 - the terminal write reports a persistent problem
+        db.rollback()
 
 
 def _allowed_fact_lines(ctx: RuntimeContext, limit: int = 40) -> list[str]:

@@ -21,7 +21,7 @@ import json
 from typing import Any
 
 from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -67,28 +67,36 @@ def next_seq(db: Session, conversation_id: str) -> int:
     """Allocate the next message sequence number atomically.
 
     A ``max(seq) + 1`` read-modify-write in Python loses updates when two writers
-    interleave, so the increment is done in SQL inside the caller's transaction. The
-    legacy runtime's per-batch formula collided between a batch's last tool result and
-    the next assistant turn; a counter cannot.
+    interleave. So does a separate ``UPDATE`` followed by a ``SELECT``: under WAL the
+    reading transaction can hold a snapshot from *before* the other writer's increment and
+    hand out the same number twice. The increment therefore returns the value it wrote, in
+    one statement.
     """
-    row = db.get(models.AgentSeqCounter, conversation_id)
-    if row is None:
-        highest = db.scalar(select(func.max(models.AgentMessage.seq)).where(
-            models.AgentMessage.conversation_id == conversation_id)) or 0
+    for attempt in range(3):
         try:
-            # A savepoint keeps a lost insert race from rolling back the caller's work.
-            with db.begin_nested():
-                db.add(models.AgentSeqCounter(conversation_id=conversation_id,
-                                              next_seq=int(highest)))
-                db.flush()
-        except IntegrityError:
-            pass
-    db.execute(update(models.AgentSeqCounter)
-               .where(models.AgentSeqCounter.conversation_id == conversation_id)
-               .values(next_seq=models.AgentSeqCounter.next_seq + 1))
-    value = db.scalar(select(models.AgentSeqCounter.next_seq).where(
-        models.AgentSeqCounter.conversation_id == conversation_id))
-    return int(value or 1)
+            try:
+                with db.begin_nested():
+                    highest = db.scalar(select(func.max(models.AgentMessage.seq)).where(
+                        models.AgentMessage.conversation_id == conversation_id)) or 0
+                    db.add(models.AgentSeqCounter(conversation_id=conversation_id,
+                                                  next_seq=int(highest)))
+                    db.flush()
+            except IntegrityError:
+                # Another writer created the row first; that is the expected outcome.
+                pass
+            value = db.execute(
+                update(models.AgentSeqCounter)
+                .where(models.AgentSeqCounter.conversation_id == conversation_id)
+                .values(next_seq=models.AgentSeqCounter.next_seq + 1)
+                .returning(models.AgentSeqCounter.next_seq)).scalar()
+            return int(value or 1)
+        except OperationalError:
+            # SQLite can refuse a deferred read-to-write upgrade without honouring the busy
+            # timeout. Rolling back restarts this transaction with a fresh snapshot.
+            db.rollback()
+            if attempt == 2:
+                raise
+    raise RuntimeError("无法分配消息序号")
 
 
 def accept_request(db: Session, conversation_id: str, key: str,
