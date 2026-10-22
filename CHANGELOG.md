@@ -595,3 +595,37 @@ admission saw the others (`compared` 4/5/6) with a 0-2 ms lock wait.
 ## 0.2.0 — 2026-10-18
 
 - Initial front-half handoff: requirement clarification, ima retrieval, specification extraction, image verification, input risks, and material export.
+
+### Added
+
+- **图文工作室** (`/studio/workbench`, `app/studio.py`). The user's flow: conversation →
+  copy → the knowledge-base original photo comes out → the user either goes to the studio or
+  keeps editing the copy → in the studio they generate images and edit the copy. The entry
+  appears on the deliverable card and carries the conversation id, so the fixed product and
+  the rough direction travel with it; nothing is retyped.
+- The studio's copy editor saves **through the agent's own `_save_artifact`**, so an edited
+  copy faces the same fact check, the same revision numbering and the same STALE_REVISION
+  guard. A weaker side door would make the studio a way around verification rather than a
+  workspace, which the tests pin down explicitly.
+- `GET/POST /api/v2/conversations/{id}/studio` and `.../studio/image`; generation reuses the
+  probe-backed capability gate and labels output `generated_scene`.
+
+### Added (hotspot centre core, routes land separately)
+
+- `app/hotspot_rules.py`: generic scoring with no brand, product profile or model dependency
+  (the plan forbids all three) - position/coverage weights, freshness factors, five scenario
+  views, soft diversity and the commercial risk policy. The rank-decay curve is named as an
+  implementation choice because the package gives the weights but not the curve.
+- `app/hotspots.py` + 12 `hs_` tables: source admission (six candidates, all
+  `enabled=false, approval_status="pending"` as the plan's templates ship them), the six
+  separate times, the refresh state machine, conservative clustering, atomic release
+  publication, selections, favourites and idempotency.
+- Two honesty rules are enforced in code rather than in prose: a fetch that did not reach
+  the origin is `cache_only` and **does not advance** `verified_upstream_at` ("HTTP 200 only
+  proves the response succeeded"), and a `stale_fallback` counts as `failed`. Same-origin
+  rows from two providers count as one vote.
+- Running inside this app on SQLite is stated on every response
+  (`production_ready: false`): no NewsNow, no approved source, and the plan's PostgreSQL-only
+  concurrency guarantees are not exercised.
+
+Tests: 357 pass.

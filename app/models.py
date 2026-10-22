@@ -468,6 +468,215 @@ class AgentSeqCounter(Base):
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
 
 
+# --------------------------------------------------------------------------- hotspots
+# The hotspot centre of the plan, implemented inside this application: the contract, the
+# data model and the honesty rules are the plan's, while the storage is SQLite rather than
+# PostgreSQL. That difference is real and is stated on every response
+# (``production_ready: false``); SQLite is a single-writer pilot store and the plan's
+# PostgreSQL-only constraints - advisory locks, SKIP LOCKED claiming, atomic release
+# publication under concurrency - are NOT exercised here.
+
+
+class HotspotSource(Base):
+    """A candidate public source. Disabled and pending until someone approves it.
+
+    The plan's templates ship every source ``enabled=false`` with
+    ``approval_status="pending"`` as a deliberate safety design, not as a default to flip.
+    Enabling one requires recorded evidence, so the columns for it are here and empty.
+    """
+    __tablename__ = "hs_sources"
+    source_id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(120), default="")
+    origin_platform: Mapped[str] = mapped_column(String(60), default="")
+    provider: Mapped[str] = mapped_column(String(60), default="newsnow")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    approval_status: Mapped[str] = mapped_column(String(20), default="pending")
+    approval_evidence: Mapped[str] = mapped_column(String(400), default="")
+    approved_by: Mapped[str] = mapped_column(String(120), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                         nullable=True, default=None)
+    min_interval_seconds: Mapped[int] = mapped_column(Integer, default=600)
+    locked_commit: Mapped[str] = mapped_column(String(120), default="")
+    container_digest: Mapped[str] = mapped_column(String(160), default="")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                             nullable=True, default=None)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                            nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class HotspotRefreshGroup(Base):
+    """One refresh request. Tasks are persistent rows, not in-process futures."""
+    __tablename__ = "hs_refresh_groups"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    user_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    state: Mapped[str] = mapped_column(String(24), index=True, default="queued")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                          nullable=True, default=None)
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True, default="")
+    reused_from: Mapped[str] = mapped_column(String(32), default="")
+
+
+class HotspotSourceCheck(Base):
+    """One source fetch attempt, with the six times kept apart.
+
+    ``verified_upstream_at`` is set **only** when the fetch actually reached the origin.
+    A cache hit does not advance it: "HTTP 200 only proves the response succeeded". Keeping
+    this separate from ``checked_at`` is the whole point - our previous implementation wrote
+    the local request time as if it were the platform's update time.
+    """
+    __tablename__ = "hs_source_checks"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    source_id: Mapped[str] = mapped_column(String(60), index=True)
+    state: Mapped[str] = mapped_column(String(20), default="queued")
+    outcome: Mapped[str] = mapped_column(String(24), default="")
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                        nullable=True, default=None)
+    verified_upstream_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                                  nullable=True, default=None)
+    origin_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                               nullable=True, default=None)
+    snapshot_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                                 nullable=True, default=None)
+    http_status: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    data_mode: Mapped[str] = mapped_column(String(24), default="")
+    entries_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(String(300), default="")
+
+
+class HotspotSnapshot(Base):
+    """A frozen capture of one source's leaderboard."""
+    __tablename__ = "hs_snapshots"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    source_id: Mapped[str] = mapped_column(String(60), index=True)
+    check_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    origin_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                               nullable=True, default=None)
+    entries: Mapped[list] = mapped_column(JSON, default=list)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+
+
+class HotspotItem(Base):
+    """A single leaderboard entry as observed from one source.
+
+    Uniqueness is ``(source_id, external_key)`` and deliberately **not**
+    ``(source_id, content_hash)``: as the plan puts it, "A->B->A is a new observation".
+    """
+    __tablename__ = "hs_items"
+    __table_args__ = (UniqueConstraint("source_id", "external_key", name="uq_hs_item_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    source_id: Mapped[str] = mapped_column(String(60), index=True)
+    external_key: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(300), default="")
+    url: Mapped[str] = mapped_column(String(600), default="")
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    domain: Mapped[str] = mapped_column(String(30), index=True, default="其他")
+    features: Mapped[dict] = mapped_column(JSON, default=dict)
+    risk_flags: Mapped[list] = mapped_column(JSON, default=list)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    origin_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                               nullable=True, default=None)
+
+
+class HotspotEvent(Base):
+    """Items from different sources that describe the same happening, clustered conservatively."""
+    __tablename__ = "hs_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    canonical_title: Mapped[str] = mapped_column(String(300), default="")
+    domain: Mapped[str] = mapped_column(String(30), index=True, default="其他")
+    features: Mapped[dict] = mapped_column(JSON, default=dict)
+    risk_flags: Mapped[list] = mapped_column(JSON, default=list)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class HotspotEventMember(Base):
+    __tablename__ = "hs_event_members"
+    __table_args__ = (UniqueConstraint("event_id", "item_id", name="uq_hs_member"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(String(32), index=True)
+    item_id: Mapped[str] = mapped_column(String(32), index=True)
+    source_id: Mapped[str] = mapped_column(String(60), index=True, default="")
+    origin_platform: Mapped[str] = mapped_column(String(60), default="")
+    provider: Mapped[str] = mapped_column(String(60), default="")
+
+
+class HotspotBoardRelease(Base):
+    """A published board. Readers never see a half-built one."""
+    __tablename__ = "hs_board_releases"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    rule_version: Mapped[str] = mapped_column(String(60), default="")
+    taxonomy_version: Mapped[str] = mapped_column(String(60), default="")
+    data_mode: Mapped[str] = mapped_column(String(30), default="no_approved_sources")
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    published: Mapped[bool] = mapped_column(Boolean, default=False)
+    candidate_pool: Mapped[list] = mapped_column(JSON, default=list)
+    source_statuses: Mapped[list] = mapped_column(JSON, default=list)
+    production_ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    notice: Mapped[str] = mapped_column(String(400), default="")
+
+
+class HotspotBoardEntry(Base):
+    __tablename__ = "hs_board_entries"
+    __table_args__ = (UniqueConstraint("release_id", "view_key", "rank", name="uq_hs_entry_rank"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    release_id: Mapped[str] = mapped_column(String(32), index=True)
+    view_key: Mapped[str] = mapped_column(String(40), index=True)
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    event_id: Mapped[str] = mapped_column(String(32), index=True)
+    general_score: Mapped[float] = mapped_column(Float, default=0.0)
+    scenario_score: Mapped[float] = mapped_column(Float, default=0.0)
+    reason: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class HotspotFavorite(Base):
+    __tablename__ = "hs_favorites"
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id", "event_id", name="uq_hs_fav"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    user_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    event_id: Mapped[str] = mapped_column(String(32), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class HotspotSelection(Base):
+    """An immutable hand-off of chosen material to the creation agent.
+
+    Immutable on purpose: the plan requires that what the agent was given cannot change
+    afterwards. Saving a selection does **not** trigger generation.
+    """
+    __tablename__ = "hs_selections"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    user_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    release_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    event_ids: Mapped[list] = mapped_column(JSON, default=list)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class HotspotIdempotency(Base):
+    """Write requests repeat safely: same key + same request reuses, different request 409s."""
+    __tablename__ = "hs_idempotency"
+    __table_args__ = (UniqueConstraint("tenant_id", "user_id", "key", name="uq_hs_idem"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    user_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    key: Mapped[str] = mapped_column(String(128))
+    request_digest: Mapped[str] = mapped_column(String(64), default="")
+    response: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AgentOutboxEvent(Base):
     """A reliable handoff record, written in the *same* transaction as the content.
 

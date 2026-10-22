@@ -28,7 +28,7 @@ from . import db as db_layer
 from . import models
 from . import rednote
 from .agent import AgentTurn, run_agent
-from . import agent_runtime
+from . import agent_runtime, studio
 from .runtime import RUNNER_VERSION as LG_RUNNER_VERSION
 from .runtime import runner as lg_runner
 from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
@@ -718,6 +718,16 @@ def rednote_asset(asset_id: str, scope=Depends(rednote_scope)):
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
 
 
+@app.get("/studio/workbench")
+def studio_workbench():
+    """图文工作室: user-driven image generation and copy editing."""
+    page = static_dir / "workbench" / "index.html"
+    if page.exists():
+        return FileResponse(page)
+    return JSONResponse(status_code=503, content={"code": "WORKBENCH_UNAVAILABLE",
+                                                  "message": "图文工作室页面缺失"})
+
+
 @app.get("/studio")
 def studio_host():
     """Same-origin host page for the vue-fabric-editor build.
@@ -812,6 +822,59 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
     return await agent_runtime.run_turn(db, conversation, payload.message,
                                         model=payload.model,
                                         idempotency_key=payload.idempotency_key)
+
+
+@app.get("/api/v2/conversations/{conversation_id}/studio")
+async def v2_studio_materials(conversation_id: str, db=Depends(v2_db)):
+    """图文工作室 materials: the fixed product, the current copy and the KB original photos."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    return await studio.materials(db, conversation)
+
+
+@app.post("/api/v2/conversations/{conversation_id}/studio/copy")
+async def v2_studio_save_copy(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    """Save an edited copy. Runs the same fact check the agent has to pass."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    payload = payload or {}
+    result = await studio.save_copy_async(
+        db, conversation, content=payload.get("content") or {},
+        artifact_id=str(payload.get("artifact_id") or ""),
+        base_revision=payload.get("base_revision"),
+        product_id=str(payload.get("product_id") or ""),
+        note=str(payload.get("note") or "工作室改文案"))
+    db.commit()
+    if not result.get("ok"):
+        code = str(result.get("error") or "SAVE_FAILED")
+        status = 409 if code in ("STALE_REVISION", "FACT_CHECK_FAILED") else 400
+        return JSONResponse(status_code=status, content=result)
+    return result
+
+
+@app.post("/api/v2/conversations/{conversation_id}/studio/image")
+async def v2_studio_generate(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    """Generate a scene image from the KB reference photo. User-triggered, never automatic."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    payload = payload or {}
+    result = await studio.generate_image(
+        db, conversation, prompt=str(payload.get("prompt") or ""),
+        style=str(payload.get("style") or ""), ratio=str(payload.get("ratio") or ""),
+        image_id=str(payload.get("image_id") or ""), size=str(payload.get("size") or ""),
+        model=str(payload.get("model") or "") or None)
+    if not result.get("ok"):
+        code = str(result.get("error") or "")
+        status = {"NO_REFERENCE_IMAGE": 422, "REFERENCE_EXPIRED": 409,
+                  "CAPABILITY_UNAVAILABLE": 503, "IMAGE_CHANNEL_ERROR": 502}.get(code, 400)
+        return JSONResponse(status_code=status, content=result)
+    return result
 
 
 @app.get("/api/v2/outbox")

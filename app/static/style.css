@@ -446,3 +446,10 @@ h1,h2,h3,p{margin:0}
 .v2-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .v2-actions .chip{cursor:pointer;border:1px solid var(--divider);background:var(--surface);}
 .v2-actions .chip:hover{border-color:var(--brand);color:var(--brand)}
+
+/* 去图文工作室入口：文案产出后出现，生图与改文案都在那边 */
+.studio-entry{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;
+  padding:10px 12px;border:1px dashed #d8dce1;border-radius:10px;background:#fafbfc;font-size:13px}
+.studio-link{font-weight:600;color:#c8102e;text-decoration:none}
+.studio-link:hover{text-decoration:underline}
+.studio-note{color:#6b7280;font-size:12px}

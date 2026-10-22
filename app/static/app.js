@@ -372,6 +372,17 @@
       escapeHtml(item.tool || '') + ' · ' + escapeHtml(item.summary || '') + '</span>').join('') + '</div>';
   }
 
+  // 去图文工作室：把当前会话的产品与文案带过去，生图与改文案都在那边完成。
+  function studioEntryHtml() {
+    const id = escapeHtml(sessionId || '');
+    return '<div class="studio-entry">'
+      + '<span>要配图或继续改文案？</span>'
+      + '<a class="studio-link" href="/studio/workbench?conversation=' + id + '"'
+      + ' target="_blank" rel="noopener">去图文工作室 →</a>'
+      + '<span class="studio-note">产品与文案会一起带过去；生图由你在工作室里手动触发。</span>'
+      + '</div>';
+  }
+
   function renderV2Artifact(conversation) {
     const artifacts = (conversation && conversation.artifacts) || [];
     const artifact = artifacts[0];
@@ -393,6 +404,11 @@
     const check = artifact.check || {};
     $('draft-state').textContent = check.passed ? '已通过检查' : '有待处理问题';
     $('draft-state').className = 'draft-state' + (check.passed ? ' ready' : '');
+    if (sessionId) {
+      try { localStorage.setItem('hwpc_conversation', sessionId); } catch (error) { /* 隐私模式忽略 */ }
+    }
+    const studioHost = $('draft-studio');
+    if (studioHost) studioHost.innerHTML = studioEntryHtml();
     const pages = content.pages || [];
     $('pages-empty').hidden = pages.length > 0;
     $('pages-grid').hidden = pages.length === 0;

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>图文工作室 · 华为 PC 营销助手</title>
+<link rel="stylesheet" href="/static/workbench/workbench.css?v=0.18.0-1"/>
+</head>
+<body>
+<header class="bar">
+  <div class="bar-left">
+    <a class="back" href="/" id="back-link">← 回对话</a>
+    <h1>图文工作室</h1>
+    <span class="tag" id="product-tag">加载中…</span>
+  </div>
+  <div class="bar-right">
+    <span class="hint" id="channel-hint"></span>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="panel">
+    <h2>知识库原图<span class="sub">（官方核验素材，可直接使用）</span></h2>
+    <div class="thumbs" id="kb-thumbs"><p class="muted">加载中…</p></div>
+    <p class="muted small">选中一张作为生图参考；也可以直接用原图，不调用生图模型。</p>
+  </section>
+
+  <section class="panel">
+    <h2>文案<span class="sub" id="copy-meta"></span></h2>
+    <div id="copy-area" class="copy-area"></div>
+    <div class="row">
+      <button id="save-copy" class="primary">保存文案</button>
+      <label class="inline"><input type="checkbox" id="bind-product" checked/> 绑定产品做事实检查</label>
+    </div>
+    <div id="copy-result" class="result"></div>
+  </section>
+
+  <section class="panel">
+    <h2>生图<span class="sub">（参考图 + 提示词）</span></h2>
+    <label class="field">提示词
+      <textarea id="prompt" rows="4" placeholder="例如：放在明亮的现代办公桌上，浅木纹桌面，一侧有绿植与咖啡杯虚影，柔和自然侧光，背景虚化办公室。不要文字、水印、人物。"></textarea>
+    </label>
+    <div class="row">
+      <label class="field small">比例
+        <select id="ratio">
+          <option value="kb">跟随参考图</option>
+          <option value="3:4" selected>小红书 3:4</option>
+          <option value="1:1">朋友圈 1:1</option>
+          <option value="4:3">4:3</option>
+          <option value="16:9">16:9</option>
+        </select>
+      </label>
+      <label class="field small">尺寸
+        <select id="size">
+          <option value="1080x1440" selected>1080×1440</option>
+          <option value="1024x1024">1024×1024</option>
+          <option value="1440x1080">1440×1080</option>
+          <option value="">跟随比例</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <button id="generate" class="primary">开始生图</button>
+      <span class="muted small" id="gen-status"></span>
+    </div>
+    <div id="gen-result" class="result"></div>
+    <div class="thumbs" id="gen-thumbs"></div>
+  </section>
+</main>
+
+<p class="foot" id="notice"></p>
+<script src="/static/workbench/workbench.js?v=0.18.0-1"></script>
+</body>
+</html>
