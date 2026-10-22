@@ -66,13 +66,14 @@ def test_it_requires_a_surface():
 
 
 def test_an_ambiguous_surface_is_refused():
-    """`moments` covers two surfaces, so the assistant must pick one explicitly."""
+    """`moments` 覆盖三个交付面，助手必须显式选一个。"""
     session = db_layer.session_factory()()
     ctx = _Ctx(session, _conversation(session))
     result = ar._tool_suggest_surface(ctx, {"surface": "moments", "reason": "朋友圈"})
     assert result["ok"] is False
     assert result["error"] == "UNKNOWN_SURFACE"
-    assert sorted(result["ambiguous"]) == ["personal_moments", "store_moments"]
+        # 三个交付面共用 moments 平台：个人朋友圈、门店朋友圈、企业微信朋友圈
+    assert sorted(result["ambiguous"]) == ["personal_moments", "store_moments", "work_account"]
     assert ctx.surface_suggestion is None
     session.close()
 
@@ -101,14 +102,17 @@ def test_an_explicit_choice_is_never_second_guessed():
     session.close()
 
 
-def test_an_unconfirmed_surface_carries_its_open_question():
+def test_a_confirmed_surface_suggests_without_an_open_question():
+    """work_account 已确认为企业微信·朋友圈，建议里不再带待确认问题。"""
     session = db_layer.session_factory()()
     ctx = _Ctx(session, _conversation(session))
-    ar._tool_suggest_surface(ctx, {"surface": "work_account", "reason": "工作号发一条"})
+    result = ar._tool_suggest_surface(ctx, {"surface": "work_account", "reason": "工作号发一条"})
+    assert result["ok"] is True
     suggestion = ctx.surface_suggestion
     assert suggestion["surface"] == "work_account"
-    assert suggestion["unconfirmed"] is True
-    assert "工作号" in suggestion["open_question"]
+    assert suggestion["unconfirmed"] is False
+    assert suggestion["open_question"] == ""
+    assert suggestion["platform"] == "moments"
     session.close()
 
 

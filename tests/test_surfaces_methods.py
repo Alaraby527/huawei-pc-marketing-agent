@@ -13,28 +13,25 @@ def test_the_existing_platform_enum_is_untouched():
                                                  "poster"]
 
 
-def test_work_account_has_no_platform_and_keeps_its_open_question():
-    """Package 1 forbids assuming it is the official account, so it must not inherit one."""
-    info = surfaces.resolve("work_account")
-    assert info["surface"] == "work_account"
-    assert info["platform"] is None
-    assert info["unconfirmed"] is True
-    assert "工作号" in info["open_question"]
-    assert "不得按公众号规格生成" in info["open_question"]
-
-
 def test_moments_is_ambiguous_so_a_surface_must_be_named():
     """This project's `moments` means store Moments; personal Moments is a new face."""
     info = surfaces.resolve("moments")
     assert info["surface"] == ""
-    assert sorted(info["ambiguous"]) == ["personal_moments", "store_moments"]
+    # 三个交付面共用 moments 平台：个人朋友圈、门店朋友圈、企业微信朋友圈
+    assert sorted(info["ambiguous"]) == ["personal_moments", "store_moments", "work_account"]
     assert "必须显式指定交付面" in info["note"]
 
 
-def test_both_moments_surfaces_map_back_to_the_moments_platform():
-    assert surfaces.platform_for("personal_moments") == Platform.MOMENTS
-    assert surfaces.platform_for("store_moments") == Platform.MOMENTS
-    assert sorted(surfaces.surfaces_for("moments")) == ["personal_moments", "store_moments"]
+def test_every_moments_surface_maps_back_to_the_moments_platform():
+    """确认 work_account = 企业微信朋友圈后，moments 平台下有三个交付面。
+
+    "多个交付面共享一个 platform"是本项目既有做法（个人/门店朋友圈本来就这样），
+    所以新增第三个不需要动 Platform 枚举。
+    """
+    for sid in ("personal_moments", "store_moments", "work_account"):
+        assert surfaces.platform_for(sid) == Platform.MOMENTS, sid
+    assert sorted(surfaces.surfaces_for("moments")) == [
+        "personal_moments", "store_moments", "work_account"]
 
 
 def test_an_unknown_value_is_an_error_not_a_default():
@@ -75,7 +72,9 @@ def test_describe_lists_every_surface_with_its_open_question():
     assert len(data["hard_gates"]) == 5
     assert "no_unresolved_placeholders" in data["hard_gates"]
     work = next(row for row in data["surfaces"] if row["surface"] == "work_account")
-    assert work["platform"] is None and work["open_question"]
+    # 2026-10-22 已确认，所以不再挂待确认问题；但 describe 仍必须列出这个交付面。
+    assert work["unconfirmed"] is False and work["open_question"] == ""
+    assert work["platform"] == "moments"
 
 
 # ------------------------------------------------------------------ methods
@@ -190,3 +189,61 @@ def test_a_user_stated_length_wins_over_the_spec():
     source = inspect.getsource(context.surface_directive)
     assert "明确要求的字数优先" in source, "提示词里必须写明这条，否则模型会拿规格压用户"
     assert "两者冲突时按用户要求" in source
+
+
+def test_work_account_is_confirmed_as_wecom_moments():
+    """2026-10-22 裁定：工作号 = 企业微信·朋友圈（客户可见的营销内容）。"""
+    from app import surfaces
+    row = surfaces.SURFACES["work_account"]
+    assert row["label"] == "企业微信·朋友圈"
+    assert row["alias"] == "工作号", "原名称要留作别名，否则历史引用会找不到"
+    assert row["platform"] == surfaces.Platform.MOMENTS
+    assert row.get("unconfirmed") is not True
+    assert "open_question" not in row, "确认后不应再挂待确认问题"
+    # 与既有模式一致：多个交付面可共享一个 platform
+    assert surfaces.SURFACES["personal_moments"]["platform"] == surfaces.Platform.MOMENTS
+    assert surfaces.SURFACES["store_moments"]["platform"] == surfaces.Platform.MOMENTS
+
+
+def test_work_account_carries_compliance_not_invented_lengths():
+    """客户可见的企业营销内容有合规约束；两个包都没给字数规格，就不编造区间。"""
+    from app import surfaces
+    row = surfaces.SURFACES["work_account"]
+    assert row["max_text_lines"] == 8, "包 1 明确给的约束要保留"
+    assert "没有" not in row["spec_gap"] and "未给出" in row["spec_gap"]
+    assert "body_soft_range" not in row, "没有来源就不编造字数区间"
+    assert "广告法" in row["compliance_note"]
+    assert "冒充私人朋友圈" in row["compliance_note"]
+
+
+def test_resolve_no_longer_reports_work_account_as_pending():
+    from app import surfaces
+    info = surfaces.resolve("work_account")
+    assert info["unconfirmed"] is False
+    assert info["open_question"] == ""
+    assert info["platform"] == "moments"
+
+
+def test_the_directive_carries_the_compliance_and_line_limit():
+    import inspect
+    from app.runtime import context
+    source = inspect.getsource(context.surface_directive)
+    assert "max_text_lines" in source
+    assert "compliance_note" in source
+    assert "spec_gap" in source
+
+
+def test_work_account_was_pending_and_is_now_decided():
+    """包 1 曾要求先由业务确认其真实含义，不得假定为公众号。
+
+    2026-10-22 已确认：企业微信·朋友圈。这个测试保留原意（不得假定为公众号），
+    断言换成确认后的状态。
+    """
+    from app import surfaces
+    row = surfaces.SURFACES["work_account"]
+    assert row["platform"] != surfaces.Platform.WECHAT_ARTICLE, "不得假定为公众号"
+    assert row["platform"] == surfaces.Platform.MOMENTS
+    info = surfaces.resolve("work_account")
+    assert info["unconfirmed"] is False
+    assert info["open_question"] == ""
+    assert info["confirmed_at"] if "confirmed_at" in info else True

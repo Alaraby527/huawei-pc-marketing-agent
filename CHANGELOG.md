@@ -839,6 +839,35 @@ Tests: 590 pass (180 legacy + 410 new/extended).
 
 Tests: 593 pass (180 legacy + 413 new/extended).
 
+### work_account 确认为「企业微信·朋友圈」
+
+2026-10-22 项目负责人裁定："企业微信·朋友圈（客户可见的营销内容）"。
+
+- `label` 改为**企业微信·朋友圈**，原名称**工作号**保留为 `alias`（历史引用与 recipes 的
+  `channels` 仍写 `work_account`，改名会让它们找不到）。
+- `platform` 归到 **`Platform.MOMENTS`**：代码里"多个交付面共享一个 platform"是既有做法
+  （`personal_moments` 与 `store_moments` 本来就共用 MOMENTS）。**不新增 Platform 枚举成员**，
+  因为 `compose.py` 按 `PLATFORM_RULES[platform.value]` 查表，新增会连带要求 `PLATFORM_RULES`
+  与 `intake` 别名同步改，而差别在交付面层面已经表达清楚。
+- `unconfirmed` 转 False，`open_question` 清空——待确认状态结束。
+- **不编造字数规格**：两个交付包都没给这个交付面的正文区间，所以只保留包 1 明确的
+  `max_text_lines=8`，并加 `spec_gap` 说明"没有规格来源"。**编一个区间会让规格看起来有出处。**
+- 新增 `compliance_note`：客户可见的企业营销内容，以企业身份发布，受企业合规与广告法约束，
+  不得用个人口吻冒充私人朋友圈、不得承诺未经核实的优惠或效果。
+- 指令层同步：`surface_directive` 现在会带出 `max_text_lines` / `compliance_note` / `spec_gap`。
+
+### 连带修正的测试
+
+`work_account` 确认后，5 个断言旧状态的测试需要更新——**保留原意、更新结论**：
+
+- "`moments` 歧义必须问清"：歧义列表从 2 个变 3 个（新增企业微信朋友圈），测试仍然验证
+  "拒绝猜测"，只是数量变了。
+- "待确认交付面会把待确认问题带进指令" → 改为"**已确认**交付面会带出确定规格与合规要求，
+  且不再有待确认措辞"（断言 8 行约束与广告法约束确实进了指令）。
+- "不得假定为公众号"的原意**保留**：断言 `platform != WECHAT_ARTICLE`。
+
+Tests: 597 pass (180 legacy + 417 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

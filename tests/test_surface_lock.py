@@ -34,13 +34,14 @@ def test_a_lock_is_stored_and_returned():
 
 
 def test_an_ambiguous_platform_is_refused_rather_than_guessed():
-    """`moments` covers two surfaces, so locking to it must ask which one."""
+    """`moments` 覆盖三个交付面，所以锁定它必须先问清是哪一个。"""
     session = db_layer.session_factory()()
     conversation = _conversation(session)
     result = ar.set_conversation_surface(session, conversation, "moments")
     assert result["ok"] is False
     assert result["error"] == "UNKNOWN_SURFACE"
-    assert sorted(result["ambiguous"]) == ["personal_moments", "store_moments"]
+        # 三个交付面共用 moments 平台：个人朋友圈、门店朋友圈、企业微信朋友圈
+    assert sorted(result["ambiguous"]) == ["personal_moments", "store_moments", "work_account"]
     session.close()
 
 
@@ -103,16 +104,19 @@ def test_no_lock_means_no_directive():
     session.close()
 
 
-def test_an_unconfirmed_surface_carries_its_open_question_into_the_instruction():
-    """`work_account` has no confirmed platform, so the model must be told not to assume one."""
+def test_a_confirmed_surface_carries_its_rules_not_an_open_question():
+    """`work_account` 曾经待确认，2026-10-22 已裁定为企业微信·朋友圈。
+
+    所以指令里不该再有"确认前保持中性出口"这类待确认措辞，而该是确定的规格与合规要求。
+    """
     session = db_layer.session_factory()()
     conversation = _conversation(session)
     ar.set_conversation_surface(session, conversation, "work_account")
     directive = surface_directive(session, conversation)
-    assert "工作号" in directive
-    # The open question travels verbatim, which is more precise than a generic warning.
-    assert "确认前保持中性出口" in directive
-    assert "不得按公众号规格生成" in directive
+    assert "企业微信" in directive
+    assert "确认前保持中性出口" not in directive, "已确认就不该再挂待确认措辞"
+    assert "文字不超过 8 行" in directive, "包 1 给的行数约束要进指令"
+    assert "广告法" in directive and "冒充私人朋友圈" in directive, "合规要求要进指令"
     session.close()
 
 

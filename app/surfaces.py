@@ -69,14 +69,19 @@ SURFACES: dict[str, dict] = {
                             "primary_cta", "visual_brief", "rights_notes"),
     },
     "work_account": {
-        "label": "工作号", "platform": None, "source": "package1",
+        # 2026-10-22 确认：项目负责人裁定"工作号 = 企业微信·朋友圈（客户可见的营销内容）"。
+        # platform 归到 MOMENTS，与 personal_moments / store_moments 同一模式——"多个交付面共享
+        # 一个 platform"是代码里既有做法，所以不必新增 Platform 枚举成员（新增会连带要求
+        # PLATFORM_RULES 与 intake 别名同步改，而差别在交付面层面已经表达清楚）。
+        "label": "企业微信·朋友圈", "alias": "工作号", "platform": Platform.MOMENTS,
+        "source": "package1+decision", "confirmed_at": "2026-10-22",
         "width": 1080, "height": 1440, "default_pages": 1, "max_text_lines": 8,
         "role": "单图信息卡加正文",
-        # Deliberately not mapped to wechat_article. Package 1 requires the real meaning to be
-        # confirmed by the business first, and forbids substituting a different platform.
-        "unconfirmed": True,
-        "open_question": "工作号指工作微信、企业微信、公众号还是其他？确认前保持中性出口，"
-                         "不得按公众号规格生成，也不得自行更名替换。",
+        # 两个包都没给这个交付面的字数规格，所以不编造区间：只保留包 1 明确的 max_text_lines=8。
+        "spec_gap": "两个交付包均未给出企业微信朋友圈的正文字数规格；不编造区间，按 max_text_lines 约束。",
+        "compliance_note": ("客户可见的企业营销内容：以企业身份发布，受企业合规与广告法约束；"
+                            "不得用个人口吻冒充私人朋友圈，不得承诺未经核实的优惠或效果。"),
+        "unconfirmed": False,
     },
 }
 

@@ -99,8 +99,14 @@ def surface_directive(db: Session, conversation: models.AgentConversation) -> st
         lines.append("- 卡片 " + "-".join(str(v) for v in row["card_count_range"]) + " 页")
     if row.get("headline_soft_max"):
         lines.append("- 主标题建议不超过 " + str(row["headline_soft_max"]) + " 字")
+    if row.get("max_text_lines"):
+        lines.append("- 文字不超过 " + str(row["max_text_lines"]) + " 行")
     if row.get("required_fields"):
         lines.append("- 必须包含字段：" + "、".join(row["required_fields"]))
+    if row.get("compliance_note"):
+        lines.append("- 合规：" + str(row["compliance_note"]))
+    if row.get("spec_gap"):
+        lines.append("- 规格说明：" + str(row["spec_gap"]))
     if info.get("unconfirmed"):
         lines.append("- 注意：" + str(info.get("open_question") or "该交付面含义未确认，不得按其他平台规格替代"))
     lines.append("交付面与锁定由用户选择；不要自行更换，也不要按其他交付面的长度写作。")
