@@ -1088,21 +1088,11 @@
   }
 
   function currentSurface() {
+    // 交付面已平铺（朋友圈拆成个人/门店两个），所以这里不再需要二选一的歧义处理。
     const active = document.querySelector('.surface-btn.active');
-    const key = active ? active.dataset.surface : 'xiaohongshu';
-    if (key !== 'moments') return key;
-    const split = $('moments-split');
-    const chosen = split ? split.querySelector('button.active') : null;
-    return chosen ? chosen.dataset.moments : 'store_moments';
+    return active ? active.dataset.surface : 'xiaohongshu';
   }
 
-  function surfaceLabel(surface) {
-    return SURFACE_LABELS[surface] || surface;
-  }
-
-  // 点选项卡变蓝就是锁定：没有单独的锁定按钮。选项一变蓝，就把本次会话固定到该交付面，
-  // 后端存进 task state 并作为指令进入系统提示词，所以它会真的改变写出来的东西。
-  // 请求失败时回读服务端状态并回退，避免界面显示已锁定而实际没有。
   async function lockSurface(surface) {
     if (!sessionId) { applyLockState(null); return; }
     try {
@@ -1139,16 +1129,9 @@
         .then((response) => response.json());
       applyLockState(info);
       if (info && info.surface) {
-        const key = (info.surface === 'personal_moments' || info.surface === 'store_moments')
-          ? 'moments' : info.surface;
+        // 交付面已平铺，选项卡 id 就是交付面 id，不再需要映射（原来会把朋友圈两类都高亮成"朋友圈"）
         document.querySelectorAll('.surface-btn').forEach(
-          (item) => item.classList.toggle('active', item.dataset.surface === key));
-        const split = $('moments-split');
-        if (split && key === 'moments') {
-          split.hidden = false;
-          split.querySelectorAll('button').forEach(
-            (item) => item.classList.toggle('active', item.dataset.moments === info.surface));
-        }
+          (item) => item.classList.toggle('active', item.dataset.surface === info.surface));
         selectedPlatform = info.surface;
       }
     } catch (error) {
@@ -1565,26 +1548,11 @@
     if (!button) return;
     surfaceTabs.querySelectorAll('.surface-btn').forEach(
       (item) => item.classList.toggle('active', item === button));
-    const split = $('moments-split');
-    if (split) split.hidden = button.dataset.surface !== 'moments';
     selectedPlatform = currentSurface();
-    // 变蓝即锁定；朋友圈要先在“门店/个人”里选一个，所以那时才提交。
-    if (button.dataset.surface === 'moments') {
-      const chosen = split ? split.querySelector('button.active') : null;
-      if (chosen) lockSurface(chosen.dataset.moments);
-    } else {
-      lockSurface(currentSurface());
-    }
-  });
-  const momentsSplit = $('moments-split');
-  if (momentsSplit) momentsSplit.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-moments]');
-    if (!button) return;
-    momentsSplit.querySelectorAll('button').forEach(
-      (item) => item.classList.toggle('active', item === button));
-    selectedPlatform = currentSurface();
+    // 变蓝即锁定。交付面已平铺（朋友圈拆成个人/门店两个），点哪个就锁哪个，没有歧义。
     lockSurface(currentSurface());
   });
+
   $('context-toggle').addEventListener('click', () => {
     $('ctx-menu').hidden = !$('ctx-menu').hidden;
   });

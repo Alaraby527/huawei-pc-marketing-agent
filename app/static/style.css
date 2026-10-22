@@ -628,3 +628,15 @@ h1,h2,h3,p{margin:0}
 .hot-list .topic-src{font-size:10px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 榜单卡片：排名 + 标题 + 热度 + 打开原文 */
 .hot-list .chart-card .topic-gist{color:var(--text-3)}
+
+
+/* ===================== 交付面：从标题栏挪到输入框上方 ===================== */
+/* 平铺 5 个，不再占标题栏那一行；与示例按钮同处输入框上方的控制区。 */
+.surface-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:6px 16px 2px;background:var(--surface)}
+.surface-label{font-size:11px;color:var(--text-3);flex:0 0 auto}
+.surface-bar .surface-tabs{flex-wrap:wrap;max-width:100%}
+.surface-bar .surface-btn{padding:5px 12px;font-size:12px}
+.surface-bar .lock-state{font-size:11px;color:var(--brand);background:var(--brand-soft);
+  border-radius:999px;padding:3px 9px}
+.surface-bar .lock-state[hidden]{display:none}

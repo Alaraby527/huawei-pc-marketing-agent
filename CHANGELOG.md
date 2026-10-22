@@ -2,6 +2,25 @@
 
 ## 0.17.0 — 2026-10-21
 
+### Changed (delivery surfaces: moved and flattened)
+
+Chosen form for "keep it but change it" on the surface row:
+
+- **Moved out of the title bar to just above the composer** - DOM order is now
+  `pane-head → chat-log → surface-bar → starter-row → composer`. The title row goes back to just
+  对话 + subtitle, and the surface control sits where it is actually used, next to where the copy
+  gets written.
+- **Flattened to five tabs**: 小红书 / 公众号 / 朋友圈·个人 / 朋友圈·门店 / 门店海报. 朋友圈 used to
+  open a 门店/个人 choice, which cost an extra step and forced `currentSurface()` to carry a
+  `moments` ambiguity. With the two surfaces split out, a tab's id *is* the surface id.
+- That also fixes a highlight bug found while doing it: `loadSurfaceLock` mapped both
+  `personal_moments` and `store_moments` back to `'moments'`, so locking one of them highlighted the
+  wrong tab. It now matches on the exact surface.
+- A leftover `if (split && key === 'moments')` block and the old click branch still referenced the
+  removed `split`, which would have thrown on every surface click - caught before shipping.
+
+Tests: 566 pass (180 legacy + 386 new/extended).
+
 ### Fixed
 
 - **The test suite was not hermetic.** Running the app requires sourcing the private
