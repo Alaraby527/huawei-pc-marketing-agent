@@ -4,6 +4,36 @@
 
 ### Added
 
+- **Durable run leases with heartbeat, expiry and bounded attempts** (`app/runtime/lease.py`,
+  `agent_run_leases`, T16). The in-process conversation lock is a *local* lease: it says
+  nothing to a second worker and nothing after a restart, so a crash was indistinguishable
+  from a run still working. A lease is now claimed durably, renewed by a heartbeat task on
+  its own session, and released whatever happens. Reclaiming an abandoned lease is a single
+  conditional `UPDATE ... RETURNING`, so two workers racing to recover one run cannot both
+  win, and `LG_RUN_MAX_ATTEMPTS` (2) stops a run that keeps dying from being retried
+  forever.
+- **Crash resume** (`POST /api/v2/runs/{run_id}/resume`). An interrupted run continues from
+  its own checkpoint instead of costing the user the whole attempt — the case that used to
+  end as "the upstream connection dropped, start over". It refuses when there is no pending
+  progress, when the run is waiting for the user, and when the attempt budget is spent, and
+  each refusal says which. `run_payload` exposes a `resumable` hint; the authoritative check
+  happens when a resume is attempted.
+- Startup orphan recovery is now lease-aware: a run another live worker is still beating on
+  is left alone, while an expired lease — or a pre-lease row with no lease at all — is
+  recovered as `needs_reconciliation`.
+
+### Fixed
+
+- Releasing the lease on a second connection while the run's own session still held an open
+  write transaction meant every delivery waited out SQLite's five-second busy timeout. The
+  run's session is committed before the release, and the release session uses a short
+  timeout. The suite went from 190 s back to 49 s.
+- `next_seq` and the lease reclaim both read a value back with a follow-up `SELECT`, which
+  answered from the identity map with the pre-increment object. Both now read the value the
+  statement wrote (`UPDATE ... RETURNING`).
+
+Tests: 310 pass (180 legacy + 130 new/extended).
+
 - **Calibration tooling for duplicate detection (plan Phase D).** `app/runtime/calibration.py`
   evaluates a threshold against labelled pairs (precision, recall, false-positive rate,
   false-negative rate), and refuses to recommend anything from an empty or unlabelled set —

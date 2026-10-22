@@ -22,16 +22,18 @@ import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .. import agent_runtime, db as db_layer, models
-from . import RUNNER_VERSION, admission, dedup, ledger
+from . import RUNNER_VERSION, admission, dedup, lease, ledger
 from .context import RuntimeContext, build_context
 from .errors import error_marker, public_error
 from .graph import build_graph
 from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
-                    STATUS_NEEDS_RECONCILIATION, STATUS_RUNNING, STATUS_WAITING_USER,
+                    STATUS_NEEDS_RECONCILIATION, STATUS_PARTIAL, STATUS_RUNNING,
+                    STATUS_WAITING_USER,
                     initial_state)
 
 _savers: dict[tuple[int, str], tuple[AsyncSqliteSaver, aiosqlite.Connection]] = {}
@@ -198,7 +200,90 @@ async def submit(db: Session, conversation: models.AgentConversation, text: str,
 
 async def execute_run(db: Session, conversation: models.AgentConversation,
                       run: models.AgentRun, text: str,
-                      model: str | None = None) -> dict:
+                      model: str | None = None,
+                      continue_existing: bool = False) -> dict:
+    """Claim the run durably, keep the lease alive, then release it — whatever happens.
+
+    The claim is what makes a crash distinguishable from "still working": another worker
+    cannot take a live lease, and an abandoned one is recoverable once it expires.
+    """
+    claimed = lease.claim(db, run_id=run.id, conversation_id=conversation.id)
+    db.commit()
+    if not claimed["claimed"]:
+        return _refuse_claim(db, conversation, run, claimed)
+    heartbeat = asyncio.create_task(_heartbeat_loop(run.id))
+    try:
+        return await _execute_claimed(db, conversation, run, text, model,
+                                      continue_existing=continue_existing)
+    finally:
+        heartbeat.cancel()
+        # Commit the run's own session BEFORE touching the lease on another connection:
+        # an open write transaction holds SQLite's write lock, and the release UPDATE would
+        # then wait out its whole busy timeout — about five seconds on every single delivery.
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 - a broken session must not block the release
+            db.rollback()
+        _release_lease(run.id)
+
+
+async def _heartbeat_loop(run_id: str) -> None:
+    """Renew the lease on its own session, so a long run is not mistaken for a dead one."""
+    interval = max(5.0, lease.ttl_seconds() / 3)
+    while True:
+        await asyncio.sleep(interval)
+        session = db_layer.session_factory()()
+        try:
+            lease.heartbeat(session, run_id=run_id)
+            session.commit()
+        except Exception:  # noqa: BLE001 - a missed beat only risks an early takeover
+            session.rollback()
+        finally:
+            session.close()
+
+
+def _release_lease(run_id: str) -> None:
+    """Release on a fresh session: the run's own session may be unusable by now."""
+    session = db_layer.session_factory()()
+    try:
+        # A short busy timeout: a missing release is recoverable by expiry, so it must never
+        # add seconds to a delivery.
+        session.execute(sql_text("PRAGMA busy_timeout=1000"))
+        lease.release(session, run_id=run_id)
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+    finally:
+        session.close()
+
+
+def _refuse_claim(db: Session, conversation: models.AgentConversation,
+                  run: models.AgentRun, claimed: dict) -> dict:
+    """Do not run a run that someone else owns, or one that used up its attempts."""
+    reason = str(claimed.get("reason") or "not_claimed")
+    if reason == "attempts_exhausted":
+        reply = ("本轮已自动重试 " + str(claimed.get("max_attempts")) +
+                 " 次仍未完成，已停止重试。可以重新发送这条消息开始新一轮。")
+        telemetry = "attempts_exhausted"
+    else:
+        reply = "这个任务正在被另一个工作进程处理，本轮没有重复执行。"
+        telemetry = "lease_" + reason
+    status = STATUS_FAILED
+    try:
+        _finish_run(db, conversation, run, status, reply, telemetry,
+                    build_context(db, conversation, run, None), {})
+        db.commit()
+    except Exception:  # noqa: BLE001 - the honest refusal matters more than the record
+        db.rollback()
+    payload = agent_runtime.run_payload(db, run)
+    return {**payload, "status": status, "stop_reason": telemetry, "reply": reply,
+            "can_publish": False, "lease": claimed}
+
+
+async def _execute_claimed(db: Session, conversation: models.AgentConversation,
+                           run: models.AgentRun, text: str,
+                           model: str | None = None,
+                           continue_existing: bool = False) -> dict:
     """Run the graph for one accepted run and finish it on the given session."""
     ctx = build_context(db, conversation, run, model)
     saver = await get_saver()
@@ -215,8 +300,14 @@ async def execute_run(db: Session, conversation: models.AgentConversation,
         # not a distributed lock: a second worker would need real coordination.
         async with _conversation_lock(conversation.id):
             snapshot = await graph.aget_state(config)
-            resuming = bool(getattr(snapshot, "next", ()) or ())
-            if resuming:
+            pending = bool(getattr(snapshot, "next", ()) or ())
+            interrupted = any(getattr(task, "interrupts", None)
+                              for task in (getattr(snapshot, "tasks", ()) or ()))
+            if continue_existing and pending and not interrupted:
+                # A run that died mid-graph continues from its own checkpoint. Nothing is
+                # re-sent and nothing is re-asked: this is the resume the plan requires.
+                result = await graph.ainvoke(None, config, durability="sync")
+            elif interrupted:
                 # Resume with the validated user text only. No arbitrary state patch is
                 # accepted from the client, and the new run id reaches the nodes through
                 # the trusted RuntimeContext rather than through checkpointed state.
@@ -327,6 +418,56 @@ async def _background_run(run_id: str) -> None:
         session.close()
 
 
+async def resume_run(db: Session, conversation: models.AgentConversation,
+                     run_id: str) -> dict:
+    """Continue an interrupted run from its checkpoint instead of asking the user to retype.
+
+    This is what turns "the upstream connection dropped, the run is over" into "the work
+    continues". It is deliberately conservative: it refuses when there is no pending
+    progress to continue, and when the attempt budget is spent, rather than silently
+    starting a fresh generation and calling it a resume.
+    """
+    previous = db.get(models.AgentRun, run_id)
+    if previous is None or previous.conversation_id != conversation.id:
+        raise RunnerError("找不到这一轮记录", status=404)
+    if previous.status == STATUS_WAITING_USER:
+        # Not a resume case at all, and telling the user "已经结束" would be wrong.
+        raise RunnerError("这一轮正在等你的回答，直接回答即可，不必续跑", status=409)
+    if previous.status not in (STATUS_NEEDS_RECONCILIATION, STATUS_FAILED, STATUS_PARTIAL):
+        raise RunnerError("这一轮已经结束，不需要续跑", status=409)
+
+    info = lease.describe(db, previous.id)
+    attempts = int((info or {}).get("attempt") or 1)
+    if attempts >= lease.max_attempts():
+        raise RunnerError("这一轮已重试到上限，请重新发送这条消息", status=409)
+
+    snapshot = await build_graph(await get_saver(),
+                                 build_context(db, conversation, previous, None)).aget_state(
+        {"configurable": {"thread_id": _thread_id(conversation)}})
+    tasks = list(getattr(snapshot, "tasks", ()) or ())
+    if not getattr(snapshot, "next", ()):
+        raise RunnerError("这一轮没有可续跑的进度，请重新发送这条消息", status=409)
+    if any(getattr(task, "interrupts", None) for task in tasks):
+        raise RunnerError("这一轮正在等你的回答，直接回答即可，不必续跑", status=409)
+
+    # Fall back to the original request if the checkpoint cannot actually continue, so the
+    # attempt is never an empty generation.
+    last_user = db.query(models.AgentMessage).filter(
+        models.AgentMessage.conversation_id == conversation.id,
+        models.AgentMessage.role == "user").order_by(models.AgentMessage.seq.desc()).first()
+    original = str(getattr(last_user, "content", "") or "")
+
+    run = models.AgentRun(conversation_id=conversation.id, model=previous.model or "",
+                          status=STATUS_RUNNING)
+    db.add(run)
+    db.flush()
+    agent_runtime._event(run, "resumed_from", run_id=previous.id)
+    db.commit()
+    payload = await execute_run(db, conversation, run, original, previous.model,
+                               continue_existing=True)
+    return {**payload, "resumed_from": previous.id}
+
+
 def recover_orphaned_runs(db: Session) -> int:
     """Runs left ``running`` by a previous process cannot be assumed to have finished.
 
@@ -336,12 +477,20 @@ def recover_orphaned_runs(db: Session) -> int:
     """
     rows = db.query(models.AgentRun).filter(
         models.AgentRun.status == STATUS_RUNNING).all()
+    recovered = []
     for run in rows:
+        info = lease.describe(db, run.id)
+        if info and info["state"] == lease.HELD and not info["expired"] \
+                and not info["is_ours"]:
+            # Another live worker is still beating on this run; recovering it would be
+            # stealing work that is still in progress.
+            continue
         run.status = STATUS_NEEDS_RECONCILIATION
         run.stop_reason = "orphaned_by_restart"
-    if rows:
+        recovered.append(run.id)
+    if recovered:
         db.flush()
-    return len(rows)
+    return len(recovered)
 
 
 def _register_content_memory(db: Session, conversation: models.AgentConversation,

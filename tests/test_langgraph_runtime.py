@@ -1231,3 +1231,115 @@ def test_a_database_conflict_ends_the_run_honestly(monkeypatch):
         models.AgentRun.created_at.desc()).first()
     assert run is not None and run.status == "failed", "the run must not stay running"
     session.close()
+
+
+# ---------------------------------------------------------------- resume after a crash
+
+def _crash_mid_run(monkeypatch, cid, text="查个热点"):
+    """Cancel a run from the outside while a tool is in flight.
+
+    Raising CancelledError *inside* the call does not reproduce this: the framework turns
+    that into an internal error. A real interruption is an external cancellation, which is
+    what a dropped client connection does, so the run is driven as a task and cancelled.
+    """
+    import asyncio
+
+    from app.runtime import tool_gateway
+
+    async def hanging(self, name, arguments, call_uid=""):
+        await asyncio.sleep(30)  # cancelled before it finishes
+
+    original = tool_gateway.ToolGateway.run
+    monkeypatch.setattr(tool_gateway.ToolGateway, "run", hanging)
+
+    async def drive():
+        session = db_layer.session_factory()()
+        conversation = session.get(models.AgentConversation, cid)
+        prepared = await lg_runner.submit(session, conversation, text)
+        run = session.get(models.AgentRun, prepared["run_id"])
+        task = asyncio.ensure_future(
+            lg_runner.execute_run(session, conversation, run, text))
+        await asyncio.sleep(1.0)  # let it reach the tool, then pull the plug
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        session.close()
+        return prepared["run_id"]
+
+    run_id = asyncio.run(drive())
+    monkeypatch.setattr(tool_gateway.ToolGateway, "run", original)
+    session = db_layer.session_factory()()
+    status = session.get(models.AgentRun, run_id).status
+    session.close()
+    return run_id, status
+
+
+def test_a_crashed_run_resumes_from_its_checkpoint(monkeypatch):
+    """The upstream dropping mid-run must not cost the user the whole attempt."""
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "开学"}, "c1")]},
+        {"content": "续跑后完成。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    run_id, status = _crash_mid_run(monkeypatch, cid)
+    assert status == "needs_reconciliation"
+
+    response = client.post(f"/api/v2/runs/{run_id}/resume")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["resumed_from"] == run_id
+    assert data["status"] == "completed"
+    assert "续跑后完成" in data["reply"]
+
+
+def test_resume_refuses_while_the_run_is_waiting_for_the_user(monkeypatch):
+    _script(monkeypatch, [{"content": "", "tool_calls": [
+        _call("ask_user", {"question": "给谁看？", "options": ["学生", "办公"]})]}])
+    cid = _new_conversation()["conversation_id"]
+    first = _send(cid, "帮我写点内容").json()
+    assert first["status"] == "waiting_user"
+
+    response = client.post(f"/api/v2/runs/{first['run_id']}/resume")
+    assert response.status_code == 409
+    assert "直接回答即可" in response.json()["detail"]["message"]
+
+
+def test_resume_refuses_a_run_that_already_finished(monkeypatch):
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    done = _send(cid, "写个标题").json()
+    response = client.post(f"/api/v2/runs/{done['run_id']}/resume")
+    assert response.status_code == 409
+
+
+def test_resume_refuses_once_attempts_are_spent(monkeypatch):
+    """Recovery must be bounded: a run that keeps dying ends instead of looping."""
+    from app.runtime import lease as lease_module
+
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_topics", {"query": "开学"}, "c1")]},
+        {"content": "不该跑到这里。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    run_id, status = _crash_mid_run(monkeypatch, cid)
+    assert status == "needs_reconciliation"
+
+    session = db_layer.session_factory()()
+    session.execute(lease_module.models.AgentRunLease.__table__.update()
+                    .where(lease_module.models.AgentRunLease.run_id == run_id)
+                    .values(attempt=lease_module.max_attempts()))
+    session.commit()
+    session.close()
+
+    response = client.post(f"/api/v2/runs/{run_id}/resume")
+    assert response.status_code == 409
+    assert "上限" in response.json()["detail"]["message"]
+
+
+def test_a_run_reports_whether_it_can_be_resumed(monkeypatch):
+    _script(monkeypatch, [{"content": "完成。", "tool_calls": []}])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "写个标题").json()
+    assert data["resumable"] is False, "a finished run is not a resume candidate"

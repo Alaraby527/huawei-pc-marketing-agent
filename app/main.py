@@ -798,6 +798,25 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
                                         idempotency_key=payload.idempotency_key)
 
 
+@app.post("/api/v2/runs/{run_id}/resume")
+async def v2_resume_run(run_id: str, db=Depends(v2_db)):
+    """Continue a run that was interrupted, from its own checkpoint."""
+    run = db.get(models.AgentRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
+                                                     "message": "运行不存在"})
+    conversation = db.get(models.AgentConversation, run.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    try:
+        return await lg_runner.resume_run(db, conversation, run_id)
+    except lg_runner.RunnerError as error:
+        raise HTTPException(status_code=error.status,
+                            detail={"code": "RESUME_CONFLICT",
+                                    "message": error.message}) from None
+
+
 @app.get("/api/v2/runs/{run_id}/events")
 def v2_run_events(run_id: str, db=Depends(v2_db)):
     run = db.get(models.AgentRun, run_id)

@@ -1942,10 +1942,15 @@ def run_payload(db: Session, run: models.AgentRun) -> dict:
     result = next((item for item in reversed(run.events or [])
                    if item.get("type") == "run_result"), {})
     result = {key: value for key, value in result.items() if key not in ("type", "at")}
-    return {"run_id": run.id, "conversation_id": run.conversation_id,
-            "status": run.status, "stop_reason": run.stop_reason,
-            "reply": _clean_reply(assistant.content) if assistant else "",
-            "events": run.events or [], "usage": run.usage or {}, **result}
+    payload = {"run_id": run.id, "conversation_id": run.conversation_id,
+               "status": run.status, "stop_reason": run.stop_reason,
+               "reply": _clean_reply(assistant.content) if assistant else "",
+               "events": run.events or [], "usage": run.usage or {}, **result}
+    # A UI hint only: whether a resume is actually possible is decided (and reported) when
+    # one is attempted, because it depends on the checkpoint having pending progress.
+    payload["resumable"] = str(run.status or "") in ("needs_reconciliation", "failed",
+                                                    "partial")
+    return payload
 
 
 def conversation_payload(db: Session, conversation: models.AgentConversation) -> dict:

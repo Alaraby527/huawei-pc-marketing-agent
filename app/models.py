@@ -468,6 +468,31 @@ class AgentSeqCounter(Base):
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AgentRunLease(Base):
+    """A persisted lease over a run, so a worker crash is detectable and recoverable.
+
+    The in-process conversation lock is only a local lease: it says nothing to a second
+    worker and nothing after a restart. This row is the durable claim, with a heartbeat and
+    an expiry, plus a bounded attempt counter so a run cannot be retried forever.
+
+    state: held | released
+    """
+    __tablename__ = "agent_run_leases"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_lease_run"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    conversation_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner: Mapped[str] = mapped_column(String(120), default="")
+    state: Mapped[str] = mapped_column(String(20), default="held")
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                        nullable=True, default=None)
+    reason: Mapped[str] = mapped_column(String(120), default="")
+
+
 class AgentContentFingerprint(Base):
     """Shadow-mode content memory: evidence for near-duplicate detection.
 
