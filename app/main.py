@@ -33,7 +33,7 @@ from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
 from . import design_library
 from . import image_edit
 from . import hot_topics, image_channel
-from . import hot_charts, hotspot_api
+from . import hot_charts, hotspot_api, recipes
 from .rednote import WorkspaceContext, WorkspaceError
 
 service.client_factory=default_client
@@ -887,6 +887,57 @@ async def v2_studio_save_copy(conversation_id: str, payload: dict | None = None,
         status = 409 if code in ("STALE_REVISION", "FACT_CHECK_FAILED") else 400
         return JSONResponse(status_code=status, content=result)
     return result
+
+
+@app.get("/api/v1/recipes")
+def recipes_endpoint(surface: str = "", approved_only: int = 1):
+    """已批准的风格配方列表（给图文工作室的"风格"选择用）。"""
+    rows = recipes.load()
+    ids = sorted(rows)
+    if surface:
+        ids = recipes.for_surface(surface, approved_only=bool(approved_only))
+    elif approved_only:
+        ids = recipes.usable()
+    out = []
+    for rid in ids:
+        row = recipes.describe(rid) or {}
+        out.append({"recipe_id": rid, "name": row.get("name"),
+                    "family": row.get("family"), "mechanism": row.get("mechanism"),
+                    "palette": row.get("palette"), "channels": row.get("channels") or [],
+                    "surfaces": row.get("surfaces") or [],
+                    "approved": recipes.is_approved(rid)})
+    return {"ok": True, "count": len(out), "recipes": out,
+            "approved_total": len(recipes.usable()),
+            "decided_by": (recipes.releases() or {}).get("decided_by"),
+            "decided_at": (recipes.releases() or {}).get("decided_at"),
+            "note": "只列出已批准配方；未批准的不得用于生产输出。"}
+
+
+@app.post("/api/v2/conversations/{conversation_id}/studio/copy/optimize")
+async def v2_studio_optimize_copy(conversation_id: str, payload: dict | None = None,
+                                 db=Depends(v2_db)):
+    """文案优化：只改表达，不新增事实。"""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    body = payload or {}
+    return await studio.optimize_copy(db, conversation,
+                                      content=str(body.get("content") or ""),
+                                      instruction=str(body.get("instruction") or ""))
+
+
+@app.get("/api/v2/conversations/{conversation_id}/studio/generated")
+async def v2_studio_generated(conversation_id: str, db=Depends(v2_db)):
+    """本次任务生成过的图（内存，进程重启即清空——界面上要如实说明这一点）。"""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    rows = studio.generated_history(conversation_id)
+    return {"ok": True, "count": len(rows), "images": rows,
+            "persistence": "session_only",
+            "note": "本次任务生成过的图，仅保存在本次运行内，重启后清空。"}
 
 
 @app.post("/api/v2/conversations/{conversation_id}/studio/image")

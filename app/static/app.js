@@ -1172,6 +1172,7 @@
         : (workspace ? '' : 'chat')))));
     renderSectionTabs(hot ? 'hot' : (studio ? 'studio' : 'chat'));
     if (hot) { renderHotModeTabs(); loadHotMode(hotMode === 'topics' ? 'topics' : hotMode); }
+    if (studio) loadStudio(false);
     if (workspace && window.WorkspaceApp) window.WorkspaceApp.open();
   }
 
@@ -1230,6 +1231,225 @@
     input.value = text;
     input.focus();
     toast('热点已带入输入框，可先改再发送');
+  }
+
+  // ===================== 图文工作室 =====================
+  const studioState = {refs: [], images: [], recipes: [], generated: [], loaded: false};
+
+  async function loadStudio(force) {
+    if (!sessionId) { toast('先在对话里建一个任务，再进图文工作室'); return; }
+    if (studioState.loaded && !force) return;
+    try {
+      const [material, recipeData] = await Promise.all([
+        fetch('/api/v2/conversations/' + sessionId + '/studio').then(r => r.json()),
+        fetch('/api/v1/recipes?approved_only=1').then(r => r.json()),
+      ]);
+      studioState.images = material.images || [];
+      studioState.recipes = recipeData.recipes || [];
+      studioState.loaded = true;
+
+      const surface = material.surface || '';
+      const chip = $('studio-surface-chip');
+      if (chip) chip.textContent = '交付面：' + (surface ? surfaceLabel(surface) : '未锁定');
+
+      const copyBox = $('studio-copy-text');
+      if (copyBox && !copyBox.value) {
+        copyBox.value = (material.copy && material.copy.content) || '';
+      }
+      renderStudioRecipes(surface);
+      renderStudioKb();
+      renderStudioRefs();
+      await loadStudioHistory();
+    } catch (error) {
+      toast('图文工作室加载失败');
+    }
+  }
+
+  function renderStudioRecipes(surface) {
+    const sel = $('studio-recipe');
+    const hint = $('studio-recipe-hint');
+    if (!sel) return;
+    const list = studioState.recipes.filter(row =>
+      !surface || !(row.surfaces || []).length || (row.surfaces || []).includes(surface));
+    const usable = list.length ? list : studioState.recipes;
+    sel.innerHTML = '<option value="">通用风格（不用配方）</option>' + usable.map(row =>
+      '<option value="' + escapeHtml(row.recipe_id) + '">' + escapeHtml(row.name) +
+      (row.approved ? '' : '（未批准）') + '</option>').join('');
+    if (hint) {
+      hint.textContent = '已批准 ' + studioState.recipes.length + ' 个' +
+        (surface ? '，当前交付面可用 ' + usable.length + ' 个' : '');
+    }
+  }
+
+  function renderStudioKb() {
+    const grid = $('studio-kb-grid');
+    const count = $('studio-kb-count');
+    if (!grid) return;
+    if (count) count.textContent = studioState.images.length + ' 张';
+    grid.innerHTML = studioState.images.length
+      ? studioState.images.map((row, index) =>
+          '<button type="button" class="studio-kb" data-kb="' + index + '" title="' +
+          escapeHtml(row.caption || row.image_id || '') + '">' +
+          '<img src="' + escapeHtml(row.access_url || row.url || '') + '" alt=""></button>').join('')
+      : '<p class="hint">本次创作还没有绑定知识库原图。</p>';
+  }
+
+  function renderStudioRefs() {
+    const box = $('studio-refs');
+    const label = $('studio-ref-count');
+    if (label) label.textContent = '已选 ' + studioState.refs.length + ' 张（最多 9 张）';
+    document.querySelectorAll('.studio-kb').forEach((btn) => {
+      btn.classList.toggle('active', studioState.refs.includes(Number(btn.dataset.kb)));
+    });
+    if (!box) return;
+    box.innerHTML = studioState.refs.length
+      ? studioState.refs.map((index) => {
+          const row = studioState.images[index] || {};
+          return '<span class="studio-ref"><img src="' +
+            escapeHtml(row.access_url || row.url || '') + '" alt=""></span>';
+        }).join('')
+      : '<span class="hint">从右侧知识库原图里点选参考图</span>';
+  }
+
+  async function loadStudioHistory() {
+    const grid = $('studio-history-grid');
+    if (!grid || !sessionId) return;
+    try {
+      const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/generated')
+        .then(r => r.json());
+      const rows = data.images || [];
+      grid.innerHTML = rows.length ? rows.map((row, index) =>
+        '<article class="studio-card">' +
+        '<img src="' + escapeHtml(row.url) + '" alt="">' +
+        '<div class="studio-card-body">' +
+        '<p class="studio-card-prompt">' + escapeHtml(row.prompt || '') + '</p>' +
+        '<div class="studio-card-meta"><span>' + escapeHtml(row.model || '') + '</span>' +
+        '<span>' + escapeHtml(row.at || '') + '</span></div>' +
+        '<div class="studio-card-actions">' +
+        '<button type="button" class="studio-btn" data-reuse="' + index + '">复用</button>' +
+        '<button type="button" class="studio-btn" data-redraw="' + index + '">重绘</button>' +
+        '</div></div></article>').join('')
+        : '<p class="hint">还没有生成记录。' + escapeHtml(data.note || '') + '</p>';
+      studioState.generated = rows;
+    } catch (error) { /* 历史加载失败不影响主流程 */ }
+  }
+
+  async function runStudioGenerate() {
+    if (!sessionId) { toast('先建一个任务'); return; }
+    const prompt = ($('studio-prompt') || {}).value || '';
+    if (!prompt.trim()) { toast('请先写提示词'); return; }
+    if (!studioState.refs.length) { toast('请先从右侧选一张参考图'); return; }
+    const btn = $('studio-generate');
+    if (btn) { btn.disabled = true; btn.textContent = '生成中…（约 30–100 秒）'; }
+    const note = $('studio-image-note');
+    if (note) note.textContent = '正在生成…';
+    try {
+      const payload = {
+        prompt: prompt,
+        image_id: (studioState.images[studioState.refs[0]] || {}).image_id || '',
+        recipe_id: ($('studio-recipe') || {}).value || '',
+        ratio: ($('studio-ratio') || {}).value || '',
+        model: ($('studio-model') || {}).value || '',
+      };
+      const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/image',
+        {method: 'POST', headers: {'Content-Type': 'application/json'},
+         body: JSON.stringify(payload)}).then(r => r.json());
+      if (!data.ok) {
+        if (note) note.textContent = data.message || data.error || '生成失败';
+        toast(data.error || '生成失败');
+        return;
+      }
+      const used = data.recipe || {};
+      if (note) {
+        note.textContent = '已生成。' + (used.recipe_id
+          ? '风格配方：' + (used.recipe_name || used.recipe_id)
+          : '未使用配方（' + (used.why_no_recipe || '无已批准配方') + '）') +
+          '；生成的是场景图，不是产品实拍。';
+      }
+      await loadStudioHistory();
+    } catch (error) {
+      if (note) note.textContent = '生成请求失败';
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '生成图片'; }
+    }
+  }
+
+  async function optimizeStudioCopy() {
+    const box = $('studio-copy-text');
+    const note = $('studio-copy-note');
+    if (!box || !box.value.trim()) { toast('没有可优化的文案'); return; }
+    const btn = $('studio-optimize');
+    if (btn) btn.disabled = true;
+    if (note) note.textContent = '正在优化…';
+    try {
+      const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/copy/optimize',
+        {method: 'POST', headers: {'Content-Type': 'application/json'},
+         body: JSON.stringify({content: box.value})}).then(r => r.json());
+      if (!data.ok) { if (note) note.textContent = data.message || '优化失败'; return; }
+      box.value = data.optimized;
+      if (note) {
+        note.textContent = '已优化：' + (data.changes || []).join('；') +
+          (data.kept || []).length ? '（保留：' + (data.kept || []).join('；') + '）' : '';
+      }
+    } catch (error) {
+      if (note) note.textContent = '优化请求失败';
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function bindStudio() {
+    on('studio-kb-grid', 'click', (event) => {
+      const btn = event.target.closest('[data-kb]');
+      if (!btn) return;
+      const index = Number(btn.dataset.kb);
+      const at = studioState.refs.indexOf(index);
+      if (at >= 0) studioState.refs.splice(at, 1);
+      else if (studioState.refs.length < 9) studioState.refs.push(index);
+      else { toast('参考图最多 9 张'); return; }
+      renderStudioRefs();
+    });
+    on('studio-prompt', 'input', () => {
+      const box = $('studio-prompt');
+      const counter = $('studio-prompt-count');
+      if (box && counter) counter.textContent = box.value.length + ' / 15000';
+    });
+    on('studio-generate', 'click', runStudioGenerate);
+    on('studio-optimize', 'click', optimizeStudioCopy);
+    on('studio-history-refresh', 'click', loadStudioHistory);
+    on('studio-copy', 'click', async () => {
+      const box = $('studio-copy-text');
+      if (!box || !box.value) { toast('没有可复制的文案'); return; }
+      try {
+        await navigator.clipboard.writeText(box.value);
+        toast('文案已复制');
+      } catch (error) {
+        box.select(); document.execCommand('copy'); toast('文案已复制');
+      }
+    });
+    on('studio-regen', 'click', () => {
+      // 重新生成：把需求带回对话，走 agent 的原流程（不在工作室里另造一套生成逻辑）
+      const box = $('studio-copy-text');
+      switchView('chat');
+      if (input) {
+        input.value = '重新生成一版文案。' + (box && box.value ? '\n上一版供参考（可改方向）：\n' + box.value.slice(0, 400) : '');
+        input.focus();
+      }
+      toast('已带回对话，改好需求后发送');
+    });
+    on('studio-history-grid', 'click', (event) => {
+      const reuse = event.target.closest('[data-reuse]');
+      const redraw = event.target.closest('[data-redraw]');
+      const promptBox = $('studio-prompt');
+      if (reuse && promptBox) {
+        promptBox.value = studioState.generated[Number(reuse.dataset.reuse)].prompt || '';
+        toast('提示词已填入');
+      }
+      if (redraw && promptBox) {
+        promptBox.value = studioState.generated[Number(redraw.dataset.redraw)].prompt || '';
+        runStudioGenerate();
+      }
+    });
   }
 
   function renderOrganizedTopics(data) {
@@ -1713,6 +1933,7 @@
     }
   });
   $('task-list').addEventListener('scroll', hideTaskMenu);
+  bindStudio();
   on('hot-scenario-tabs', 'click', (event) => {
     const button = event.target.closest('[data-hot-mode]');
     if (button) loadHotMode(button.getAttribute('data-hot-mode'));

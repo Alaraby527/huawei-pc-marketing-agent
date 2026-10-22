@@ -754,6 +754,30 @@ images were packaged to `~/Desktop/配方测试图_20261022/` (22 approved + `_�
 `HUAWEI` wordmark was not resolvable at preview scale in R06/R07/R13/R15/R19/R24 - to be checked on
 the full-size files. Tests: 575 pass (180 legacy + 395 new/extended).
 
+### 图文工作室：三栏工作台（按用户给的四张参考图实现）
+
+- **删掉了旧内容**：标题说明段、"待设计"占位卡、以及"打开现有工作台 ↗ / 打开快图设计 ↗"两个入口。
+- **左栏 · 文案**：可编辑输入框 + 三个按钮 **重新生成 / 文案优化 / 一键复制**。
+  - `POST /studio/copy/optimize` 走 `studio.optimize_copy()`，提示词把事实边界写死（不得增加卖点、
+    参数、价格、优惠、承诺；不得改写型号），并且**返回 `changes` 与 `kept`** —— 实测
+    "好携带→好带"、"保留型号与三个原有事实"。优化最容易被做成"加料"，所以这一步必须可核对。
+  - 重新生成**不另造一套生成逻辑**，而是把需求带回对话走 agent 原流程。
+  - 一键复制用 `navigator.clipboard`，失败时退回 `execCommand`。
+- **中栏 · 图片工作台**：参考图（最多 9 张，从右栏点选）、提示词（带字数计数）、**风格配方**下拉
+  （只列已批准的 22 个，按当前交付面过滤）、模型、输出参数（比例/质量/张数）、生成按钮。
+  生成结果里如实回报用了哪个配方，没用则回报 `why_no_recipe`。
+- **右栏 · 知识库原图**：本次任务绑定的 KB 原图网格，点选/取消设为参考图，选中态有勾标。
+- **底部 · 最近生成**：`GET /studio/generated`，卡片含图、提示词、模型、时间与"复用/重绘"。
+  明确标注 `persistence: session_only` —— 内存保存就说内存保存，不假装是持久化历史。
+
+### 修
+
+- 新增的两个接口一开始 500：用了不存在的 `agent_runtime.get_conversation`。同一文件里既有
+  `db.get(models.AgentConversation, ...)` 的写法也有 `agent_runtime` 的写法，我照后者写了。
+  改为与相邻 studio 接口一致的写法后，文案优化返回正常，不存在的会话返回 404。
+
+Tests: 579 pass (180 legacy + 399 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

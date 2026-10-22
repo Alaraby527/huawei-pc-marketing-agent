@@ -292,3 +292,45 @@ def test_provenance_survives_into_the_studio_materials(monkeypatch):
     assert data["assets"]["by_rights"] == {assets.RIGHTS_PROVENANCE_ONLY: 1}
     assert data["assets"]["assets"][0]["sha256"] == "b" * 64
     session.close()
+
+
+def test_the_workbench_endpoints_exist_and_are_wired():
+    """图文工作室三栏要真的能用：配方列表 / 文案优化 / 最近生成。"""
+    from app.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/api/v1/recipes" in paths
+    assert any("/studio/copy/optimize" in p for p in paths)
+    assert any("/studio/generated" in p for p in paths)
+
+
+def test_copy_optimisation_only_changes_expression():
+    """优化最容易被做成"加料"，所以提示词必须把事实边界写死。"""
+    import inspect
+    from app import studio
+    source = inspect.getsource(studio.optimize_copy)
+    assert "只改表达，不新增事实" in source
+    assert "不得增加卖点、参数、价格、优惠、承诺" in source
+    assert "不得替换或改写型号" in source
+    assert '"changes"' in source and '"kept"' in source, "要带回改了什么、保留了什么"
+
+
+def test_generated_history_is_honest_about_persistence():
+    """内存保存就说内存保存，不假装是持久化历史。"""
+    import inspect
+    from app import studio
+    assert "会话级、内存保存" in inspect.getsource(studio)
+    assert studio.generated_history("nobody") == []
+    studio.reset_generated()
+
+
+def test_the_studio_view_has_three_columns_and_no_placeholder():
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text()
+    assert "studio-col-copy" in html and "studio-col-image" in html and "studio-col-kb" in html
+    assert "studio-history" in html
+    # 用户要求删掉的旧内容不得残留
+    assert "待设计" not in html
+    assert "打开现有工作台" not in html and "打开快图设计" not in html
+    # 左栏三个按钮
+    for button in ("studio-regen", "studio-optimize", "studio-copy"):
+        assert button in html, button

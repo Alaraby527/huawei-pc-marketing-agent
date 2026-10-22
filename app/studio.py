@@ -195,6 +195,63 @@ async def save_copy_async(db: Session, conversation: models.AgentConversation, *
     return result
 
 
+# 本次任务生成过的图：会话级、内存保存。图4 的「最近生成」用它；进程重启即清空是诚实的
+# 边界（不假装是持久化历史），所以界面上写的是"本次任务会优先显示在这里"。
+_GENERATED: dict[str, list[dict]] = {}
+_GENERATED_LIMIT = 24
+
+
+def remember_generated(conversation_id: str, rows: list[dict]) -> None:
+    bucket = _GENERATED.setdefault(str(conversation_id), [])
+    bucket[:0] = rows
+    del bucket[_GENERATED_LIMIT:]
+
+
+def generated_history(conversation_id: str) -> list[dict]:
+    return list(_GENERATED.get(str(conversation_id)) or [])
+
+
+def reset_generated() -> None:
+    _GENERATED.clear()
+
+
+async def optimize_copy(db: Session, conversation: models.AgentConversation, *,
+                        content: str, instruction: str = "") -> dict:
+    """文案优化：在保留事实边界的前提下改写文案。
+
+    只改表达，不改事实：不新增卖点、价格、参数或承诺。这一条写进提示词也写进返回里，
+    因为"优化"最容易被做成"加料"。
+    """
+    from .model import ModelError, chat_json_messages
+
+    text = str(content or "").strip()
+    if not text:
+        return {"ok": False, "error": "EMPTY_COPY", "message": "没有可优化的文案"}
+    material = await materials(db, conversation)
+    state = db.get(models.AgentTaskState, conversation.id)
+    surface = str((dict(state.data or {}) if state else {}).get("surface") or "未锁定")
+    system = """你是华为 PC 的文案编辑。请优化下面这段文案。
+硬性要求：
+1. 只改表达，不新增事实：不得增加卖点、参数、价格、优惠、承诺或任何原文没有的信息。
+2. 保留原有的产品型号与已确认事实，不得替换或改写型号。
+3. 不得出现占位符、不得出现"某某"这类待填内容。
+4. 保持原有交付面的语感（当前交付面会告诉你）。不要把口语改成公文腔。
+只输出 JSON：{"optimized":"优化后的完整文案","changes":["改了什么，每条半句话"],"kept":["刻意保留了什么"]}"""
+    try:
+        result, meta = chat_json_messages(
+            system, [{"role": "user",
+                      "content": f"当前交付面：{surface}\n产品：{material['product'].get('model') or '未指定'}\n"
+                                 f"补充要求：{instruction or '（无）'}\n\n原文案：\n{text}"}],
+            schema_hint="只输出 JSON", model=None)
+    except ModelError as error:
+        return {"ok": False, "error": "MODEL_FAILED", "message": str(error)[:200]}
+    return {"ok": True, "optimized": str(result.get("optimized") or "")[:6000],
+            "changes": [str(x)[:120] for x in (result.get("changes") or [])][:8],
+            "kept": [str(x)[:120] for x in (result.get("kept") or [])][:8],
+            "surface": surface, "usage": (meta or {}).get("usage") or {},
+            "note": "只改表达不改事实；新增事实请回到对话确认。"}
+
+
 async def generate_image(db: Session, conversation: models.AgentConversation, *,
                          prompt: str, style: str = "", ratio: str = "", image_id: str = "",
                          size: str = "", model: str | None = None,
@@ -311,6 +368,13 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
         # proxy instead of staying empty.
         cost_ledger.mark_unpriced(db, booking["reservation_id"], None,
                                   note="模型 " + resolved + "，用量由供应商 usage 字段提供")
+    remember_generated(str(conversation.id), [
+        {"url": row.get("url") or row.get("access_url") or "",
+         "prompt": text[:300], "model": resolved,
+         "recipe_id": (recipe_used or {}).get("recipe_id"),
+         "recipe_name": (recipe_used or {}).get("name"),
+         "at": time.strftime("%Y-%m-%d %H:%M")}
+        for row in (out or []) if isinstance(row, dict)])
     return {"ok": True, "images": out, "channel": channel, "prompt": text,
             # 溯源：本次用的哪个风格配方、是否已批准；没用配方也如实说明原因。
             "recipe": recipe_used,

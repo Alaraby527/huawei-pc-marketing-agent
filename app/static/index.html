@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.21.1-ui">
+<link rel="stylesheet" href="/static/style.css?v=0.22.0-studio">
 </head>
 <body>
 <div class="app-shell">
@@ -172,23 +172,106 @@
       </section>
 
       <section class="studio-view" id="studio-view" hidden aria-label="图文工作室">
-        <div class="studio-head">
-          <div>
-            <h2>图文工作室</h2>
-            <p class="hint">这一块等你来定设计。下面是现在已有的工作台，可先用来生图与改文案。</p>
-          </div>
-          <div class="hot-actions">
-            <a class="btn-secondary" id="studio-open" href="/studio/workbench" target="_blank" rel="noopener">打开现有工作台 ↗</a>
-            <a class="btn-secondary" href="/studio" target="_blank" rel="noopener">打开快图设计 ↗</a>
-          </div>
+        <div class="studio-grid">
+          <!-- 左：文案 -->
+          <section class="studio-col studio-col-copy" aria-label="文案">
+            <header class="studio-col-head">
+              <h3>文案</h3>
+              <span class="studio-chip" id="studio-surface-chip">交付面：未锁定</span>
+            </header>
+            <textarea id="studio-copy-text" class="studio-copy-text"
+                      placeholder="这里显示本次的文案，可直接编辑"></textarea>
+            <div class="studio-copy-actions">
+              <button type="button" class="studio-btn" id="studio-regen">重新生成</button>
+              <button type="button" class="studio-btn" id="studio-optimize">文案优化</button>
+              <button type="button" class="studio-btn primary" id="studio-copy">一键复制</button>
+            </div>
+            <p class="studio-note" id="studio-copy-note">文案优化只改表达、不新增事实。</p>
+          </section>
+
+          <!-- 中：图片工作台 -->
+          <section class="studio-col studio-col-image" aria-label="图片工作台">
+            <header class="studio-col-head">
+              <h3>图片工作台</h3>
+              <span class="studio-chip" id="studio-model-chip">模型检测中…</span>
+            </header>
+
+            <div class="studio-field">
+              <div class="studio-field-head"><span>参考图</span>
+                <span class="studio-req">必填</span>
+                <span class="studio-hint-right" id="studio-ref-count">已选 0 张（最多 9 张）</span></div>
+              <div class="studio-refs" id="studio-refs"></div>
+            </div>
+
+            <div class="studio-field">
+              <div class="studio-field-head"><span>提示词</span><span class="studio-req">必填</span>
+                <span class="studio-hint-right" id="studio-prompt-count">0 / 15000</span></div>
+              <textarea id="studio-prompt" class="studio-prompt"
+                        placeholder="描述你想生成的画面，包括主体、场景、构图、光线和风格"></textarea>
+            </div>
+
+            <div class="studio-field">
+              <div class="studio-field-head"><span>风格配方</span>
+                <span class="studio-hint-right" id="studio-recipe-hint">已批准配方加载中…</span></div>
+              <select id="studio-recipe" class="studio-select"></select>
+            </div>
+
+            <div class="studio-field">
+              <div class="studio-field-head"><span>模型</span></div>
+              <select id="studio-model" class="studio-select"></select>
+            </div>
+
+            <div class="studio-field">
+              <div class="studio-field-head"><span>输出参数</span></div>
+              <div class="studio-params">
+                <label class="studio-param"><span>比例</span>
+                  <select id="studio-ratio" class="studio-select">
+                    <option value="">自动</option>
+                    <option value="square">1:1</option>
+                    <option value="portrait">3:4</option>
+                    <option value="landscape">4:3</option>
+                  </select></label>
+                <label class="studio-param"><span>质量</span>
+                  <select id="studio-quality" class="studio-select">
+                    <option value="standard">标准</option>
+                    <option value="high">高清</option>
+                  </select></label>
+                <label class="studio-param"><span>张数</span>
+                  <select id="studio-count" class="studio-select">
+                    <option value="1">1 张</option>
+                    <option value="2">2 张</option>
+                  </select></label>
+              </div>
+            </div>
+
+            <button type="button" class="studio-generate" id="studio-generate">
+              生成图片
+            </button>
+            <p class="studio-note" id="studio-image-note">生成的是场景图，不是产品实拍。</p>
+          </section>
+
+          <!-- 右：知识库原图 -->
+          <section class="studio-col studio-col-kb" aria-label="知识库原图">
+            <header class="studio-col-head">
+              <h3>知识库原图</h3>
+              <span class="studio-chip" id="studio-kb-count">检测中…</span>
+            </header>
+            <p class="studio-note">点一下设为参考图；已选的可再次点击取消。</p>
+            <div class="studio-kb-grid" id="studio-kb-grid"></div>
+          </section>
         </div>
-        <div class="studio-body">
-          <div class="empty-state">
-            <div class="empty-icon">✦</div>
-            <h3>待设计</h3>
-            <p>按你的规划，这里将承载生图与改文案的独立工作区。先把入口留在这里，不做多余设计。</p>
+
+        <!-- 下：最近生成 -->
+        <section class="studio-history" aria-label="最近生成">
+          <header class="studio-col-head">
+            <h3>最近生成</h3>
+            <span class="studio-note">本次任务会优先显示在这里，可继续作为参考图</span>
+            <button type="button" class="studio-btn" id="studio-history-refresh">刷新</button>
+          </header>
+          <div class="studio-history-grid" id="studio-history-grid">
+            <p class="hint">还没有生成记录。</p>
           </div>
-        </div>
+        </section>
       </section>
 
       <section class="hot-view" id="hot-view" hidden aria-label="热点榜单">
@@ -292,7 +375,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.21.1-ui" defer></script>
-<script src="/static/workspace.js?v=0.21.1-ui" defer></script>
+<script src="/static/app.js?v=0.22.0-studio" defer></script>
+<script src="/static/workspace.js?v=0.22.0-studio" defer></script>
 </body>
 </html>
