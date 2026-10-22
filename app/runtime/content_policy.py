@@ -62,6 +62,36 @@ def is_refusal_context(text: str, start: int, end: int) -> bool:
     return bool(_REFUSAL.search(_clause(text, start, end)))
 
 
+# Unresolved placeholders. Package 3 makes this a *hard gate*
+# ("no_unresolved_placeholders"), while this project only ever caught them by luck: a draft
+# with "价格待定" or a stray "{{活动时间}}" could pass review and reach a store.
+#
+# Kept narrow on purpose. Each alternative is something a finished deliverable must never
+# contain; ordinary punctuation and the word "确认" on its own are not matched.
+_PLACEHOLDER = re.compile(
+    r"\{\{[^}]{0,40}\}\}|\{[\w\u4e00-\u9fff]{1,20}\}|"          # {{x}} or {变量}
+    r"\bTODO\b|\bTBD\b|\bFIXME\b|\bXXX+\b|"                       # 英文占位
+    r"待(补|填|提供|定|确认|更新|补充)|补充(资料|价格|链接)|"              # 中文待办
+    r"[＿_]{3,}|[.·]{4,}|"                                              # 下划线/省略点
+    r"【\s*】|\(\s*\)|（\s*）|\[\s*\]|"                            # 空括号
+    r"\bundefined\b|\bnull\b|\bNaN\b|"                             # 代码泄漏
+    r"【(价格|活动时间|门店地址|联系方式|标题|正文)】|"                     # 方括号字段名
+    r"[￥¥]\s*[XxＮN]|[XxＸ]{1,2}\s*元|\b[Nn]\s*元|"                    # 价格占位
+    r"[XxＸ]{1,2}\s*折|[XxＸ]{1,2}\s*%|\d+\s*%\s*off\s*[Xx]")
+
+PLACEHOLDER_NOTICE = ("（提示：以上草稿含未填写的占位内容，按交付门槛不得视为可用稿；"
+                      "请补齐价格、活动时间、门店信息或字段后再发布。）")
+
+
+def unresolved_placeholders(text: str) -> list[str]:
+    """Return the placeholder fragments found, in order of appearance."""
+    return [match.group(0) for match in _PLACEHOLDER.finditer(text or "")]
+
+
+def has_unresolved_placeholders(text: str) -> bool:
+    return bool(unresolved_placeholders(text))
+
+
 def fabricated_experience(text: str) -> list[str]:
     """Return the matched first-person experience phrases, if any."""
     return [match.group(0) for match in _EXPERIENCE.finditer(text or "")]

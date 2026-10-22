@@ -26,9 +26,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from .. import agent_runtime
 from . import ledger
 from .context import RuntimeContext
-from .content_policy import (EXPERIENCE_NOTICE, UNVERIFIED_NUMBER_NOTICE,
+from .content_policy import (EXPERIENCE_NOTICE, PLACEHOLDER_NOTICE,
+                             UNVERIFIED_NUMBER_NOTICE,
                              fabricated_experience, is_refusal_context,
-                             review_notice, unverified_product_numbers,
+                             review_notice, unresolved_placeholders,
+                             unverified_product_numbers,
                              unverified_reply_notice)
 from .errors import error_marker, public_error
 from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_FAILED,
@@ -296,12 +298,20 @@ def build_graph(saver, ctx: RuntimeContext):
             if reply:
                 # Fabricated lived experience is forbidden by the platform rules but was
                 # never enforced. Flag it instead of shipping it as verified content.
+                # Checked independently of the experience fence: a draft can both invent an
+                # experience and leave "价格待定" in place, and the second one is a delivery
+                # gate rather than a style issue.
+                placeholders = unresolved_placeholders(reply)
+                if placeholders:
+                    status = STATUS_PARTIAL
+                    candidate["unresolved_placeholders"] = placeholders[:8]
+                    reply = reply + "\n\n" + PLACEHOLDER_NOTICE
                 markers = fabricated_experience(reply)
                 if markers:
                     status = STATUS_PARTIAL
                     candidate["unverified_experience"] = markers
                     reply = reply + "\n\n" + EXPERIENCE_NOTICE
-                elif not ctx.tool_ctx.evidence_read:
+                elif not ctx.tool_ctx.evidence_read and not placeholders:
                     numbers = unverified_product_numbers(reply)
                     if numbers:
                         status = STATUS_PARTIAL
