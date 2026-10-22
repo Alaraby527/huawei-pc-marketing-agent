@@ -101,14 +101,22 @@ def test_all_twenty_four_recipes_load():
     assert recipes.all_ids()[0] == "R01"
 
 
-def test_no_recipe_is_approved_for_production():
-    """Every recipe ships unverified_real_images, so the usable list must be empty."""
-    assert recipes.usable() == []
-    assert recipes.status()["usable_for_production"] == 0
+def test_recipe_files_stay_unverified_even_after_approval():
+    """批准写在 releases.json 里，配方文件本身保持未验证。
+
+    模块明确：改 JSON 说 approved 不等于生产批准。所以 2026-10-22 人工验收通过 22 个之后，
+    这些文件的 release_status 仍应是 unverified_real_images —— 批准是"记录"，不是"改字段"。
+    """
+    rows = recipes.load()
+    assert recipes.usable(), "人工验收已通过，应有可用配方"
+    for rid in recipes.usable():
+        assert rows[rid]["release_status"] == "unverified_real_images", rid
     assert recipes.status()["by_release_status"] == {"unverified_real_images": 24}
 
 
-def test_selection_refuses_and_says_why_while_nothing_is_approved():
+def test_selection_refuses_and_says_why_when_nothing_is_approved(monkeypatch):
+    """把批准全部拿掉后，选择必须拒绝并说明原因，而不是静默挑一个未批准的。"""
+    monkeypatch.setattr(recipes, "is_approved", lambda rid: False)
     result = recipes.select("xiaohongshu")
     assert result["ok"] is False
     assert result["error"] == "NO_APPROVED_RECIPE"
@@ -117,12 +125,20 @@ def test_selection_refuses_and_says_why_while_nothing_is_approved():
     assert result["suggested_first_batch"], "首批建议要一并给出，但它是建议不是批准"
 
 
-def test_a_preview_selection_is_marked_preview_only():
+def test_a_preview_selection_is_marked_preview_only(monkeypatch):
+    """未批准配方只能用于内部预览，且必须带着这句话。"""
+    monkeypatch.setattr(recipes, "is_approved", lambda rid: False)
     result = recipes.select("xiaohongshu", require_approved=False)
     assert result["ok"] is True
     assert result["approved"] is False
     assert result["preview_only"] is True
     assert "不得作为生产输出" in result["note"]
+
+
+def test_an_approved_selection_is_not_marked_preview_only():
+    result = recipes.select("xiaohongshu")
+    assert result["ok"] is True and result["approved"] is True
+    assert result["preview_only"] is False and result["note"] == ""
 
 
 def test_package_one_channels_map_onto_this_projects_surfaces():
@@ -148,15 +164,28 @@ def test_the_prompt_carries_the_protections_alongside_it():
     assert "不构成像素保真保证" in result["note"]
 
 
-def test_approval_cannot_flip_the_status_by_editing_json():
-    """The plan forbids treating an edited JSON as a production approval."""
+def test_approval_needs_who_and_evidence_and_writes_a_record():
+    """批准必须记录批准人与证据；没有这两样就拒绝。"""
     refused = recipes.approve("R01", approved_by="", evidence="")
-    assert refused["error"] == "APPROVAL_INCOMPLETE"
-    blocked = recipes.approve("R01", approved_by="张三", evidence="真实图片验证通过")
-    assert blocked["ok"] is False
-    assert blocked["error"] == "RELEASE_RECORD_NOT_IMPLEMENTED"
-    assert "不会改写" in blocked["message"]
-    assert recipes.is_approved("R01") is False
+    assert refused["ok"] is False
+    assert refused["error"] == "APPROVAL_NEEDS_WHO_AND_EVIDENCE"
+    assert "不算批准" in refused["message"]
+
+
+def test_editing_the_json_status_is_not_an_approval(tmp_path, monkeypatch):
+    """把 release_status 改成 approved 不影响 is_approved —— 它只认记录。"""
+    rows = recipes.load()
+    rid = "R05"
+    original = rows[rid]["release_status"]
+    monkeypatch.setitem(rows[rid], "release_status", "approved")
+    try:
+        # 记录里 R05 是批准过的；这里改的是"没批准过的"那个才说明问题
+        assert recipes.is_approved(rid) is True, "记录里已批准"
+        # 反例：被剔除的配方即便文件写 approved 也不算
+        monkeypatch.setitem(rows["R04"], "release_status", "approved")
+        assert recipes.is_approved("R04") is False, "被剔除的配方改文件字段也不生效"
+    finally:
+        rows[rid]["release_status"] = original
 
 
 def test_an_unknown_recipe_is_an_error():

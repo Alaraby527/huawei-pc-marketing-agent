@@ -26,6 +26,18 @@ DATA_DIR = Path(__file__).parent / "data" / "recipes"
 
 APPROVED_STATUSES = ("approved", "released")
 
+# 用户逐张验收时要求写进提示词的那一句（原话，不改写）。
+PRODUCT_CLAUSE = "产品要求和原图中的产品一致，大小比例logo外观保持不变。"
+
+# 配方原文里有一句与上面直接冲突：它写着"本图不出现产品、替代商品、品牌标识"，
+# 因为包 1 的设计前提是"只出背景，产品后期合成"。我们要的是产品在图里，所以构建提示词时
+# 把这一句替换掉——这不是我自造的约束，是用户那句要求能成立的必要条件。
+# 实测依据：R04 水墨空间、R22 文字主视觉 因为这句话产品整体消失；R06/R07 丢了机身 Logo。
+CONFLICTING_CLAUSE = "本图不出现产品、替代商品、品牌标识、正文、二维码。"
+REPLACEMENT_CLAUSE = "画面中保留参考图中的产品本体与其品牌标识。"
+
+RELEASES_PATH = DATA_DIR / "releases.json"
+
 # package 1 channel -> this project's surfaces. `moments` maps to both faces because that
 # package never splits them, and picking one silently would be a guess.
 CHANNEL_TO_SURFACES = {
@@ -40,6 +52,25 @@ SUGGESTED_FIRST_BATCH = ("R01", "R02", "R04", "R06", "R09", "R16", "R22", "R23")
 
 
 @lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
+def releases() -> dict:
+    """The recorded approval decision.
+
+    Package 1 is explicit that editing a JSON file to say approved is not a production approval -
+    approval has to come from a recorded decision. This reads that record.
+    """
+    if not RELEASES_PATH.exists():
+        return {}
+    try:
+        return json.loads(RELEASES_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def reset_release_cache() -> None:
+    releases.cache_clear()
+
+
 def load() -> dict[str, dict]:
     recipes: dict[str, dict] = {}
     if not DATA_DIR.exists():
@@ -68,13 +99,26 @@ def all_ids() -> list[str]:
 
 
 def is_approved(recipe_id: str) -> bool:
+    """Approved only if a *record* says so. The per-file release_status is not enough."""
+    record = releases()
+    approved = record.get("approved") or []
+    rejected = record.get("rejected") or {}
+    if recipe_id in rejected:
+        return False
+    if recipe_id in approved:
+        return True
     row = load().get(str(recipe_id or "").strip())
     return bool(row and row.get("approved"))
 
 
 def usable() -> list[str]:
-    """Recipes approved for production. Empty is the honest answer today."""
-    return [key for key, row in sorted(load().items()) if row.get("approved")]
+    """Recipes approved for production, per the *record* - not the per-file release_status.
+
+    Until 2026-10-22 this was empty and correctly so: nothing had been reviewed. The project owner
+    then reviewed one generated image per recipe and passed 22 of 24 (R04 水墨空间 and R22 文字主
+    视觉 dropped the product entirely), which is the recorded decision ``releases.json`` holds.
+    """
+    return [key for key in sorted(load()) if is_approved(key)]
 
 
 def describe(recipe_id: str) -> dict | None:
@@ -144,8 +188,14 @@ def prompt_for(recipe_id: str, *, product_note: str = "") -> dict:
     row = load().get(str(recipe_id or "").strip())
     if row is None:
         return {"ok": False, "error": "RECIPE_NOT_FOUND", "recipe_id": recipe_id}
-    return {"ok": True, "recipe_id": row["recipe_id"], "approved": row.get("approved"),
-            "background_prompt": row.get("background_prompt"),
+    raw = str(row.get("background_prompt") or "")
+    # 用户那句要求在构建时注入；同时把与之冲突的"本图不出现产品…"替换掉。
+    if CONFLICTING_CLAUSE in raw:
+        raw = raw.replace(CONFLICTING_CLAUSE, REPLACEMENT_CLAUSE)
+    return {"ok": True, "recipe_id": row["recipe_id"], "approved": is_approved(row["recipe_id"]),
+            "background_prompt": raw,
+            "product_clause": PRODUCT_CLAUSE,
+            "composed_prompt": (raw + "\n" + PRODUCT_CLAUSE).strip(),
             "product_lock": row.get("product_lock"),
             "avoid": row.get("avoid") or [],
             "variation_axes": row.get("variation_axes") or [],
@@ -154,21 +204,30 @@ def prompt_for(recipe_id: str, *, product_note: str = "") -> dict:
 
 
 def approve(recipe_id: str, *, approved_by: str, evidence: str) -> dict:
-    """Record an approval decision. Refuses without a named approver and evidence."""
-    row = load().get(str(recipe_id or "").strip())
-    if row is None:
-        return {"ok": False, "error": "RECIPE_NOT_FOUND", "recipe_id": recipe_id}
-    if not approved_by or not evidence:
-        return {"ok": False, "error": "APPROVAL_INCOMPLETE",
-                "message": "配方批准必须有审批人与证据（真实图片验证结论），缺一不可"}
-    # This module deliberately cannot flip release_status: that lives in the package's JSON,
-    # and rewriting it here would be exactly the "手改 approved" the plan forbids. A real
-    # approval belongs in a release record, which is not implemented yet.
-    return {"ok": False, "error": "RELEASE_RECORD_NOT_IMPLEMENTED",
-            "message": "批准记录表（recipe_releases）尚未实现；本函数只做入参校验，"
-                       "不会改写 JSON 里的 release_status",
-            "would_record": {"recipe_id": row["recipe_id"], "approved_by": approved_by,
-                             "evidence": evidence[:200]}}
+    """Record an approval decision. Writes the record; it does not edit the recipe file.
+
+    Replaces the earlier ``RELEASE_RECORD_NOT_IMPLEMENTED`` stub: the record table now exists as
+    ``app/data/recipes/releases.json``, so a human decision can actually be recorded.
+    """
+    rid = str(recipe_id or "").strip()
+    if rid not in load():
+        return {"ok": False, "error": "RECIPE_NOT_FOUND", "recipe_id": rid}
+    if not str(approved_by or "").strip() or not str(evidence or "").strip():
+        return {"ok": False, "error": "APPROVAL_NEEDS_WHO_AND_EVIDENCE",
+                "message": "批准必须记录批准人与证据；改 JSON 里的 release_status 不算批准"}
+    record = releases() or {"record_version": 1, "approved": [], "rejected": {}, "evidence": {}}
+    approved = list(record.get("approved") or [])
+    if rid not in approved:
+        approved.append(rid)
+    record["approved"] = approved
+    record.setdefault("rejected", {}).pop(rid, None)
+    record.setdefault("evidence", {})[rid] = {"note": str(evidence)[:300],
+                                             "approved_by": str(approved_by)[:80]}
+    RELEASES_PATH.write_text(json.dumps(record, ensure_ascii=False, indent=2))
+    reset_release_cache()
+    return {"ok": True, "recipe_id": rid, "approved_by": approved_by,
+            "approved_count": len(approved),
+            "note": "已写入批准记录（releases.json）；配方文件本身未被修改。"}
 
 
 def status() -> dict:

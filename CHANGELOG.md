@@ -721,6 +721,39 @@ Tests: 544 pass (180 legacy + 364 new/extended).
 
 ## 0.15.0 — 2026-10-20
 
+### Recipes: approved, packaged, and wired into image generation
+
+24 style recipes were generated one image each against a real KB product photo
+(HUAWEI MateBook 14 / 原野绿正面产品展示) and reviewed by the project owner.
+
+- **22 approved, 2 rejected.** R04 水墨空间 and R22 文字主视觉 both **dropped the product
+  entirely** - and the cause is structural, not random: the recipe text says "本图不出现产品、
+  替代商品、品牌标识" while the一 approval criterion needs the product present. Both rejected
+  recipes are the abstract/graphic kind, where that sentence wins; the environment/scene recipes
+  carry a "产品预留区" reference, so the model keeps the product.
+- **The approval is a record, not an edited field.** `app/data/recipes/releases.json` holds who
+  decided, when, the approved/rejected lists, the prompt rule and a sha256 per recipe as evidence.
+  `usable()` and `is_approved()` read that record; the recipe files still all say
+  `unverified_real_images`, which is exactly what the package demands ("手改 JSON 不等于生产批准").
+  `approve()` now really writes the record instead of returning `RELEASE_RECORD_NOT_IMPLEMENTED`.
+- **The user's sentence is baked in**: `PRODUCT_CLAUSE` = "产品要求和原图中的产品一致，大小比例
+  logo外观保持不变。" and `prompt_for()` composes it into every prompt. The conflicting recipe
+  clause is replaced at build time (`CONFLICTING_CLAUSE` → `REPLACEMENT_CLAUSE`), because it is the
+  documented cause of both the two missing products and the missing `HUAWEI` wordmarks.
+- **Wired into generation**: `studio.generate_image` takes `recipe_id`, or auto-selects an approved
+  recipe for the conversation's locked surface via `recipes.select`. An unapproved recipe is
+  **refused** (`RECIPE_NOT_APPROVED`) rather than silently used, and the chosen recipe travels in
+  the result as provenance; when no approved recipe exists it falls back to the generic prompt and
+  says so (`why_no_recipe`).
+
+Evidence images (22) are archived outside the repo in `.private/recipe-evidence/`, and all test
+images were packaged to `~/Desktop/配方测试图_20261022/` (22 approved + `_已剔除/` for the 2).
+
+### Known and carried forward
+
+`HUAWEI` wordmark was not resolvable at preview scale in R06/R07/R13/R15/R19/R24 - to be checked on
+the full-size files. Tests: 575 pass (180 legacy + 395 new/extended).
+
 ### Added
 
 - **Guided conversation** (default UI mode): ask who the content is for and where it will be used → recommend three verified models with reasons → let the user pick one and confirm the plan → write the copy → show original KB images → ask whether to keep, rewrite the copy, or change the images. The flow is a guide, not a locked funnel: explicit product requests skip recommendation, and any step can be revisited.

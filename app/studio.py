@@ -197,7 +197,8 @@ async def save_copy_async(db: Session, conversation: models.AgentConversation, *
 
 async def generate_image(db: Session, conversation: models.AgentConversation, *,
                          prompt: str, style: str = "", ratio: str = "", image_id: str = "",
-                         size: str = "", model: str | None = None) -> dict:
+                         size: str = "", model: str | None = None,
+                         recipe_id: str = "") -> dict:
     """Reference photo + prompt -> a generated scene image.
 
     Same guards as the agent tool: a verified KB image must exist, the model must have probe
@@ -234,10 +235,45 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
     target_ratio = None
     if ratio and ratio != "kb":
         target_ratio = RATIO_PRESETS.get(ratio)
-    text = (prompt or "").strip() or build_prompt(
-        style=style, subject=material["product"].get("model", ""),
-        scene=material["product"].get("scenario", ""),
-        audience=material["product"].get("audience", ""))
+    # 风格配方：显式给了 recipe_id 就用它；否则在没有自定义提示词时，按本次对话锁定的交付面
+    # 自动挑一个**已批准**的配方。recipes.select 在没有已批准配方时会拒绝，不会静默降级到
+    # 未批准的配方——那正是未评审风格流到客户手里的方式。
+    from . import recipes as recipe_lib
+    recipe_used: dict | None = None
+    text = (prompt or "").strip()
+    if not text:
+        if recipe_id:
+            spec = recipe_lib.prompt_for(recipe_id)
+            if not spec.get("ok"):
+                return {"ok": False, "error": spec.get("error") or "RECIPE_NOT_FOUND",
+                        "message": "指定的风格配方不存在", "recipe_id": recipe_id}
+            if not spec.get("approved"):
+                return {"ok": False, "error": "RECIPE_NOT_APPROVED", "recipe_id": recipe_id,
+                        "message": "该配方未获批准，不得用于生产输出；如仅内部预览请显式传 "
+                                   "allow_unapproved_recipe",
+                        "note": "批准必须来自 releases.json 里记录的决定。"}
+            text = spec["composed_prompt"]
+            recipe_used = {"recipe_id": spec["recipe_id"], "approved": True,
+                           "product_clause": spec["product_clause"]}
+        else:
+            surface = agent_runtime.get_conversation_surface(db, conversation).get("surface") or ""
+            picked = recipe_lib.select(surface) if surface else {"ok": False,
+                                                                 "error": "NO_SURFACE_LOCKED"}
+            if picked.get("ok"):
+                row = picked["recipe"]
+                text = recipe_lib.prompt_for(row["recipe_id"])["composed_prompt"]
+                recipe_used = {"recipe_id": row["recipe_id"], "name": row.get("name"),
+                               "approved": True, "surface": surface,
+                               "product_clause": recipe_lib.PRODUCT_CLAUSE}
+            else:
+                # 没有已批准配方：退回通用提示词，并把这件事如实带出去，不假装用了配方。
+                text = build_prompt(
+                    style=style, subject=material["product"].get("model", ""),
+                    scene=material["product"].get("scenario", ""),
+                    audience=material["product"].get("audience", ""))
+                recipe_used = {"recipe_id": None, "approved": False,
+                               "why_no_recipe": picked.get("error"),
+                               "surface": surface or None}
     # Account for the paid attempt before submitting it. When no budget is configured this
     # records an observation instead of blocking (see cost_ledger.enforce for why, and how to
     # make the plan's rule binding).
@@ -276,6 +312,8 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
         cost_ledger.mark_unpriced(db, booking["reservation_id"], None,
                                   note="模型 " + resolved + "，用量由供应商 usage 字段提供")
     return {"ok": True, "images": out, "channel": channel, "prompt": text,
+            # 溯源：本次用的哪个风格配方、是否已批准；没用配方也如实说明原因。
+            "recipe": recipe_used,
             "capability": capability, "billing": {"priced": booking.get("priced"),
                                                   "state": booking.get("state"),
                                                   "note": booking.get("message", "")},
