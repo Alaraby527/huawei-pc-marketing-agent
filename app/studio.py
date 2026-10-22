@@ -157,6 +157,13 @@ async def save_copy_async(db: Session, conversation: models.AgentConversation, *
     task = dict(state.data or {}) if state else {}
     fixed = _fixed_product(task)
     resolved_id = product_id or fixed.get("product_id") or str(content.get("product_id") or "")
+    if not artifact_id:
+        # Default to the conversation's existing deliverable. Letting the saver fall back to
+        # its own type lookup created a second artifact with revision 1, so a studio edit
+        # silently forked the copy instead of versioning it.
+        existing, _ = _latest_artifact(db, conversation.id)
+        if existing is not None:
+            artifact_id = existing.id
     ctx = _StudioContext(db, conversation, catalog,
                          last_search={"products": [{"product_id": fixed.get("product_id"),
                                                     "model": fixed.get("model")}]}

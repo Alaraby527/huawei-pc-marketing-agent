@@ -241,3 +241,23 @@ def test_generated_images_are_labelled_and_never_pass_as_product_photos(monkeypa
     assert "不是产品实物照" in result["notice"]
     assert result["capability"]["state"] == "verified_yes"
     session.close()
+
+def test_an_edit_without_an_explicit_id_continues_the_existing_artifact(monkeypatch):
+    """Saving must version the copy that exists, not fork a second artifact at revision 1."""
+    _pin_materials(monkeypatch)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    first = _run(studio.save_copy_async(session, conversation,
+                                        content={"title": "一", "body": "内存 16 GB。"},
+                                        product_id="P-studio"))
+    session.commit()
+    second = _run(studio.save_copy_async(session, conversation,
+                                         content={"title": "二", "body": "内存 16 GB。"},
+                                         product_id="P-studio"))
+    session.commit()
+    assert second["artifact_id"] == first["artifact_id"], "同一次创作只应有一个交付物"
+    assert second["revision"] == 2
+    artifacts = session.scalars(select(models.AgentArtifact)).all()
+    assert len(artifacts) == 1
+    session.close()
