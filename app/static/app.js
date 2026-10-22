@@ -43,8 +43,6 @@
   let lastQuestions = [];
   let loadingNode = null;
   let currentHotTopics = [];
-  let hotTopics = [];
-  let selectedHotIndex = -1;
   let wizardHotspot = null;
   let optionsRenderedAt = 0;
   let turnInFlight = false;
@@ -268,7 +266,6 @@
     applyLockState(null);
     lastResult = null;
     lastUserText = '';
-    selectedHotIndex = -1;
     chatLog.innerHTML = WELCOME_HTML;
     optionsWrap.hidden = true;
     optionsWrap.innerHTML = '';
@@ -1049,11 +1046,8 @@
   }
 
   function renderHotTopics(topics, note) {
-    hotTopics = topics || [];
-    currentHotTopics = hotTopics.slice(0, 3);
     const noteNode = $('hot-source-note');
     if (noteNode) noteNode.textContent = note || '';
-    if (!$('hot-view').hidden) renderHotList();
     const wizard = optionsWrap.querySelector('.wizard');
     if (wizard && wizard.dataset.field === 'objective' && lastQuestions.length) {
       renderOptions(lastQuestions);
@@ -1093,66 +1087,6 @@
     }
   }
 
-  function renderHotList() {
-    const list = $('hot-list');
-    if (!hotTopics.length) {
-      list.innerHTML = '<div class="empty-state"><div class="empty-icon">🔥</div><h3>暂无热点</h3>' +
-        '<p>可以点“连接小红书”扫码授权，或稍后刷新公开热榜。</p></div>';
-      return;
-    }
-    list.innerHTML = hotTopics.map((topic, index) => {
-      const heat = topic.heat ? '热度 ' + escapeHtml(String(topic.heat)) : '';
-      const source = topic.source === 'xiaohongshu-mcp' ? '小红书' : (topic.source || '公开热榜');
-      return '<button type="button" class="hot-item' + (index === selectedHotIndex ? ' active' : '') +
-        '" data-hot-index="' + index + '">' +
-        '<span class="hot-rank">' + String(index + 1).padStart(2, '0') + '</span>' +
-        '<span class="hot-main"><strong>' + escapeHtml(topic.title) + '</strong>' +
-        '<span class="hint">' + escapeHtml(source) + (heat ? ' · ' + heat : '') + '</span></span>' +
-        '<span class="hot-arrow">›</span></button>';
-    }).join('');
-  }
-
-  function showHotDetail(index) {
-    const topic = hotTopics[index];
-    if (!topic) return;
-    selectedHotIndex = index;
-    renderHotList();
-    const detail = $('hot-detail');
-    detail.innerHTML = '<article class="hot-card">' +
-      '<span class="eyebrow">热点 ' + String(index + 1).padStart(2, '0') + '</span>' +
-      '<h3>' + escapeHtml(topic.title) + '</h3>' +
-      '<p class="hint">来源：' + escapeHtml(topic.source || '公开热榜') +
-      (topic.heat ? ' · 热度 ' + escapeHtml(String(topic.heat)) : '') + '</p>' +
-      '<div class="hot-detail-actions">' +
-      '<button type="button" class="btn-secondary" id="hot-detail-toggle">查看热点详情</button>' +
-      '<button type="button" class="btn-primary" id="hot-use">使用热点</button></div>' +
-      '<div class="hot-detail-body" id="hot-detail-body" hidden>' +
-      '<div class="evidence-kv"><span>标题</span><span>' + escapeHtml(topic.title) + '</span>' +
-      '<span>来源</span><span>' + escapeHtml(topic.source || '公开热榜') + '</span>' +
-      '<span>热度</span><span>' + escapeHtml(String(topic.heat || '未提供')) + '</span>' +
-      '<span>关系</span><span>' + escapeHtml(topic.relation || '参考') + '</span>' +
-      '<span>链接</span><span>' + (topic.url
-        ? '<a href="' + escapeHtml(topic.url) + '" target="_blank" rel="noreferrer">打开原帖 ↗</a>'
-        : '未提供') + '</span></div>' +
-      '<p class="hint">热点只是切入线索，不是产品事实；生成时仍以官方知识库为准。</p></div></article>';
-  }
-
-  function useHotTopic(index) {
-    const topic = hotTopics[index];
-    if (!topic) return;
-    const lines = ['参考热点：' + topic.title];
-    if (topic.url) lines.push('热点链接：' + topic.url);
-    lines.push('我的想法：');
-    input.value = lines.join('\n');
-    sendBtn.disabled = false;
-    switchView('chat');
-    input.focus();
-    const end = input.value.length;
-    input.setSelectionRange(end, end);
-    toast('热点已带入对话框，补充你的想法后发送');
-  }
-
-  // 当前选中的交付面。朋友圈有两个面（个人/门店），所以这里显式区分，不猜。
   function currentSurface() {
     const active = document.querySelector('.surface-btn.active');
     const key = active ? active.dataset.surface : 'xiaohongshu';
@@ -1299,7 +1233,6 @@
   function renderOrganizedTopics(data) {
     const note = $('hot-source-note');
     const list = $('hot-list');
-    const detail = $('hot-detail');
     if (!data || !data.ok) {
       if (note) note.textContent = (data && (data.message || data.error)) || '没有可用的热点清单';
       if (list) list.innerHTML = '<p class="hint">' +
@@ -1307,8 +1240,12 @@
       return;
     }
     const src = data.source || {};
+    // 联网搜索与读榜单的 source 结构不同：搜索给 result_count/providers，榜单给 available/source。
+    // 之前只读榜单字段，界面上出现了「取到 undefined 条」。
+    const count = src.available != null ? src.available : (src.result_count || 0);
+    const from = src.source || (src.providers || []).join('/') || '联网搜索';
     if (note) {
-      note.textContent = '来源：' + (src.source || '') + ' · 取到 ' + src.available + ' 条'
+      note.textContent = '来源：' + from + ' · 取到 ' + count + ' 条'
         + (src.cap_note ? '（' + src.cap_note + '）' : '')
         + ' · 品牌过滤剔除 ' + (data.excluded_by_brand || []).length + ' 条'
         + ' · 整理出 ' + data.topic_count + ' 条热点'
@@ -1332,16 +1269,11 @@
             ? '<span class="topic-kw">搜索词：' + topic.keywords.map(escapeHtml).join(' ／ ') + '</span>'
             : '') +
           '</div>' +
-          '<p class="topic-src">原始条目：' + (topic.source_titles || [])
-            .map(escapeHtml).join(' ／ ') + '</p>' +
+          ((topic.source_titles || []).length
+            ? '<p class="topic-src">原始条目：' + topic.source_titles.map(escapeHtml).join(' ／ ') + '</p>'
+            : '') +
           '</article>').join('')
       : '<p class="hint">这一轮没有整理出好玩的热点（剔除了新闻事件与其他品牌后为空，这是正常结果）。</p>';
-    if (detail) {
-      detail.innerHTML = '<div class="empty-state"><div class="empty-icon">✦</div>' +
-        '<h3>清单说明</h3><p>' + escapeHtml(data.notice || '') + '</p>' +
-        '<p class="hint">' + escapeHtml(src.time_note || '') + '</p>' +
-        '<p class="hint">规则：偏好玩 · 跳过新闻事件 · 不涉及其他数码品牌</p></div>';
-    }
   }
 
   // 热点板块：热梗（联网搜索）+ 各平台原始榜单（抖音/微博/知乎/小红书）
@@ -1614,18 +1546,6 @@
     showHotDetail(Number(button.dataset.hotIndex));
   });
 
-  $('hot-detail').addEventListener('click', (event) => {
-    if (event.target.closest('#hot-detail-toggle')) {
-      const body = $('hot-detail-body');
-      const toggle = $('hot-detail-toggle');
-      if (body) {
-        body.hidden = !body.hidden;
-        toggle.textContent = body.hidden ? '查看热点详情' : '收起热点详情';
-      }
-      return;
-    }
-    if (event.target.closest('#hot-use')) useHotTopic(selectedHotIndex);
-  });
 
   on('hot-back', 'click', () => switchView('chat'));
   on('studio-back', 'click', () => switchView('chat'));
@@ -1887,7 +1807,7 @@
   renderWorkTabs(selectedPlatform);
   loadTasks();
 
-  window.AgentApp = { getSessionId: () => sessionId, getHotTopics: () => hotTopics, switchView };
+  window.AgentApp = { getSessionId: () => sessionId, switchView };
 
   loadKnowledgeBase();
   loadImageStyles();

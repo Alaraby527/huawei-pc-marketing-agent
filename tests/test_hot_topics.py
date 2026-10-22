@@ -174,3 +174,25 @@ def test_the_cached_endpoint_uses_the_same_path_as_refresh():
     source = inspect.getsource(main.hot_topics_cached)
     assert "organize_from_search" in source
     assert "organize(" not in source.replace("organize_from_search", "")
+
+
+def test_the_search_source_shape_differs_from_the_chart_shape():
+    """实测 bug：界面出现「取到 undefined 条」。
+
+    联网搜索的 source 给 result_count/providers，读榜单的给 available/source；渲染只读后者，
+    所以搜索那条路上的计数一直是 undefined。
+    """
+    import inspect
+    from app import main as _main  # noqa: F401
+    js = (__import__("pathlib").Path("app/static/app.js").read_text())
+    assert "src.result_count" in js, "渲染必须兼容搜索路径的字段"
+    assert "src.available != null" in js
+
+
+def test_the_hot_section_has_no_leftover_detail_panel():
+    """「清单说明」面板已按要求删除，选项卡移到头部行。"""
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text()
+    assert "清单说明" not in html
+    assert 'id="hot-detail"' not in html
+    assert "hot-tabs-row" in html and 'id="hot-scenario-tabs"' in html

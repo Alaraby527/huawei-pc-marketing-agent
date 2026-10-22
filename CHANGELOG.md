@@ -502,7 +502,33 @@ Tests: 533 pass (180 legacy + 353 new/extended).
   modal and the polling code. It was measured to be useless: the cloud IP triggers risk control,
   the upstream MCP has no interface to submit the SMS code, and its chart contains no memes.
 
-### Added
+### Changed (hot section layout, per the annotated screenshot)
+
+- **「清单说明」panel removed**, along with the whole right-hand column. The list now fills the
+  width as a **grid of ordinary-sized cards** (`auto-fill, minmax(230px, 1fr)`) instead of one tall
+  narrow column beside an empty panel. Cards are compact: title clamped to two lines, gist to
+  three, intro to five, with the actions and source folded in.
+- The mode tabs (热梗/抖音热榜/微博热搜/知乎热榜/小红书热榜) moved **up into the header row**, in
+  the same position as the 对话 section's surface tabs. This is the reading I took from the
+  "替换上去" arrow; the surface tabs stay in 对话 because the lock depends on them. If the intent
+  was to delete the surface tabs outright, that is a one-line change - say the word.
+
+### Fixed
+
+- **`取到 undefined 条` in the hot header.** The search path's `source` object carries
+  `result_count` / `providers` while the chart path carries `available` / `source`, and the
+  renderer only read the latter, so the count was always undefined on the working path. Both shapes
+  are now handled.
+- Two more leftovers from the earlier migrations: an empty `原始条目：` line rendered when a topic
+  had no source titles, and the whole old `showHotDetail` / `useHotTopic` / `renderHotList` family
+  still writing into the deleted panel.
+
+### Self-correction
+
+Cutting the old detail panel also removed the closing brace of `renderOrganizedTopics`, which broke
+the file (`SyntaxError: Unexpected token ')'`). Re-added, and the file passes `node --check`.
+
+Tests: 563 pass (180 legacy + 383 new/extended).
 
 - **`app/hot_charts.py` + `GET /api/v1/hot-charts`**: the raw public charts (抖音/微博/知乎/小红书)
   that the user asked to keep, as their own cards. Only the sources measured to work are listed -
