@@ -147,13 +147,21 @@ class ModelGateway:
     """Metered access to the configured main model."""
 
     def __init__(self, db: Session, *, conversation_id: str, run_id: str,
-                 model: str | None = None, cancel_check=None):
+                 model: str | None = None, cancel_check=None, directive: str = ""):
         self.db = db
         self.conversation_id = conversation_id
         self.run_id = run_id
         self.model = model
         self.cancel_check = cancel_check
+        # Extra instruction for this run, e.g. a locked delivery surface. Appended to the
+        # system prompt rather than mixed into the user's message, so the user's own words
+        # stay theirs and the constraint is still a real instruction to the model.
+        self.directive = str(directive or "").strip()
         self.last_protocol_mode = "native_tools"
+
+    @property
+    def system(self) -> str:
+        return SYSTEM_PROMPT + ("\n\n" + self.directive if self.directive else "")
 
     @property
     def model_id(self) -> str:
@@ -172,7 +180,7 @@ class ModelGateway:
         tool_calls: list[dict] = []
         error_text = ""
         try:
-            message, meta = chat_tools(SYSTEM_PROMPT, messages, tools, model=self.model)
+            message, meta = chat_tools(self.system, messages, tools, model=self.model)
             message = _normalize_message(message)
             tool_calls = message.get("tool_calls") or []
             content = str(message.get("content") or "")
@@ -193,7 +201,7 @@ class ModelGateway:
             protocol = "json_compat"
             json_messages = _to_json_protocol(messages)
             try:
-                result, meta = chat_json_messages(SYSTEM_PROMPT, json_messages,
+                result, meta = chat_json_messages(self.system, json_messages,
                                                   schema_hint=SCHEMA_HINT, model=self.model)
             except ModelError as json_error:
                 latency = int((time.monotonic() - started) * 1000)

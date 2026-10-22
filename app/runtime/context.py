@@ -67,6 +67,43 @@ class RuntimeContext:
         return time.monotonic() > self.deadline
 
 
+def surface_directive(db: Session, conversation: models.AgentConversation) -> str:
+    """The instruction for a conversation's locked delivery surface, or an empty string.
+
+    The lock is stored on the task state, so it survives across runs and a user does not have to
+    re-select the surface every turn. It is written as a directive because that is what it is:
+    the surface changes the required length, structure and fields, so the model has to know it.
+    """
+    state = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state.data or {}) if state else {}
+    surface_id = str(data.get("surface") or "").strip()
+    if not surface_id:
+        return ""
+    from .. import surfaces
+    info = surfaces.resolve(surface_id)
+    if info.get("error") or not info.get("surface"):
+        return ""
+    row = info["spec"] or {}
+    lines = ["【本次交付面已锁定：" + str(row.get("label") or surface_id) + "】",
+             "按该交付面的规格写作："]
+    if row.get("body_soft_range"):
+        lines.append("- 正文建议 " + "-".join(str(v) for v in row["body_soft_range"])
+                     + " 字（编辑建议，不是平台规则）")
+    if row.get("title_candidates"):
+        lines.append("- 标题候选 " + str(row["title_candidates"]) + " 个，单个建议不超过 "
+                     + str(row.get("title_soft_max") or "") + " 字")
+    if row.get("card_count_range"):
+        lines.append("- 卡片 " + "-".join(str(v) for v in row["card_count_range"]) + " 页")
+    if row.get("headline_soft_max"):
+        lines.append("- 主标题建议不超过 " + str(row["headline_soft_max"]) + " 字")
+    if row.get("required_fields"):
+        lines.append("- 必须包含字段：" + "、".join(row["required_fields"]))
+    if info.get("unconfirmed"):
+        lines.append("- 注意：" + str(info.get("open_question") or "该交付面含义未确认，不得按其他平台规格替代"))
+    lines.append("交付面与锁定由用户选择；不要自行更换，也不要按其他交付面的长度写作。")
+    return "\n".join(lines)
+
+
 def build_context(db: Session, conversation: models.AgentConversation, run: models.AgentRun,
                   model: str | None = None) -> RuntimeContext:
     def cancelled() -> bool:
@@ -79,7 +116,8 @@ def build_context(db: Session, conversation: models.AgentConversation, run: mode
     return RuntimeContext(
         db=db, conversation=conversation, run=run, model=model,
         gateway=ModelGateway(db, conversation_id=conversation.id, run_id=run.id,
-                             model=model, cancel_check=cancelled),
+                             model=model, cancel_check=cancelled,
+                             directive=surface_directive(db, conversation)),
         tools=ToolGateway(tool_ctx, cancel_check=cancelled),
         tool_ctx=tool_ctx,
         max_decisions=_env_int("LG_MAX_MODEL_CALLS", 12, 1, 40),

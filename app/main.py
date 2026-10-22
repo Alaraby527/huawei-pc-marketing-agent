@@ -801,6 +801,10 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
         raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
                                                      "message": "会话不存在"})
     if conversation.runner_version == LG_RUNNER_VERSION:
+        if payload.surface:
+            locked = agent_runtime.set_conversation_surface(db, conversation, payload.surface)
+            if not locked.get("ok"):
+                return JSONResponse(status_code=400, content=locked)
         async_mode = (payload.response_mode or "blocking").lower() == "async"
         try:
             prepared = await lg_runner.submit(db, conversation, payload.message,
@@ -825,6 +829,31 @@ async def v2_post_message(conversation_id: str, payload: agent_runtime.MessageIn
     return await agent_runtime.run_turn(db, conversation, payload.message,
                                         model=payload.model,
                                         idempotency_key=payload.idempotency_key)
+
+
+@app.get("/api/v2/conversations/{conversation_id}/surface")
+def v2_get_surface(conversation_id: str, db=Depends(v2_db)):
+    """The delivery surface this conversation is locked to."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    return agent_runtime.get_conversation_surface(db, conversation)
+
+
+@app.post("/api/v2/conversations/{conversation_id}/surface")
+def v2_set_surface(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    """Lock or clear the delivery surface. Pass an empty surface to unlock."""
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    result = agent_runtime.set_conversation_surface(
+        db, conversation, str((payload or {}).get("surface") or ""))
+    if not result.get("ok"):
+        return JSONResponse(status_code=400, content=result)
+    db.commit()
+    return result
 
 
 @app.get("/api/v2/conversations/{conversation_id}/studio")
@@ -1007,6 +1036,60 @@ async def _delete_conversation(conversation_id: str, db):
         db.commit()
         await lg_runner.purge_thread(thread_id)
     return {"deleted": conversation_id, "checkpoint_purged": runner_version == LG_RUNNER_VERSION}
+
+
+async def _delete_conversation_quietly(conversation_id: str, db) -> dict:
+    """Delete one conversation without raising, so a batch can report per-id results.
+
+    The single-delete endpoint keeps its 404; a batch is different - one stale id must not
+    abort the other deletions, and a partial result has to be visible rather than summarised
+    as success.
+    """
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        return {"id": conversation_id, "ok": False, "error": "NOT_FOUND"}
+    runner_version = conversation.runner_version
+    thread_id = f"{conversation.id}:{runner_version}"
+    try:
+        lg_runner.delete_ledgers(db, conversation.id)
+        agent_runtime.delete_conversation(db, conversation)
+        if runner_version == LG_RUNNER_VERSION:
+            db.commit()
+            await lg_runner.purge_thread(thread_id)
+        return {"id": conversation_id, "ok": True}
+    except Exception as error:  # noqa: BLE001 - reported per id, never swallowed
+        db.rollback()
+        return {"id": conversation_id, "ok": False,
+                "error": type(error).__name__ + ": " + str(error)[:120]}
+
+
+@app.post("/api/v2/conversations/batch-delete")
+async def v2_batch_delete(payload: dict | None = None, db=Depends(v2_db)):
+    """Delete several tasks at once, reporting each one.
+
+    A batch that only returns a total would hide a partial failure, so the response separates
+    deleted, missing and failed ids.
+    """
+    ids = [str(item) for item in ((payload or {}).get("ids") or []) if str(item).strip()]
+    if not ids:
+        return JSONResponse(status_code=400, content={"code": "NO_IDS",
+                                                      "message": "没有选择要删除的任务"})
+    if len(ids) > 100:
+        return JSONResponse(status_code=400, content={"code": "TOO_MANY_IDS",
+                                                      "message": "一次最多删除 100 个任务"})
+    results = []
+    seen = set()
+    for conversation_id in ids:
+        if conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        results.append(await _delete_conversation_quietly(conversation_id, db))
+    deleted = [row["id"] for row in results if row["ok"]]
+    missing = [row["id"] for row in results if not row["ok"] and row["error"] == "NOT_FOUND"]
+    failed = [row for row in results if not row["ok"] and row["error"] != "NOT_FOUND"]
+    return {"deleted": deleted, "missing": missing, "failed": failed,
+            "deleted_count": len(deleted), "requested_count": len(seen),
+            "note": "逐条报告；缺失与失败都列出来，不合并成一句成功。"}
 
 
 @app.patch("/api/v2/conversations/{conversation_id}")

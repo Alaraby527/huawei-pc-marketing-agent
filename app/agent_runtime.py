@@ -123,6 +123,9 @@ class MessageIn(BaseModel):
     # "blocking" (default, legacy-compatible final payload) or "async" (202 + run_id,
     # executed by the worker). Only the LangGraph runner supports async.
     response_mode: str | None = Field(default=None, max_length=20)
+    # The delivery surface the user locked in the UI. Validated against app.surfaces; an
+    # unknown value is refused rather than silently ignored.
+    surface: str | None = Field(default=None, max_length=40)
 
 
 @dataclass
@@ -1995,6 +1998,51 @@ def _conversation_updated(db: Session, conversation):
         models.AgentMessage.conversation_id == conversation.id).order_by(
         models.AgentMessage.seq.desc())).first()
     return last.created_at if last else conversation.created_at
+
+
+def get_conversation_surface(db: Session, conversation) -> dict:
+    """The delivery surface locked on this conversation, if any."""
+    from . import surfaces
+    state = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state.data or {}) if state else {}
+    locked = str(data.get("surface") or "").strip()
+    info = surfaces.resolve(locked) if locked else {}
+    return {"surface": locked,
+            "label": info.get("label", "") if locked else "",
+            "platform": info.get("platform") if locked else None,
+            "unconfirmed": bool(info.get("unconfirmed")) if locked else False,
+            "spec": info.get("spec") if locked else None,
+            "available": surfaces.describe()["surfaces"]}
+
+
+def set_conversation_surface(db: Session, conversation, surface_id: str) -> dict:
+    """Lock (or clear) the delivery surface. Survives across runs by design.
+
+    Stored on the task state rather than the run, because the user locks a *conversation* to a
+    surface and expects the next turn to remember it.
+    """
+    from . import surfaces
+    wanted = str(surface_id or "").strip()
+    if wanted:
+        info = surfaces.resolve(wanted)
+        if info.get("error") or not info.get("surface"):
+            return {"ok": False, "error": "UNKNOWN_SURFACE",
+                    "message": info.get("error") or "必须显式指定交付面",
+                    "ambiguous": info.get("ambiguous") or [],
+                    "available": [row["surface"] for row in surfaces.describe()["surfaces"]]}
+    state = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state.data or {}) if state else {}
+    if wanted:
+        data["surface"] = wanted
+    else:
+        data.pop("surface", None)
+    if state is None:
+        state = models.AgentTaskState(conversation_id=conversation.id, stage="intake", data=data)
+        db.add(state)
+    else:
+        state.data = data
+    db.flush()
+    return {"ok": True, **get_conversation_surface(db, conversation)}
 
 
 def conversation_summary(db: Session, conversation) -> dict:

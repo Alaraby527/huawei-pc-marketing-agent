@@ -6,12 +6,36 @@
   const sendBtn = $('send');
   const quickActions = $('quick-actions');
   const optionsWrap = $('options-wrap');
-  const platformSwitch = $('platform-switch');
+  // 五步指示器已按用户要求删除，它的位置给了板块的小选项卡
   const stepper = $('stepper');
+
+  // 板块与交付面（UI 重构后工作栏已删除，这里是新的导航状态）
+  const SECTION_TABS = {
+    // 对话的子选项卡就是标题栏中间那四个交付面，所以这里留空，避免重复渲染
+    chat: [],
+    hot: [['xiaohongshu', '小红书'], ['wechat_article', '公众号'],
+          ['moments_personal', '朋友圈·个人'], ['moments_store', '朋友圈·门店'],
+          ['store_poster', '门店海报']],
+    studio: [],
+  };
+  const SURFACE_LABELS = { xiaohongshu: '小红书', wechat_article: '公众号',
+                           moments: '朋友圈', personal_moments: '朋友圈·个人',
+                           store_moments: '朋友圈·门店', store_poster: '门店海报' };
+
+  // 元素可能已随重构删除；绑定前判空，避免整页脚本挂掉。
+  function on(id, event, handler) {
+    const node = $(id);
+    if (node) node.addEventListener(event, handler);
+  }
 
   let sessionId = null;
   let lastResult = null;
   let selectedPlatform = 'xiaohongshu';
+  // 热点榜单的场景视图（方案里的五个视图），由板块的小选项卡切换
+  let hotScenarioView = 'xiaohongshu';
+  // 任务批量删除：勾选多个任务一次删掉
+  let batchMode = false;
+  const batchSelected = new Set();
   let selectedEngine = 'llm';
   let selectedModel = null;
   let lastCoverKey = '';
@@ -110,9 +134,18 @@
       return;
     }
     wrap.innerHTML = taskCache.map(task => {
-      const id = escapeHtml(task.conversation_id || '');
+      const raw = task.conversation_id || '';
+      const id = escapeHtml(raw);
       const pinned = task.pinned ? '<span class="task-pin" title="已置顶">📌</span> ' : '';
       const updated = task.updated_ts ? relativeTime(task.updated_ts * 1000) : '';
+      if (batchMode) {
+        const checked = batchSelected.has(raw) ? ' checked' : '';
+        return '<div class="task-item batch">' +
+          '<label class="task-check"><input type="checkbox" data-check="' + id + '"' + checked + '>' +
+          '<span class="task-title">' + pinned + escapeHtml(task.title || '新任务') + '</span>' +
+          '<span class="task-time">' + updated + '</span></label>' +
+          '</div>';
+      }
       return '<div class="task-item' + (id === sessionId ? ' active' : '') + '">' +
         '<button type="button" class="task-main" data-open="' + id + '">' +
         '<span class="task-title">' + pinned + escapeHtml(task.title || '新任务') + '</span>' +
@@ -120,6 +153,64 @@
         '<button type="button" class="task-more" data-menu="' + id + '" aria-label="任务菜单">⋯</button>' +
         '</div>';
     }).join('');
+    syncBatchBar();
+  }
+
+  function syncBatchBar() {
+    const bar = $('task-batch-bar');
+    const toggle = $('task-batch-toggle');
+    if (bar) bar.hidden = !batchMode;
+    if (toggle) {
+      toggle.textContent = batchMode ? '完成' : '批量';
+      toggle.classList.toggle('active', batchMode);
+    }
+    const count = $('task-batch-count');
+    if (count) count.textContent = '已选 ' + batchSelected.size + ' 项';
+    const all = $('task-select-all');
+    if (all) {
+      all.checked = taskCache.length > 0 && batchSelected.size === taskCache.length;
+      all.indeterminate = batchSelected.size > 0 && batchSelected.size < taskCache.length;
+    }
+  }
+
+  function setBatchMode(on) {
+    batchMode = on;
+    if (!on) batchSelected.clear();
+    renderTasks();
+    hideTaskMenu();
+  }
+
+  async function deleteSelectedTasks() {
+    if (!batchSelected.size) { toast('先选择要删除的任务'); return; }
+    const ids = [...batchSelected];
+    if (!confirm('删除选中的 ' + ids.length + ' 个任务？该操作不可撤销。')) return;
+    const button = $('task-batch-delete');
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch('/api/v2/conversations/batch-delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await response.json();
+      if (!response.ok) { toast(data.message || '删除失败'); return; }
+      // 逐条结果如实汇报：缺失与失败都算出来，不合并成一句成功。
+      const parts = ['已删除 ' + data.deleted_count + ' 个'];
+      if ((data.missing || []).length) parts.push('不存在 ' + data.missing.length + ' 个');
+      if ((data.failed || []).length) parts.push('失败 ' + data.failed.length + ' 个');
+      toast(parts.join('，'));
+      if ((data.deleted || []).includes(sessionId)) {
+        sessionId = null;
+        applyLockState(null);
+        chatLog.innerHTML = '';
+      }
+      batchSelected.clear();
+      await loadTasks();
+      renderTasks();
+    } catch (error) {
+      toast('删除请求失败');
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   function hideTaskMenu() {
@@ -176,6 +267,7 @@
 
   function newTask() {
     sessionId = null;
+    applyLockState(null);
     lastResult = null;
     lastUserText = '';
     selectedHotIndex = -1;
@@ -225,6 +317,7 @@
       }
       sessionId = id;
       lastResult = null;
+      loadSurfaceLock();
       lastUserText = [...visible].reverse().find(item => item.role === 'user')?.content || '';
       chatLog.innerHTML = '';
       visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
@@ -248,9 +341,9 @@
   }
 
   function setWorkPanel(open) {
+    // 工作栏已按用户要求删除；保留函数是为了不动既有调用点，它现在只记住偏好。
     const panel = $('work-panel');
-    panel.classList.toggle('collapsed', !open);
-    $('work-toggle').setAttribute('aria-expanded', String(open));
+    if (panel) panel.classList.toggle('collapsed', !open);
     try {
       localStorage.setItem(WORK_PANEL_KEY, open ? '1' : '0');
     } catch (error) {
@@ -505,6 +598,8 @@
         });
         const conversation = await created.json();
         sessionId = conversation.conversation_id;
+        applyLockState(null);   // 新会话默认未锁定，避免沿用上一个会话的锁定显示
+        loadSurfaceLock();
       }
       const response = await fetch('/api/v2/conversations/' + sessionId + '/messages', {
         method: 'POST',
@@ -831,6 +926,7 @@
   }
 
   function renderStepper(result) {
+    if (!stepper) return;   // 五步指示器已删除；进度语义由板块与锁定状态承载
     let current = 1;
     if (result.slots && result.slots.audience && result.slots.budget && result.slots.scenario) current = 2;
     if (result.candidates && result.candidates.length) current = 2;
@@ -983,7 +1079,8 @@
         return loadPublicHotspots('小红书未返回相关笔记，以下为公开热榜参考');
       }
       xhsTopicsActive = true;
-      $('xhs-login').textContent = '小红书已连接';
+      const xhsBtn = $('xhs-login');
+      if (xhsBtn) xhsBtn.textContent = '小红书已连接';
       renderHotTopics(topics, '小红书实时笔记');
     } catch (error) {
       xhsTopicsActive = false;
@@ -1065,14 +1162,105 @@
     toast('热点已带入对话框，补充你的想法后发送');
   }
 
+  // 当前选中的交付面。朋友圈有两个面（个人/门店），所以这里显式区分，不猜。
+  function currentSurface() {
+    const active = document.querySelector('.surface-btn.active');
+    const key = active ? active.dataset.surface : 'xiaohongshu';
+    if (key !== 'moments') return key;
+    const split = $('moments-split');
+    const chosen = split ? split.querySelector('button.active') : null;
+    return chosen ? chosen.dataset.moments : 'store_moments';
+  }
+
+  function surfaceLabel(surface) {
+    return SURFACE_LABELS[surface] || surface;
+  }
+
+  // 点选项卡变蓝就是锁定：没有单独的锁定按钮。选项一变蓝，就把本次会话固定到该交付面，
+  // 后端存进 task state 并作为指令进入系统提示词，所以它会真的改变写出来的东西。
+  // 请求失败时回读服务端状态并回退，避免界面显示已锁定而实际没有。
+  async function lockSurface(surface) {
+    if (!sessionId) { applyLockState(null); return; }
+    try {
+      const response = await fetch('/api/v2/conversations/' + sessionId + '/surface', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ surface: surface }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        const names = (data.ambiguous || []).join(' / ');
+        toast(data.message || ('锁定失败' + (names ? '：' + names : '')));
+        await loadSurfaceLock();
+        return;
+      }
+      applyLockState(data);
+    } catch (error) {
+      toast('锁定请求失败');
+      await loadSurfaceLock();
+    }
+  }
+
+  function applyLockState(info) {
+    const state = $('lock-state');
+    if (!state) return;
+    const locked = Boolean(info && info.surface);
+    state.hidden = !locked;
+    state.textContent = locked ? ('已锁定 · ' + surfaceLabel(info.surface)) : '';
+  }
+
+  async function loadSurfaceLock() {
+    if (!sessionId) { applyLockState(null); return; }
+    try {
+      const info = await fetch('/api/v2/conversations/' + sessionId + '/surface')
+        .then((response) => response.json());
+      applyLockState(info);
+      if (info && info.surface) {
+        const key = (info.surface === 'personal_moments' || info.surface === 'store_moments')
+          ? 'moments' : info.surface;
+        document.querySelectorAll('.surface-btn').forEach(
+          (item) => item.classList.toggle('active', item.dataset.surface === key));
+        const split = $('moments-split');
+        if (split && key === 'moments') {
+          split.hidden = false;
+          split.querySelectorAll('button').forEach(
+            (item) => item.classList.toggle('active', item.dataset.moments === info.surface));
+        }
+        selectedPlatform = info.surface;
+      }
+    } catch (error) {
+      applyLockState(null);
+    }
+  }
+
   function switchView(view) {
     const hot = view === 'hot';
     const workspace = view === 'workspace';
-    $('chat-view').hidden = hot || workspace;
+    const studio = view === 'studio';
+    $('chat-view').hidden = hot || workspace || studio;
     $('hot-view').hidden = !hot;
+    $('studio-view').hidden = !studio;
     $('workspace-view').hidden = !workspace;
+    // 板块按钮跟随视图，点侧栏或热点详情返回时也一致
+    document.querySelectorAll('.section-btn').forEach((item) => item.classList.toggle(
+      'active', item.dataset.section === (hot ? 'hot' : (studio ? 'studio'
+        : (workspace ? '' : 'chat')))));
+    renderSectionTabs(hot ? 'hot' : (studio ? 'studio' : 'chat'));
     if (hot) loadHotList();
     if (workspace && window.WorkspaceApp) window.WorkspaceApp.open();
+  }
+
+  // 每个板块自己的小选项卡。对话的选项卡是标题栏中间的交付面，所以这里只有热点榜单有。
+  function renderSectionTabs(section) {
+    const host = $('section-tabs');
+    if (!host) return;
+    const tabs = SECTION_TABS[section] || [];
+    host.hidden = tabs.length === 0;
+    host.innerHTML = tabs.map(([key, label]) =>
+      '<button type="button" class="section-tab" data-view="' + key + '">' + label +
+      '</button>').join('');
+    if (!tabs.length) return;
+    const first = host.querySelector('.section-tab');
+    if (first) first.classList.add('active');
   }
 
   async function loadHotList() {
@@ -1155,6 +1343,7 @@
 
   async function loadXhsStatus() {
     const button = $('xhs-login');
+    if (!button) return;   // 顶栏的小红书按钮已按用户要求删除
     try {
       const response = await fetch('/api/v1/xhs/status');
       const data = await response.json();
@@ -1242,13 +1431,16 @@
   }
 
   function switchTab(name) {
-    $('work-tabs').querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === name));
+    const workTabs = $('work-tabs');
+    if (!workTabs) return;   // 工作栏已删除
+    workTabs.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = true; });
     const panel = $('panel-' + name);
     if (panel) panel.hidden = false;
   }
 
   function renderWorkTabs(platform) {
+    if (!$('work-tabs')) return;   // 工作栏已删除
     const list = PLATFORM_TABS[platform] || PLATFORM_TABS.xiaohongshu;
     $('work-tabs').innerHTML = list.map(([key, label], index) =>
       '<button class="tab' + (index === 0 ? ' active' : '') + '" data-tab="' + key + '" role="tab">' +
@@ -1361,9 +1553,8 @@
     if (event.target.closest('#hot-use')) useHotTopic(selectedHotIndex);
   });
 
-  $('hot-search').addEventListener('click', () => switchView('hot'));
-  $('workspace-btn').addEventListener('click', () => switchView('workspace'));
-  $('hot-back').addEventListener('click', () => switchView('chat'));
+  on('hot-back', 'click', () => switchView('chat'));
+  on('studio-back', 'click', () => switchView('chat'));
   $('hot-refresh').addEventListener('click', () => {
     hotTopics = [];
     currentHotTopics = [];
@@ -1372,8 +1563,7 @@
   });
   $('hot-connect').addEventListener('click', xhsLogin);
 
-  $('xhs-login').addEventListener('click', xhsLogin);
-  $('xhs-refresh').addEventListener('click', xhsLogin);
+  on('xhs-refresh', 'click', xhsLogin);
   $('xhs-fallback').addEventListener('click', () => {
     closeXhsModal();
     switchView('hot');
@@ -1384,15 +1574,32 @@
     if (event.target.id === 'xhs-modal') closeXhsModal();
   });
 
-  platformSwitch.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-platform]');
+  const surfaceTabs = $('surface-tabs');
+  if (surfaceTabs) surfaceTabs.addEventListener('click', (event) => {
+    const button = event.target.closest('.surface-btn');
     if (!button) return;
-    selectedPlatform = button.dataset.platform;
-    platformSwitch.querySelectorAll('.platform-btn').forEach(item => item.classList.toggle('active', item === button));
-    renderWorkTabs(selectedPlatform);
-    send('', { platform: selectedPlatform });
+    surfaceTabs.querySelectorAll('.surface-btn').forEach(
+      (item) => item.classList.toggle('active', item === button));
+    const split = $('moments-split');
+    if (split) split.hidden = button.dataset.surface !== 'moments';
+    selectedPlatform = currentSurface();
+    // 变蓝即锁定；朋友圈要先在“门店/个人”里选一个，所以那时才提交。
+    if (button.dataset.surface === 'moments') {
+      const chosen = split ? split.querySelector('button.active') : null;
+      if (chosen) lockSurface(chosen.dataset.moments);
+    } else {
+      lockSurface(currentSurface());
+    }
   });
-
+  const momentsSplit = $('moments-split');
+  if (momentsSplit) momentsSplit.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-moments]');
+    if (!button) return;
+    momentsSplit.querySelectorAll('button').forEach(
+      (item) => item.classList.toggle('active', item === button));
+    selectedPlatform = currentSurface();
+    lockSurface(currentSurface());
+  });
   $('context-toggle').addEventListener('click', () => {
     $('ctx-menu').hidden = !$('ctx-menu').hidden;
   });
@@ -1423,7 +1630,7 @@
     syncEngineControls();
   });
 
-  $('work-tabs').addEventListener('click', (event) => {
+  on('work-tabs', 'click', (event) => {
     const tab = event.target.closest('button[data-tab]');
     if (tab) switchTab(tab.dataset.tab);
   });
@@ -1497,6 +1704,15 @@
 
   $('new-task').addEventListener('click', newTask);
   $('task-list').addEventListener('click', (event) => {
+    if (batchMode) {
+      if (event.target.closest('input[data-check]')) {
+        const box = event.target.closest('input[data-check]');
+        if (box.checked) batchSelected.add(box.dataset.check);
+        else batchSelected.delete(box.dataset.check);
+        syncBatchBar();
+      }
+      return;   // 批量模式下点任务只勾选，不打开
+    }
     const more = event.target.closest('[data-menu]');
     if (more) {
       event.stopPropagation();
@@ -1510,6 +1726,14 @@
     }
   });
   $('task-list').addEventListener('scroll', hideTaskMenu);
+  on('task-batch-toggle', 'click', () => setBatchMode(!batchMode));
+  on('task-batch-cancel', 'click', () => setBatchMode(false));
+  on('task-batch-delete', 'click', deleteSelectedTasks);
+  on('task-select-all', 'change', (event) => {
+    batchSelected.clear();
+    if (event.target.checked) taskCache.forEach((task) => batchSelected.add(task.conversation_id));
+    renderTasks();
+  });
   $('task-menu').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-task-action]');
     if (!button || !taskMenuId) return;
@@ -1530,16 +1754,29 @@
     if (event.target.closest('#task-menu') || event.target.closest('[data-menu]')) return;
     hideTaskMenu();
   });
-  $('work-toggle').addEventListener('click', () => {
-    setWorkPanel($('work-panel').classList.contains('collapsed'));
-  });
-  $('work-close').addEventListener('click', () => setWorkPanel(false));
+  // 板块切换：对话 / 热点榜单 / 图文工作室
+  const sectionNav = $('section-nav');
+  if (sectionNav) {
+    sectionNav.addEventListener('click', (event) => {
+      const button = event.target.closest('.section-btn');
+      if (button) switchView(button.dataset.section);
+    });
+  }
+  const sectionTabs = $('section-tabs');
+  if (sectionTabs) {
+    sectionTabs.addEventListener('click', (event) => {
+      const tab = event.target.closest('.section-tab');
+      if (!tab) return;
+      sectionTabs.querySelectorAll('.section-tab').forEach(
+        (item) => item.classList.toggle('active', item === tab));
+      hotScenarioView = tab.dataset.view;
+      loadHotList();
+    });
+  }
   $('sidebar-toggle').addEventListener('click', () => {
     setSidebar(!sidebarIsOpen());
   });
   $('sidebar-collapse').addEventListener('click', () => setSidebar(false));
-  $('automation-btn').addEventListener('click', () => toast('自动化编排将在后续版本开放'));
-  $('plugins-btn').addEventListener('click', () => toast('插件市场将在后续版本开放'));
 
   document.addEventListener('keydown', (event) => {
     const meta = event.metaKey || event.ctrlKey;

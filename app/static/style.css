@@ -453,3 +453,89 @@ h1,h2,h3,p{margin:0}
 .studio-link{font-weight:600;color:#c8102e;text-decoration:none}
 .studio-link:hover{text-decoration:underline}
 .studio-note{color:#6b7280;font-size:12px}
+
+
+/* ===================== 板块导航（对话 / 热点榜单 / 图文工作室）=====================
+   全部沿用既有 token 与控件形态：主板块用品牌软底药丸，小选项卡再轻一层，
+   交付面用与旧 platform-switch 一致的分段药丸。 */
+.section-nav{flex:0 0 52px;display:flex;align-items:center;gap:2px;padding:0 24px;
+  background:var(--surface);border-bottom:1px solid var(--divider);overflow-x:auto}
+.section-btn{border:none;background:none;color:var(--text-2);border-radius:999px;
+  padding:7px 18px;font-size:13px;font-weight:500;white-space:nowrap;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.section-btn:hover{background:var(--surface-2);color:var(--text)}
+.section-btn.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
+
+.section-tabs{flex:0 0 44px;display:flex;align-items:center;gap:4px;padding:0 24px;
+  background:var(--surface);border-bottom:1px solid var(--divider);overflow-x:auto}
+.section-tabs[hidden]{display:none}
+.section-tab{border:none;background:none;color:var(--text-3);border-radius:999px;
+  padding:5px 12px;font-size:12px;white-space:nowrap;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.section-tab:hover{background:var(--surface-2);color:var(--text-2)}
+.section-tab.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
+
+/* ===================== 对话标题栏中间的交付面选项卡 ===================== */
+.pane-head-title{min-width:0}
+.surface-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+.surface-tabs{display:flex;gap:2px;align-items:center;background:var(--surface-2);
+  border:1px solid var(--divider);border-radius:999px;padding:3px}
+.surface-btn{border:none;background:none;color:var(--text-2);border-radius:999px;
+  padding:6px 14px;font-size:12px;font-weight:500;white-space:nowrap;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.surface-btn:hover{color:var(--brand)}
+.surface-btn.active{background:var(--surface);color:var(--brand);font-weight:600;
+  box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.moments-split{display:inline-flex;gap:2px;background:var(--surface-2);
+  border:1px solid var(--divider);border-radius:999px;padding:2px}
+.moments-split[hidden]{display:none}
+.moments-split button{border:none;background:none;color:var(--text-3);border-radius:999px;
+  padding:3px 9px;font-size:10px}
+.moments-split button.active{background:var(--surface);color:var(--brand);font-weight:600;
+  box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.lock-state{font-size:11px;color:var(--brand);background:var(--brand-soft);
+  border-radius:999px;padding:4px 10px;white-space:nowrap}
+.lock-state[hidden]{display:none}
+
+/* ===================== 产出区（原工作栏内容迁入对话区）===================== */
+.result-area{flex:0 0 auto;max-height:48vh;overflow-y:auto;padding:14px 16px 16px;
+  background:var(--surface-2);border-top:1px solid var(--divider)}
+.result-area:empty{display:none}
+.result-area .draft-card{background:var(--surface)}
+
+/* ===================== 图文工作室板块（待用户设计）===================== */
+.studio-view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--divider);border-radius:var(--radius-l);overflow:hidden}
+.studio-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:16px 18px 12px;border-bottom:1px solid var(--divider)}
+.studio-head h2{font-size:16px}
+.studio-body{flex:1;min-height:0;overflow-y:auto;padding:10px}
+
+/* 被删除的工作栏面板：保留在 DOM 中但不显示 */
+.legacy-panels{display:none!important}
+
+
+/* ===================== 任务批量删除 ===================== */
+.side-group-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.side-mini{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);
+  border-radius:999px;padding:3px 10px;font-size:11px;
+  transition:border-color .15s var(--ease),color .15s var(--ease),background .15s var(--ease)}
+.side-mini:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-softer)}
+.side-mini.active{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);font-weight:600}
+.side-mini.danger{color:var(--danger);border-color:rgba(232,64,38,.28)}
+.side-mini.danger:hover{border-color:var(--danger);color:var(--danger);background:rgba(232,64,38,.06)}
+.side-mini:disabled{opacity:.5;cursor:default}
+.task-batch-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 10px;margin-bottom:6px;background:var(--surface-2);
+  border:1px solid var(--divider);border-radius:var(--radius-m)}
+.task-batch-bar[hidden]{display:none}
+.batch-all{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2)}
+.batch-all input{accent-color:var(--brand)}
+.batch-count{font-size:11px;color:var(--brand);background:var(--brand-soft);
+  border-radius:999px;padding:2px 8px;margin-right:auto}
+.task-item.batch{padding:0}
+.task-check{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;
+  border-radius:10px;cursor:pointer}
+.task-check:hover{background:var(--surface-2)}
+.task-check input{accent-color:var(--brand);flex:0 0 auto}
+.task-check .task-title{flex:1;min-width:0}

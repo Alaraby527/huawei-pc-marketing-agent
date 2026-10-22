@@ -366,7 +366,32 @@ admission saw the others (`compared` 4/5/6) with a 0-2 ms lock wait.
   `needs_reconciliation` with `stop_reason=orphaned_by_restart`. Its outcome is unknown,
   so it is neither retried blindly nor reported as a success.
 
-### Added
+### Changed (UI restructure per the user's design)
+
+- Removed, as asked: the topbar 小红书 button, the sidebar menu items (热点搜索 / 小红书工作区 /
+  自动化 / 插件市场), the five-step indicator (01 需求澄清 … 05 导出交付), and the whole right-hand
+  工作栏 including its platform switch and tab panels. The 工作栏's deliverable card moved into the
+  chat area so the flow still works; the four deleted panels stay in the DOM, fully hidden, so the
+  existing render paths do not break while the studio is designed.
+- Added: a three-section nav (对话 / 热点榜单 / 图文工作室) above the old stepper position, a
+  per-section sub-tab row (热点榜单 carries the plan's five scenario views), and four delivery-surface
+  tabs in the middle of the 对话 header.
+- **Clicking a surface tab is the lock.** The separate 锁定 button is gone: making a tab blue locks
+  the conversation to that surface on the server. A failure reverts the tab by re-reading the
+  server, so the UI cannot show "locked" when it is not. 朋友圈 keeps a small 门店/个人 split because
+  those are two different surfaces and guessing one would be wrong.
+- The lock is real, not a label: it is stored on the conversation's task state and injected into the
+  model's system prompt as a directive. Verified live - with `store_poster` locked, the reply came
+  back as a poster (主标题 8 字 / 副标题) rather than a note.
+
+### Added (task batch deletion)
+
+- `POST /api/v2/conversations/batch-delete` plus a batch mode in the sidebar: tick several tasks,
+  全选, delete. The response separates **deleted / missing / failed** and says so ("不合并成一句成功"),
+  because a bare total hides a partial failure. Duplicate ids count once, an empty selection is 400,
+  and a batch over 100 ids is refused. The single-delete endpoint keeps its 404.
+
+Tests: 533 pass (180 legacy + 353 new/extended).
 
 - **The two product-selection paths now have knowledge-base backing.**
   - The library adapter previously indexed only `产品事实.md` and six scene cards, so the
