@@ -439,3 +439,20 @@ def test_layout_document_is_complete_and_documented():
     assert checks.get("passed") is True or checks.get("ok") is not False
 
 
+
+
+def test_the_candidate_board_is_not_squeezed_into_a_tiny_scroller():
+    """用户把候选卡看成"老 agent 的残留选项卡"，因为它被 46vh 的内部滚动框切成半截，
+    而 macOS 默认隐藏滚动条，所以看起来就是坏掉的 UI。
+
+    候选卡是核心功能（选型号），不是残留，不能删——要给它足够高度。
+    """
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text()
+    css = Path("app/static/style.css").read_text()
+    assert 'id="candidate-board"' in html, "候选卡是功能，必须保留"
+    # 生效中的那条规则
+    assert ".result-area{flex:0 1 auto;min-height:0;max-height:70vh" in css
+    assert "max-height:46vh;overflow-y:auto" not in css, "不许再压回 46vh 小滚动框"
+    # 结果区总是含示例栏与输入框，:empty 永不成立，所以不能用 flex-grow 抢高度
+    assert ".result-area{flex:1 1 auto" not in css

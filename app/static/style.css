@@ -498,7 +498,7 @@ h1,h2,h3,p{margin:0}
 .lock-state[hidden]{display:none}
 
 /* ===================== 产出区（原工作栏内容迁入对话区）===================== */
-.result-area{flex:0 0 auto;max-height:48vh;overflow-y:auto;padding:14px 16px 16px;
+.result-area{flex:0 1 auto;min-height:0;max-height:70vh;overflow-y:auto;padding:14px 16px 16px;
   background:var(--surface-2);border-top:1px solid var(--divider)}
 .result-area:empty{display:none}
 .result-area .draft-card{background:var(--surface)}
@@ -580,7 +580,12 @@ h1,h2,h3,p{margin:0}
 
 /* ===================== 对话区布局：中间是对话，输入框固定最底 ===================== */
 /* 对话占满中间；产出卡片留在滚动区里，但限高，避免把对话挤扁。 */
-.result-area{flex:0 1 auto;max-height:46vh;overflow-y:auto;padding:0 16px 8px}
+/* 结果区同时装着候选卡、草稿卡、示例栏与输入框。原先 max-height:46vh 把它压成一个小
+   内部滚动框，而 macOS 默认隐藏滚动条，于是候选卡看起来就是"被切断的残留 UI"。
+   改成让它在有内容时长开（仍可滚动），候选卡才能完整显示。 */
+.result-area{flex:0 1 auto;min-height:0;max-height:70vh;overflow-y:auto;padding:0 16px 8px}
+.result-area .candidate-board{margin-bottom:12px}
+.result-area .candidate-card{min-height:0}
 .result-area:empty{display:none}
 .chat-log{flex:1 1 auto}
 
