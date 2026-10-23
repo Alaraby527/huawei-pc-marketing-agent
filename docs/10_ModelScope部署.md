@@ -33,6 +33,7 @@ LLM_API_KEY=...
 LLM_IMAGE_MODEL=wanx2.1-t2i-turbo
 LLM_IMAGE_SIZE=768*1024
 ENABLE_AI_COVER=1
+SERPER_API_KEY=
 ```
 
 使用官方知识库 ZIP 本地导出时，增加：
@@ -86,6 +87,10 @@ curl -s https://<你的运行域名>/api/v1/readiness
 - **403 / 登录页**：创空间是私有的，或当前账号没有运行权限；先确认空间可见性和登录状态。
 - **知识库连接失败**：检查凭证、`IMA_KB_NAME` 是否精确、账号是否已加入该库；Node 18+ 是否在 PATH。
 - **生图 503**：`ENABLE_AI_COVER` 不是 `1`，或缺少 `LLM_BASE_URL` / `LLM_API_KEY`。
+- **热点榜为空，且显示"搜索有返回但没有一条是关于网络用语的"**：说明搜索拿到了响应，但没有一条
+  与网络用语相关，系统按设计**拒绝用无关结果凑清单**（不编造热点）。最常见原因是**没配
+  `SERPER_API_KEY`**：无密钥时会退回 `duckduckgo-lite` / `bing-html` 抓取，容器环境里这两个常被
+  挑战页/无关页挡掉，于是零相关。在创空间 Secrets 里补 `SERPER_API_KEY` 即可。
 - **生图超时**：DashScope 原生接口是异步任务，通常 10–30 秒；保持 `LLM_IMAGE_TIMEOUT` 不低于 120。
 - **`competition_ready=false`**：当前为个人库联调；赛事指定共享库需要单独加入并在 `IMA_KB_NAME` 中切换。
 
