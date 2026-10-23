@@ -38,17 +38,17 @@ h1,h2,h3,p{margin:0}
 .hint{color:var(--text-3);font-size:12px;line-height:1.5}
 
 .app-shell{height:100vh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.topbar{height:64px;flex:0 0 64px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:rgba(255,255,255,.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--divider);position:sticky;top:0;z-index:20}
-.brand{display:flex;align-items:center;gap:12px}
-.brand-mark{display:inline-flex;align-items:center;justify-content:center;width:64px;height:32px;border-radius:8px;background:var(--brand);color:#fff;font-size:11px;font-weight:700;letter-spacing:.08em}
+.topbar{height:51px;flex:0 0 51px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;overflow:hidden;background:rgba(255,255,255,.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--divider);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-mark{display:inline-flex;align-items:center;justify-content:center;width:51px;height:26px;border-radius:6px;background:var(--brand);color:#fff;font-size:10px;font-weight:700;letter-spacing:.07em;flex-shrink:0}
 .brand-text{display:flex;flex-direction:column;line-height:1.2}
-.brand-text strong{font-size:16px;font-weight:600}
-.brand-sub{font-size:11px;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase}
-.topbar-right{display:flex;align-items:center;gap:10px}
-.badge{font-size:12px;color:var(--text-2);padding:5px 10px;border-radius:999px;background:var(--surface-3)}
+.brand-text strong{font-size:13px;font-weight:600}
+.brand-sub{font-size:9px;color:var(--text-3);letter-spacing:.05em;text-transform:uppercase}
+.topbar-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.badge{font-size:10px;color:var(--text-2);padding:4px 8px;border-radius:999px;background:var(--surface-3);white-space:nowrap}
 .badge.ok{color:var(--success);background:rgba(100,187,92,.10)}
 .badge.err{color:var(--danger);background:rgba(232,64,38,.08)}
-.version-tag{font-size:11px;color:var(--text-3);border:1px solid var(--divider);border-radius:999px;padding:3px 9px}
+.version-tag{font-size:9px;color:var(--text-3);border:1px solid var(--divider);border-radius:999px;padding:2px 7px;white-space:nowrap}
 .engine-switch{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--divider);border-radius:999px;padding:2px}
 .engine-switch button{border:none;background:none;color:var(--text-3);border-radius:999px;padding:3px 9px;font-size:10px}
 .engine-switch button.active{background:var(--surface);color:var(--brand);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
@@ -62,11 +62,11 @@ h1,h2,h3,p{margin:0}
 .step.done{color:var(--text-2)}
 .step.done .step-index{color:var(--success)}
 
-.topbar-left{display:flex;align-items:center;gap:10px}
+.topbar-left{display:flex;align-items:center;gap:8px;min-width:0}
 /* Visible at every width: on desktop it collapses the sidebar, on narrow screens it
    opens the overlay. Hiding it on desktop left the sidebar with no way back in. */
 #sidebar-toggle{display:inline-flex}
-.icon-btn{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);border-radius:8px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
+.icon-btn{border:1px solid var(--divider);background:var(--surface);color:var(--text-2);border-radius:6px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;line-height:1;padding:0;flex-shrink:0}
 .icon-btn:hover{border-color:var(--brand);color:var(--brand)}
 .body-row{flex:1;min-height:0;display:flex;overflow:hidden}
 .sidebar{flex:0 0 244px;display:flex;flex-direction:column;gap:14px;padding:12px 10px;border-right:1px solid var(--divider);background:var(--surface);overflow-y:auto;transition:flex-basis .2s var(--ease),opacity .2s var(--ease)}
@@ -484,10 +484,10 @@ details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px d
 /* ===================== 板块导航（对话 / 热点榜单 / 图文工作室）=====================
    全部沿用既有 token 与控件形态：主板块用品牌软底药丸，小选项卡再轻一层，
    交付面用与旧 platform-switch 一致的分段药丸。 */
-.section-nav{flex:0 0 52px;display:flex;align-items:center;gap:2px;padding:0 24px;
+.section-nav{flex:0 0 42px;display:flex;align-items:center;gap:2px;padding:0 20px;
   background:var(--surface);border-bottom:1px solid var(--divider);overflow-x:auto}
 .section-btn{border:none;background:none;color:var(--text-2);border-radius:999px;
-  padding:7px 18px;font-size:13px;font-weight:500;white-space:nowrap;
+  padding:6px 14px;font-size:11px;font-weight:500;white-space:nowrap;
   transition:background .15s var(--ease),color .15s var(--ease)}
 .section-btn:hover{background:var(--surface-2);color:var(--text)}
 .section-btn.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
