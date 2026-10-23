@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.25.0-candidates">
+<link rel="stylesheet" href="/static/style.css?v=0.26.0-chatdelivery">
 </head>
 <body>
 <div class="app-shell">
@@ -88,40 +88,52 @@
         </div>
 
         <div class="result-area" id="result-area">
-          <div class="candidate-board" id="candidate-board" hidden></div>
-          <article class="draft-card" id="draft-card" hidden>
-            <div class="draft-head">
-              <div>
-                <span class="eyebrow" id="draft-eyebrow">小红书图文方案</span>
-                <h2 id="draft-title"></h2>
-                <p class="draft-meta" id="draft-meta"></p>
+          <!-- 候选卡与交付卡现在会被 JS 搬进对应的 assistant 消息里（appendChild 搬家，
+               不是克隆，事件绑定与 id 都保留），不再在这里展示。
+               这个"停机位"只在 chat-log 被整体重置（新建 / 切换 / 删除任务）时接住它们，
+               避免连同 innerHTML 一起被销毁；它自身永远 hidden。 -->
+          <div class="delivery-park" id="delivery-park" hidden>
+            <div class="candidate-board" id="candidate-board" hidden></div>
+            <article class="draft-card" id="draft-card" hidden>
+              <div class="draft-head">
+                <div>
+                  <span class="eyebrow" id="draft-eyebrow">小红书图文方案</span>
+                  <h2 id="draft-title"></h2>
+                  <p class="draft-meta" id="draft-meta"></p>
+                </div>
+                <span class="draft-state" id="draft-state">待确认</span>
               </div>
-              <span class="draft-state" id="draft-state">待确认</span>
-            </div>
-            <div class="draft-images" id="draft-images"></div>
-            <p class="draft-body" id="draft-body"></p>
-            <p class="draft-cta" id="draft-cta"></p>
-            <div class="draft-tags" id="draft-tags"></div>
-            <div id="draft-studio" class="draft-studio"></div>
-            <div class="draft-actions">
-              <button id="copy-draft" class="btn-secondary">复制正文</button>
-              <button id="generate-images" class="btn-primary">一键生图</button>
-              <select id="image-ratio" class="model-select" aria-label="输出比例">
-                <option value="kb">比例：原比例</option>
-                <option value="3:4">比例：3:4（小红书）</option>
-              </select>
-              <select id="image-source" class="model-select" aria-label="配图来源">
-                <option value="ai">AI 生图</option>
-                <option value="kb">知识库原图</option>
-              </select>
-              <input id="image-prompt" class="image-prompt" placeholder="提示词（可选，留空自动生成）">
-              <select id="image-style" class="model-select" aria-label="图片风格"></select>
-              <a id="posters-link" class="btn-secondary" href="#" hidden download>下载六页图片 ZIP</a>
-              <a id="export-link" class="btn-secondary" href="#" hidden>下载完整报告 ↗</a>
-            </div>
-            <div class="image-results" id="image-results" hidden></div>
-            <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
-          </article>
+              <div class="draft-images" id="draft-images"></div>
+              <p class="draft-body" id="draft-body"></p>
+              <p class="draft-cta" id="draft-cta"></p>
+              <div class="draft-tags" id="draft-tags"></div>
+              <div id="draft-studio" class="draft-studio"></div>
+              <div class="draft-actions">
+                <button id="copy-draft" class="btn-secondary">复制正文</button>
+                <button id="generate-images" class="btn-primary">一键生图</button>
+                <select id="image-ratio" class="model-select" aria-label="输出比例">
+                  <option value="kb">比例：原比例</option>
+                  <option value="3:4">比例：3:4（小红书）</option>
+                </select>
+                <select id="image-source" class="model-select" aria-label="配图来源">
+                  <option value="ai">AI 生图</option>
+                  <option value="kb">知识库原图</option>
+                </select>
+                <input id="image-prompt" class="image-prompt" placeholder="提示词（可选，留空自动生成）">
+                <select id="image-style" class="model-select" aria-label="图片风格"></select>
+                <a id="posters-link" class="btn-secondary" href="#" hidden download>下载六页图片 ZIP</a>
+                <a id="export-link" class="btn-secondary" href="#" hidden>下载完整报告 ↗</a>
+              </div>
+              <div class="image-results" id="image-results" hidden></div>
+              <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
+            </article>
+          </div>
+
+          <!-- C：对话下方的工作室入口。只在真的产出交付文案后才显示（无交付时 hidden）。 -->
+          <div class="delivery-entry" id="delivery-entry" hidden>
+            <button type="button" class="btn-primary" id="go-studio">去图文工作室</button>
+            <span class="hint" id="go-studio-hint">交付文案会一起带过去；带 image_id 的知识库原图会自动设为参考图。对话里「一键生图」产生的图片不会进入工作室「最近生成」——那份记录只由工作室自己的生成动作写入。</span>
+          </div>
         </div>
 
         <div class="options-wrap" id="options-wrap" hidden></div>
@@ -373,7 +385,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.25.0-candidates" defer></script>
-<script src="/static/workspace.js?v=0.25.0-candidates" defer></script>
+<script src="/static/app.js?v=0.26.0-chatdelivery" defer></script>
+<script src="/static/workspace.js?v=0.26.0-chatdelivery" defer></script>
 </body>
 </html>

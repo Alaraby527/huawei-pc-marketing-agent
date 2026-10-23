@@ -130,7 +130,7 @@ h1,h2,h3,p{margin:0}
 
 .chat-pane{min-width:0}
 .chat-log{flex:1;min-height:80px;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:94%;padding:12px 14px;border-radius:var(--radius-m);background:var(--surface-2);animation:msg-in .18s var(--ease)}
+.msg{max-width:94%;padding:12px 14px;border-radius:var(--radius-m);background:var(--surface-2);animation:msg-in .18s var(--ease);overflow-wrap:anywhere}
 .msg p{margin:0 0 6px}
 .msg p:last-child{margin-bottom:0}
 .msg.assistant{align-self:flex-start;border-top-left-radius:4px}
@@ -175,7 +175,22 @@ h1,h2,h3,p{margin:0}
 .wizard-option:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-softer)}
 .wizard-foot{font-size:11px;color:var(--text-3)}
 .wizard-hotspots{border-top:1px solid var(--divider);padding-top:6px}
-.tool-trace{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:6px;border-top:1px dashed var(--divider)}
+/* E：工具痕迹默认折叠。折叠时只有一行摘要（工具名 + 真实次数），展开后每条一行；
+   长描述一律换行（overflow-wrap/min-width:0），不再出现右侧被裁掉的情况。 */
+details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px dashed var(--divider)}
+.tool-trace .trace-summary{cursor:pointer;font-size:10px;letter-spacing:.02em;color:var(--text-3);
+  line-height:1.6;overflow-wrap:anywhere;list-style:none}
+.tool-trace .trace-summary::-webkit-details-marker{display:none}
+.tool-trace .trace-summary::before{content:'▸';display:inline-block;margin-right:5px;color:var(--text-3)}
+.tool-trace[open] .trace-summary::before{content:'▾'}
+.trace-list{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.trace-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;min-width:0}
+.trace-name{flex:0 0 auto;max-width:100%;color:var(--text-2);font-weight:600;
+  background:var(--surface-3);border-radius:999px;padding:2px 7px;overflow-wrap:anywhere}
+.trace-line.done .trace-name{color:var(--success);background:rgba(100,187,92,.10)}
+.trace-line.warn .trace-name{color:var(--danger);background:rgba(232,64,38,.10)}
+.trace-detail{flex:1 1 160px;min-width:0;color:var(--text-3);line-height:1.6;
+  overflow-wrap:anywhere;word-break:break-word}
 .trace-step{font-size:9px;letter-spacing:.02em;color:var(--text-3);background:var(--surface-3);border-radius:999px;padding:2px 7px}
 .trace-step.done{color:var(--success);background:rgba(100,187,92,.10)}
 .trace-step.warn{color:var(--warning);background:rgba(237,111,33,.10)}
@@ -258,6 +273,16 @@ h1,h2,h3,p{margin:0}
 .candidate-unknowns{margin:0;padding-left:16px;color:var(--warning);font-size:11px;line-height:1.5}
 .candidate-actions{display:flex;gap:6px;margin-top:auto}
 .candidate-actions .btn-primary{min-height:34px;padding:0 14px;font-size:12px;width:100%}
+
+/* A：候选型号进入对话流后是一行可换行的 pill（型号名 + 关键差异）。选中态用 --brand。 */
+.msg .candidate-board{display:block;margin-top:10px}
+.candidate-pills{display:flex;flex-wrap:wrap;gap:6px}
+.candidate-pill{cursor:pointer;text-align:left;max-width:100%;border:1px solid var(--divider);
+  background:var(--surface);color:var(--text-2);border-radius:999px;padding:6px 12px;font-size:12px;
+  line-height:1.5;overflow-wrap:anywhere;
+  transition:border-color .15s var(--ease),color .15s var(--ease),background .15s var(--ease)}
+.candidate-pill:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-softer)}
+.candidate-pill.selected{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:600}
 
 .draft-card{border:1px solid var(--divider);border-radius:var(--radius-l);padding:18px;background:var(--surface);box-shadow:var(--shadow-card)}
 .draft-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
@@ -502,6 +527,17 @@ h1,h2,h3,p{margin:0}
   background:var(--surface-2);border-top:1px solid var(--divider)}
 .result-area:empty{display:none}
 .result-area .draft-card{background:var(--surface)}
+
+/* B/C：交付卡与候选现在挂在 assistant 消息里；底部产出区只剩「去图文工作室」入口。
+   #delivery-park 只是新建/切换任务时的节点停机位，永远不显示。 */
+.delivery-park[hidden]{display:none}
+.msg .draft-card{margin-top:12px;box-shadow:none;background:var(--surface);max-width:100%}
+.draft-images img{cursor:zoom-in}
+.image-results img{cursor:zoom-in}
+.delivery-entry{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 0 4px}
+.delivery-entry[hidden]{display:none}
+.delivery-entry .hint{flex:1 1 240px;min-width:0;font-size:11px;color:var(--text-3);line-height:1.6;
+  overflow-wrap:anywhere}
 
 /* ===================== 图文工作室板块（待用户设计）===================== */
 .studio-view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);

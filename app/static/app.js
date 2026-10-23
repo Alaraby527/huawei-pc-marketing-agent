@@ -66,6 +66,8 @@
   const NARROW_QUERY = '(max-width:980px)';
   const WELCOME_HTML = chatLog.innerHTML;
   let lastUserText = '';
+  // D：最近一次交付（文案 + 图片身份），只由渲染函数写入，供「去图文工作室」带入。
+  let lastDelivery = {copy: '', imageIds: [], imageUrls: []};
 
   function escapeHtml(text) {
     const div = document.createElement('div');
@@ -88,6 +90,75 @@
     node.textContent = text;
     document.body.appendChild(node);
     setTimeout(() => node.remove(), 2600);
+  }
+
+  // ===== A/B：候选卡与交付卡进入对话流 =====
+  // #candidate-board / #draft-card 始终是同一个 DOM 节点：appendChild 只是把节点搬到
+  // assistant 消息内部（不是克隆），所以 id、内容与已绑定的事件监听（$('candidate-board')
+  // 的点击、$('copy-draft') / $('generate-images') 等）全部保留，既有逻辑不用改写。
+  function lastAssistantMessage() {
+    const rows = chatLog.querySelectorAll('.msg.assistant');
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+
+  // 有明确的 messageEl 就挂它；否则挂到最后一条 assistant 消息（切换任务回放时没有 messageEl）。
+  function deliveryHost(messageEl) {
+    return messageEl || lastAssistantMessage() || addMessage('assistant', '');
+  }
+
+  function attachToMessage(node, messageEl) {
+    if (!node) return null;
+    const host = deliveryHost(messageEl);
+    if (node.parentNode !== host) host.appendChild(node);
+    return node;
+  }
+
+  // newTask / openTask / 批量删除会整体重置 chat-log；先搬回停机位，避免被 innerHTML 销毁。
+  function parkDelivery() {
+    const park = $('delivery-park');
+    const board = $('candidate-board');
+    const card = $('draft-card');
+    if (park && board) { board.hidden = true; park.appendChild(board); }
+    if (park && card) { card.hidden = true; park.appendChild(card); }
+    lastDelivery = {copy: '', imageIds: [], imageUrls: []};
+    syncDeliveryEntry();
+  }
+
+  // C：只有真的产出了交付文案才显示「去图文工作室」。
+  function syncDeliveryEntry() {
+    const entry = $('delivery-entry');
+    if (entry) entry.hidden = !(lastDelivery.copy || '').trim();
+  }
+
+  // E：工具痕迹收进默认折叠的「执行过程」。
+  // 范围 = 每条消息各自的那份 payload（tool_trace / events），一次渲染对应一个 <details>，
+  // 不靠 DOM 位置猜，所以上一条消息的痕迹不会混进来。折叠态交给原生 <details>，
+  // 不用任何临时变量，重渲染/回放都不会丢。
+  function toolTraceHtml(steps, unit) {
+    const rows = (steps || []).filter(Boolean);
+    if (!rows.length) return '';
+    const names = [];
+    rows.forEach((step) => {
+      const name = step.name || '';
+      if (name && names.indexOf(name) < 0) names.push(name);
+    });
+    // 次数就是本次渲染拿到的步骤条数（真实计数，不是写死的常量）。
+    const label = '执行过程 · ' + rows.length + ' 次' + (unit || '工具调用') +
+      (names.length ? ' · ' + names.join(' / ') : '');
+    const lines = rows.map((step) => {
+      const state = step.ok === true ? 'done' : (step.ok === false ? 'warn' : '');
+      const stateText = step.ok === true ? '成功' : (step.ok === false ? '失败' : '');
+      // 后端成功的 summary 就是字面量 "ok"，别把它当描述显示；失败时 summary 才是错误码/原因。
+      const raw = (step.summary || '').trim();
+      const summary = raw.toLowerCase() === 'ok' ? '' : raw;
+      const detail = [stateText, summary].filter(Boolean).join(' · ');
+      return '<div class="trace-line' + (state ? ' ' + state : '') + '">' +
+        '<span class="trace-name">' + escapeHtml(step.name || '步骤') + '</span>' +
+        (detail ? '<span class="trace-detail">' + escapeHtml(detail) + '</span>' : '') +
+        '</div>';
+    }).join('');
+    return '<details class="tool-trace"><summary class="trace-summary">' +
+      escapeHtml(label) + '</summary><div class="trace-list">' + lines + '</div></details>';
   }
 
   let taskCache = [];
@@ -199,6 +270,7 @@
       if ((data.deleted || []).includes(sessionId)) {
         sessionId = null;
         applyLockState(null);
+        parkDelivery();
         chatLog.innerHTML = '';
       }
       batchSelected.clear();
@@ -268,12 +340,11 @@
     applyLockState(null);
     lastResult = null;
     lastUserText = '';
+    parkDelivery();
     chatLog.innerHTML = WELCOME_HTML;
     optionsWrap.hidden = true;
     optionsWrap.innerHTML = '';
     quickActions.hidden = true;
-    $('candidate-board').hidden = true;
-    $('draft-card').hidden = true;
     $('image-results').hidden = true;
     $('image-results').innerHTML = '';
     $('publish-state').textContent = '尚未通过核验，不可发布';
@@ -314,6 +385,7 @@
       lastResult = null;
       loadSurfaceLock();
       lastUserText = [...visible].reverse().find(item => item.role === 'user')?.content || '';
+      parkDelivery();
       chatLog.innerHTML = '';
       visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
         '<p>' + escapeHtml(item.content || '').replace(/\n/g, '<br>') + '</p>'));
@@ -427,9 +499,9 @@
 
   function agentTraceHtml(trace) {
     if (!trace || !trace.length) return '';
-    return '<div class="tool-trace">' + trace.map(step =>
-      '<span class="trace-step ' + (step.ok ? 'done' : 'warn') + '">tool · ' + escapeHtml(step.tool) +
-      ' · ' + escapeHtml(step.summary || '') + '</span>').join('') + '</div>';
+    return toolTraceHtml(trace.map(step => ({
+      name: step.tool, summary: step.summary, ok: step.ok,
+    })), '工具调用');
   }
 
   async function agentTurn(message) {
@@ -460,9 +532,9 @@
   function eventTrace(events) {
     const rows = (events || []).filter(item => item.type === 'tool_finished');
     if (!rows.length) return '';
-    return '<div class="tool-trace">' + rows.map(item =>
-      '<span class="trace-step ' + (item.ok ? 'done' : 'warn') + '">tool · ' +
-      escapeHtml(item.tool || '') + ' · ' + escapeHtml(item.summary || '') + '</span>').join('') + '</div>';
+    return toolTraceHtml(rows.map(item => ({
+      name: item.tool || '', summary: item.summary || '', ok: item.ok,
+    })), '工具调用');
   }
 
   // 去图文工作室：把当前会话的产品与文案带过去，生图与改文案都在那边完成。
@@ -476,15 +548,18 @@
       + '</div>';
   }
 
-  function renderV2Artifact(conversation) {
+  // B：交付卡整体搬进这条 assistant 消息，标题/正文/操作按钮/生成图片都跟着进对话流。
+  function renderV2Artifact(conversation, messageEl) {
     const artifacts = (conversation && conversation.artifacts) || [];
     const artifact = artifacts[0];
     if (!artifact || !artifact.content) return;
     $('image-results').hidden = true;
     $('image-results').innerHTML = '';
     const content = artifact.content;
-    const card = $('draft-card');
-    $('candidate-board').hidden = true;
+    const board = $('candidate-board');
+    const card = attachToMessage($('draft-card'), messageEl);
+    if (!card) return;
+    if (board) board.hidden = true;
     card.hidden = false;
     $('draft-eyebrow').textContent = '交付物 · v' + artifact.latest_revision;
     $('draft-title').textContent = content.title || '';
@@ -513,30 +588,49 @@
       ((page.fact_ids || []).length ? '<div class="page-facts">' + page.fact_ids.map(id =>
         '<span class="fact-chip">' + escapeHtml(id) + '</span>').join('') + '</div>' : '') +
       '</article>').join('');
+    // D：记住这次交付的文案，供「去图文工作室」带入（图片身份由本轮 renderV2Images 补上，
+    // 先清空上一轮的图片，避免这一轮没有配图时把旧图片当成这次的交付）。
+    lastDelivery.copy = [content.title, content.body,
+                         content.cta ? '行动引导：' + content.cta : '',
+                         (content.tags || []).map(tag => '#' + tag).join(' ')]
+                        .filter(Boolean).join('\n\n');
+    lastDelivery.imageIds = [];
+    lastDelivery.imageUrls = [];
+    syncDeliveryEntry();
     switchTab('plan');
+    chatLog.scrollTop = chatLog.scrollHeight;
     loadTasks();
   }
 
-  function renderV2Candidates(candidates) {
+  // A：候选不再渲染成卡片网格，而是 assistant 消息下方一行可换行的 pill。
+  // 点击行为完全沿用原来的 data-pick / data-select（事件仍绑在 #candidate-board 上）。
+  function renderV2Candidates(candidates, messageEl) {
     const board = $('candidate-board');
-    if (!candidates || !candidates.length) { board.hidden = true; return; }
-    $('draft-card').hidden = true;
+    if (!board) return;
+    if (!candidates || !candidates.length) { board.hidden = true; syncDeliveryEntry(); return; }
+    const card = $('draft-card');
+    if (card) card.hidden = true;
+    attachToMessage(board, messageEl);
     board.hidden = false;
-    board.innerHTML = candidates.map((candidate, index) =>
-      '<article class="candidate-card">' +
-      '<div class="candidate-head"><span class="candidate-rank">' + (index + 1) + '</span>' +
-      '<div class="candidate-name">' + escapeHtml(candidate.model || '') + '</div></div>' +
-      '<div class="candidate-meta">' + escapeHtml(candidate.reason || '知识库现有型号') + '</div>' +
-      '<div class="candidate-reasons">' + (candidate.facts || []).map(fact =>
-        '<span class="fact-chip">' + escapeHtml(fact) + '</span>').join('') + '</div>' +
-      '<div class="candidate-actions"><button type="button" class="btn-primary" data-pick="' +
-      escapeHtml(candidate.model || '') + '">选这款</button></div></article>').join('');
+    // 括号里放真实差异描述（candidate.reason 就是知识库算出的关键差异，如「约 1.31 kg，60 Wh 电池…」），
+    // 没有描述时只显示型号名，不编造。
+    board.innerHTML = '<div class="candidate-pills">' + candidates.map(candidate => {
+      const name = candidate.model || '';
+      const meta = candidate.reason || (candidate.facts || []).join('，');
+      return '<button type="button" class="candidate-pill" data-pick="' + escapeHtml(name) + '"' +
+        ' title="' + escapeHtml(meta || '知识库现有型号') + '">' + escapeHtml(name) +
+        (meta ? '（' + escapeHtml(meta) + '）' : '') + '</button>';
+    }).join('') + '</div>';
+    syncDeliveryEntry();
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
-  function renderV2Plan(plan, selected) {
+  function renderV2Plan(plan, selected, messageEl) {
     if (!plan) return;
-    $('candidate-board').hidden = true;
-    const card = $('draft-card');
+    const board = $('candidate-board');
+    if (board) board.hidden = true;
+    const card = attachToMessage($('draft-card'), messageEl);
+    if (!card) return;
     card.hidden = false;
     $('draft-eyebrow').textContent = '方案确认';
     $('draft-title').textContent = (selected && selected.model) || '内容方案';
@@ -549,17 +643,37 @@
     $('draft-state').className = 'draft-state';
     $('pages-empty').hidden = false;
     $('pages-grid').hidden = true;
+    // 「方案确认」还不是交付文案，所以不显示「去图文工作室」。
+    lastDelivery.copy = '';
+    lastDelivery.imageIds = [];
+    lastDelivery.imageUrls = [];
+    syncDeliveryEntry();
     switchTab('plan');
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
+  // B：交付图片（知识库原图 / 由对话生成）显示在 #draft-card 内，卡片已进入对话流；
+  // 同时记下图片身份，供「去图文工作室」自动设为参考图。
   function renderV2Images(images) {
     const host = $('image-results');
+    if (!host) return;
     if (!images || !images.length) { host.hidden = true; return; }
+    // 图片在 #draft-card 内。若这张卡还没进对话流（本轮没有 artifact / plan），
+    // 就现在挂到当前 assistant 消息里，保证图片真的出现在对话里而不是留在停机位。
+    const card = $('draft-card');
+    if (card && card.parentNode === $('delivery-park')) {
+      attachToMessage(card);
+      card.hidden = false;
+    }
     host.hidden = false;
     host.innerHTML = images.map(image =>
       '<figure><img src="' + escapeHtml(image.access_url || '') + '" alt="' +
-      escapeHtml(image.caption || '知识库产品原图') + '" loading="lazy"><figcaption>' +
+      escapeHtml(image.caption || '知识库产品原图') + '" loading="lazy" data-image-id="' +
+      escapeHtml(image.image_id || '') + '" title="点击查看原图"><figcaption>' +
       escapeHtml(image.caption || '知识库原图') + '</figcaption></figure>').join('');
+    lastDelivery.imageIds = images.map(image => image.image_id).filter(Boolean);
+    lastDelivery.imageUrls = images.map(image => image.access_url).filter(Boolean);
+    syncDeliveryEntry();
   }
 
   // 交付面建议：先问用户，确认后才切换。UI 自动跳到对应选项卡，底层锁定也跟着改。
@@ -652,13 +766,13 @@
       renderV2Actions(messageEl, data.actions);
       renderSurfaceSuggestion(messageEl, data.surface_suggestion);
       if (data.candidates && data.candidates.length) {
-        renderV2Candidates(data.candidates);
+        renderV2Candidates(data.candidates, messageEl);
       } else {
         const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
         if (conversation.artifacts && conversation.artifacts.length) {
-          renderV2Artifact(conversation);
+          renderV2Artifact(conversation, messageEl);
         } else if (data.plan) {
-          renderV2Plan(data.plan, data.selected);
+          renderV2Plan(data.plan, data.selected, messageEl);
         }
       }
       if (data.images) renderV2Images(data.images);
@@ -709,8 +823,10 @@
       steps.push(['skill · 合规扫描', result.compliance_report.passed ? 'done' : 'warn']);
     }
     if (result.can_publish) steps.push(['gate · 人工确认', 'done']);
-    return '<div class="tool-trace">' + steps.map(([label, state]) =>
-      '<span class="trace-step ' + state + '">' + escapeHtml(label) + '</span>').join('') + '</div>';
+    // 旧流程的合成步骤也折叠起来，避免和工具痕迹一样把回答压住。
+    return toolTraceHtml(steps.map(([label, state]) => ({
+      name: label, ok: state === 'done' ? true : (state === 'warn' ? false : null),
+    })), '步骤');
   }
 
   function renderChat(result) {
@@ -779,33 +895,30 @@
   function renderCandidates(result) {
     const board = $('candidate-board');
     const draftCard = $('draft-card');
+    if (!board) return;
     if (result.draft || !result.candidates || !result.candidates.length) {
-      if (!result.candidates || !result.candidates.length) board.hidden = true;
+      if (!result.candidates || !result.candidates.length) { board.hidden = true; syncDeliveryEntry(); }
       return;
     }
-    draftCard.hidden = true;
+    if (draftCard) draftCard.hidden = true;
+    attachToMessage(board);
     board.hidden = false;
     const budgetNames = { not_limited: '不限预算', verified: '预算内已核实', unverified: '价格待核实' };
-    board.innerHTML = result.candidates.map((candidate, index) => {
+    // 旧流程同样渲染成 pill，而不是卡片网格。
+    board.innerHTML = '<div class="candidate-pills">' + result.candidates.map((candidate, index) => {
       const selected = result.selected && result.selected.candidate_id === candidate.candidate_id;
+      const dims = (candidate.reasons || []).slice(0, 3)
+        .map(reason => reason.dimension).filter(Boolean).join('，');
+      const meta = dims || budgetNames[candidate.budget_status] || candidate.budget_status || '价格待核实';
       const price = candidate.current_price
-        ? '¥' + escapeHtml(candidate.current_price.amount) + ' · ' + escapeHtml(candidate.current_price.configuration)
+        ? '¥' + candidate.current_price.amount + ' · ' + candidate.current_price.configuration
         : '当前有效价格待核实';
-      const reasons = (candidate.reasons || []).slice(0, 3)
-        .map(reason => '<span class="fact-chip">' + escapeHtml(reason.dimension) + '</span>').join('');
-      const unknowns = (candidate.unknowns || []).slice(0, 3)
-        .map(item => '<li>' + escapeHtml(item) + '</li>').join('');
-      return '<article class="candidate-card' + (selected ? ' selected' : '') + '">' +
-        '<div class="candidate-head"><span class="candidate-rank">' + (index + 1) + '</span>' +
-        '<div class="candidate-name">' + escapeHtml(candidate.model_name) + '</div></div>' +
-        '<div class="candidate-meta">' + escapeHtml(candidate.eligibility === 'verified' ? '证据完整' : '待核实') +
-        '｜预算：' + escapeHtml(budgetNames[candidate.budget_status] || candidate.budget_status || '未核验') + '</div>' +
-        '<div class="candidate-price">' + price + '</div>' +
-        '<div class="candidate-reasons">' + reasons + '</div>' +
-        (unknowns ? '<ul class="candidate-unknowns">' + unknowns + '</ul>' : '') +
-        '<div class="candidate-actions"><button type="button" class="btn-primary" data-select="' + (index + 1) + '">' +
-        (selected ? '已选，继续' : '选 ' + (index + 1)) + '</button></div></article>';
-    }).join('');
+      return '<button type="button" class="candidate-pill' + (selected ? ' selected' : '') +
+        '" data-select="' + (index + 1) + '" title="' + escapeHtml(meta + '｜' + price) + '">' +
+        escapeHtml(candidate.model_name) + (meta ? '（' + escapeHtml(meta) + '）' : '') + '</button>';
+    }).join('') + '</div>';
+    syncDeliveryEntry();
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
   function renderDraft(result) {
@@ -813,12 +926,15 @@
     const board = $('candidate-board');
     const draft = result.draft;
     if (!draft) {
-      card.hidden = true;
+      if (card) card.hidden = true;
       // 空状态块已按要求删除：没有草稿也没有候选时，对话区保持只有对话本身。
-      if (!result.candidates || !result.candidates.length) board.hidden = true;
+      if (board && (!result.candidates || !result.candidates.length)) board.hidden = true;
+      syncDeliveryEntry();
       return;
     }
-    board.hidden = true;
+    if (board) board.hidden = true;
+    attachToMessage(card);
+    if (!card) return;
     card.hidden = false;
     const slots = result.slots || {};
     const platform = PLATFORM_NAMES[draft.platform] || draft.platform_name || '小红书';
@@ -833,7 +949,15 @@
     state.className = 'draft-state' + (result.can_publish ? ' ready' : '');
     const images = (result.handoff && result.handoff.images) || [];
     $('draft-images').innerHTML = images.slice(0, 6).map(image =>
-      '<img src="' + escapeHtml(image.access_url) + '" alt="' + escapeHtml(image.caption) + '" title="' + escapeHtml(image.caption) + '" loading="lazy">').join('');
+      '<img src="' + escapeHtml(image.access_url) + '" alt="' + escapeHtml(image.caption) + '" title="点击查看原图" data-image-id="' +
+      escapeHtml(image.image_id || '') + '" loading="lazy">').join('');
+    // D：交付文案与图片身份，供「去图文工作室」带入。
+    lastDelivery.copy = [draft.title, draft.body, draft.cta ? '行动引导：' + draft.cta : '',
+                         (draft.tags || []).map(tag => '#' + tag).join(' ')]
+                        .filter(Boolean).join('\n\n');
+    lastDelivery.imageIds = images.map(image => image.image_id).filter(Boolean);
+    lastDelivery.imageUrls = images.map(image => image.access_url).filter(Boolean);
+    syncDeliveryEntry();
     const exportLink = $('export-link');
     if (result.can_publish && sessionId) {
       exportLink.href = '/api/v1/conversations/' + sessionId + '/export?format=markdown';
@@ -1231,7 +1355,8 @@
   }
 
   // ===================== 图文工作室 =====================
-  const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false};
+  const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false,
+                       pendingCopy: '', pendingRefIds: []};
 
   // 配方与模型跟会话无关，必须无条件先加载。
   // 踩过的 bug：原来它们和 materials 挤在同一个 Promise.all 里、且被 `if (!sessionId) return`
@@ -1258,6 +1383,7 @@
 
   async function loadStudio(force) {
     await loadStudioCatalog();
+    applyPendingCopy();   // D：对话带入的文案优先，且只消费一次
     if (!sessionId) {
       const grid = $('studio-kb-grid');
       if (grid) grid.innerHTML =
@@ -1266,7 +1392,11 @@
       if (hist) hist.innerHTML = '<p class="hint">还没有生成记录。</p>';
       return;
     }
-    if (studioState.loaded && !force) return;
+    if (studioState.loaded && !force) {
+      // 已经加载过：材料不会再拉，但这次从对话带入的参考图要立刻就位。
+      if (applyPendingRefs()) renderStudioRefs();
+      return;
+    }
     try {
       const material = await fetch('/api/v2/conversations/' + sessionId + '/studio')
         .then(r => r.json());
@@ -1279,16 +1409,59 @@
       renderStudioRecipes(surface);   // 按交付面过滤配方
 
       const copyBox = $('studio-copy-text');
-      if (copyBox && !copyBox.value) {
-        copyBox.value = (material.copy && material.copy.content) || '';
-      }
+      // 接口返回排在最后：只有用户没在编辑、也没从对话带入过，才用接口内容填。
+      if (copyBox && !copyBox.value) copyBox.value = studioCopyFromMaterial(material.copy);
       renderStudioRecipes(surface);
       renderStudioKb();
+      if (applyPendingRefs()) renderStudioRefs();
       renderStudioRefs();
       await loadStudioHistory();
     } catch (error) {
       toast('图文工作室加载失败');
     }
+  }
+
+  // 接口返回的交付内容可能是整份 revision.content（dict：title/body/cta/tags），
+  // 也可能已经是字符串；统一成可编辑的正文，避免 textarea 里出现 "[object Object]"。
+  function studioCopyFromMaterial(copy) {
+    const content = copy && copy.content;
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+    return [content.title, content.body, content.cta ? '行动引导：' + content.cta : '',
+            (content.tags || []).map(tag => '#' + tag).join(' ')]
+           .filter(Boolean).join('\n\n');
+  }
+
+  // D：对话带入的文案优先级最高，并且只消费一次。
+  // 顺序是「对话带入（pendingCopy）> 用户已经在编辑的 > /studio 接口返回的 copy.content」。
+  // 放在 loadStudio 最前面调用：第二次进工作室时 studioState.loaded 会让函数提前 return，
+  // 若放在后面，第二次点「去图文工作室」就带不进文案了。
+  function applyPendingCopy() {
+    const pending = studioState.pendingCopy;
+    if (!pending) return;
+    studioState.pendingCopy = '';
+    const box = $('studio-copy-text');
+    if (box) box.value = pending;
+    const note = $('studio-copy-note');
+    if (note) note.textContent = '文案已从对话带入，可直接编辑；文案优化只改表达、不新增事实。';
+  }
+
+  // D：把对话交付图片里带 image_id 的知识库原图自动设为参考图。
+  // 两边同源（都来自知识库的 verified_images，image_id 一致），能对上才勾；
+  // 对不上的（例如对话里「一键生图」的产物）就不勾，不伪造参考图。
+  function applyPendingRefs() {
+    const ids = studioState.pendingRefIds || [];
+    studioState.pendingRefIds = [];
+    if (!ids.length) return 0;
+    // 与用户已选的参考图合并（不覆盖手工选择），最多 9 张。
+    const picked = studioState.refs.slice();
+    (studioState.images || []).forEach((row, index) => {
+      if (row && row.image_id && ids.indexOf(row.image_id) >= 0
+          && picked.indexOf(index) < 0 && picked.length < 9) picked.push(index);
+    });
+    if (picked.length === studioState.refs.length) return 0;
+    studioState.refs = picked;
+    return picked.length;
   }
 
   function renderStudioModels() {
@@ -1766,6 +1939,7 @@
     send(slot ? '' : button.dataset.message, slot);
   });
 
+  // 候选 pill 的点击沿用原有行为：事件仍绑在这个节点上（节点只是被搬进消息，监听器不丢）。
   $('candidate-board').addEventListener('click', (event) => {
     const pick = event.target.closest('button[data-pick]');
     if (pick) {
@@ -1779,6 +1953,26 @@
     const text = '选' + button.dataset.select;
     addMessage('operator', '<p>' + escapeHtml(text) + '</p>');
     send(text);
+  });
+
+  // C/D：「去图文工作室」= 用现有的 switchView('studio')，切换前把对话里的最新交付写进 studioState。
+  on('go-studio', 'click', () => {
+    const copy = (lastDelivery.copy || '').trim();
+    if (!copy) { toast('还没有可带入的交付文案'); return; }
+    studioState.pendingCopy = copy;
+    // 只带 image_id：工作室参考图来自 /studio 的 materials.images，两边同源才对得上。
+    // 对话里「一键生图」产生的图片没有 image_id、也不在 materials.images 里，
+    // 无法自动进参考图或「最近生成」（后者只由工作室自己的生成动作写入）——这里不伪造。
+    studioState.pendingRefIds = (lastDelivery.imageIds || []).slice();
+    switchView('studio');
+  });
+
+  // B：交付图片点击在新标签打开原图（不引库）。
+  chatLog.addEventListener('click', (event) => {
+    const img = event.target && event.target.closest ? event.target.closest('img') : null;
+    if (!img || !img.closest('.draft-images, .image-results')) return;
+    const src = img.getAttribute('src');
+    if (src) window.open(src, '_blank', 'noopener');
   });
 
   // 示例按钮从空状态挪到了输入框上方；开始对话后收起，不再占位置。
