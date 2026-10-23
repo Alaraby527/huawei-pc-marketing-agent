@@ -20,6 +20,8 @@ past the checker that the agent itself has to satisfy.
 from __future__ import annotations
 
 import asyncio
+import difflib
+import hashlib
 import os
 import time
 
@@ -200,6 +202,11 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
             "channel_configured": bool(os.getenv("IMAGE_API_KEY")),
             "reference_model": image_capabilities.reference_model(),
             "modes": ["img2img", "kb_original"],
+            # 本进程是否支持把「新生成产品图」当参考图（image_id="gen:<generated_id>"）。
+            # 前端据此放行/拦截：不支持的旧进程必须拦住——否则 gen: 会被 pick_reference
+            # 当成"找不到的 id"而**静默回退到第一张知识库原图**，那是欺骗。
+            "generated_reference": True,
+            "generation_provenance": True,
             "note": "AI 生图以知识库核验原图作参考；也可直接使用原图，不调用生图模型。"},
         "notice": "工作室的产物是生成场景图，不是产品实物照；产品事实以知识库为准。",
     }
@@ -254,12 +261,68 @@ def reset_generated() -> None:
     _GENERATED.clear()
 
 
+# 重绘的语义 = 把这张图当初生成时的那条流程再走一遍，所以每张图必须记住它的来源：
+# 参考图（image_id / access_url）、用户原始提示词、配方、模型、比例/质量/张数。
+# generated_id 是这张生成图在本进程内的稳定标识，前端「新生成产品图」用它做参考图与重绘的键。
+def generated_id(conversation_id: str, url: str, at: str, index: int) -> str:
+    material = f"{conversation_id}|{url}|{at}|{index}".encode("utf-8")
+    return hashlib.sha1(material).hexdigest()[:16]
+
+
+def find_generated(conversation_id: str, generated_id_value: str) -> dict | None:
+    """按 generated_id 找回一张本次生成的图；找不到就是找不到，不猜。"""
+    wanted = str(generated_id_value or "")
+    if not wanted:
+        return None
+    for row in generated_history(conversation_id):
+        if str(row.get("generated_id") or "") == wanted:
+            return row
+    return None
+
+
+def _copy_diff(before: str, after: str) -> dict:
+    """从真实 diff 算出改动幅度与"改了什么"。
+
+    实测：模型有时候只回 ``optimized``、不回 ``changes``，前端就变成"用户感知不到效果"。
+    所以这里用**真实 diff** 兜底，并在返回里标明来源（``changes_source``），
+    不把推导出来的话冒充成模型的自述。
+    """
+    import re
+
+    def squeeze(text: str) -> str:
+        return re.sub(r"\s+", "", str(text or ""))
+
+    left, right = squeeze(before), squeeze(after)
+    ratio = round(max(0.0, 1.0 - difflib.SequenceMatcher(None, left, right).ratio()), 3)
+    before_lines = [line.strip() for line in str(before or "").splitlines() if line.strip()]
+    after_lines = [line.strip() for line in str(after or "").splitlines() if line.strip()]
+    derived: list[str] = []
+    if before_lines and after_lines and squeeze(before_lines[0]) != squeeze(after_lines[0]):
+        derived.append("重写开头：" + before_lines[0][:20] + " → " + after_lines[0][:20])
+    if len(after_lines) > len(before_lines):
+        derived.append("拆段加行：段落 " + str(len(before_lines)) + " → " +
+                       str(len(after_lines)) + " 行")
+    added = [line for line in after_lines if line not in before_lines]
+    removed = [line for line in before_lines if line not in after_lines]
+    if added:
+        derived.append("新增表达：" + added[0][:40])
+    if removed:
+        derived.append("删除/合并表达：" + removed[0][:40])
+    return {"changed_ratio": ratio, "lines_before": len(before_lines),
+            "lines_after": len(after_lines), "derived_changes": derived}
+
+
 async def optimize_copy(db: Session, conversation: models.AgentConversation, *,
                         content: str, instruction: str = "") -> dict:
-    """文案优化：在保留事实边界的前提下改写文案。
+    """文案优化：整篇重写表达，事实边界一条不松。
+
+    用户实测反馈："点了优化好像没有效果"——上一版提示词只要求"只改表达，不新增事实"，
+    模型就做成了"屏是触控的 → 屏幕支持触控"这种抠字眼。所以现在把**改动幅度**本身写成
+    硬性要求（重写开头钩子、重排段落节奏、平台语感），同时把事实边界写得更细。
 
     只改表达，不改事实：不新增卖点、价格、参数或承诺。这一条写进提示词也写进返回里，
-    因为"优化"最容易被做成"加料"。
+    因为"优化"最容易被做成"加料"。``changed_ratio`` 是对原文与优化文做字符级相似度得到的
+    真实改动比例——如果模型只抠字眼，这个数字会很小，界面据此如实提示，不假装成功。
     """
     from .model import ModelError, chat_json_messages
 
@@ -269,26 +332,80 @@ async def optimize_copy(db: Session, conversation: models.AgentConversation, *,
     material = await materials(db, conversation)
     state = db.get(models.AgentTaskState, conversation.id)
     surface = str((dict(state.data or {}) if state else {}).get("surface") or "未锁定")
-    system = """你是华为 PC 的文案编辑。请优化下面这段文案。
-硬性要求：
-1. 只改表达，不新增事实：不得增加卖点、参数、价格、优惠、承诺或任何原文没有的信息。
-2. 保留原有的产品型号与已确认事实，不得替换或改写型号。
-3. 不得出现占位符、不得出现"某某"这类待填内容。
-4. 保持原有交付面的语感（当前交付面会告诉你）。不要把口语改成公文腔。
-只输出 JSON：{"optimized":"优化后的完整文案","changes":["改了什么，每条半句话"],"kept":["刻意保留了什么"]}"""
+    system = """你是华为 PC 的资深小红书爆款文案编辑。用户明确反馈"点了优化好像没有效果"，
+所以这一版要**整篇重写**，不是抠字眼。把下面这段当成初稿，重新写一遍。
+
+具体怎么做（篇幅和结构可以变，事实一个字都不能变）：
+1. 重写开头钩子：前 12 个字就要有画面感或冲突感，让人愿意往下看。
+2. 换语气与节奏：口语化、以短句为主，长短句交替，制造停顿和呼吸感。
+3. 重排段落：一段只说一件事，每段 1–3 句；小标题可以单独成行，也可以改写成更口语的说法。
+4. 平台语感按当前交付面来：小红书＝口语化 + 短句 + 适度 emoji（每段最多 1 个，可用可不用），
+   其余平台保持该平台该有的语感；不要把口语改成公文腔。
+5. 话题标签可以优化措辞与顺序，但原有标签一个都不能删，也不得添加没有根据的标签。
+6. **凡是不承载参数的句子（铺垫、过渡、感受、适合谁、谁先别急、行动引导、结尾），
+   都要换一种说法重写**；含参数的那一句，参数原样不动，但句子的铺垫、连接和收尾要改。
+7. 幅度要求：至少一半以上的句子要换一种说法；只改几个词、或只把小标题换行，不算完成。
+
+事实边界（一条都不能松，这是项目底线）：
+- 只改表达，不新增事实：不得增加卖点、参数、价格、优惠、承诺或任何原文没有的信息。
+- 保留原有的产品型号与已确认事实，不得替换或改写型号。
+- 不得新增实测经历、口碑、排名、适配结论、销量、赠品或用户评价。
+- 原文里的"约/最高/选配/仅某版本"等限定词必须原样保留，不得删掉，也不得放宽。
+- 所有数字、单位、型号名、版本名、尺寸、时长、接口名，一个字符都不能改。
+- 不得出现占位符、不得出现"某某"这类待填内容。
+
+changes 必须给**至少 3 条**，写真实做过的较大改动（例如"重写开头钩子""把 3 个短句合并成有节奏的段落"
+"给每段加了小标题分行的呼吸感"），不要拿"改了一个字"当成功。
+kept 必须给**至少 2 条**，写清楚哪些事实、参数与限定词是刻意原样保留的。
+
+只输出 JSON（字段顺序照抄）：
+{"changes":["改了什么，每条半句话"],"kept":["刻意保留了什么"],"optimized":"优化后的完整文案"}"""
+    user_content = (f"当前交付面：{surface}\n产品：{material['product'].get('model') or '未指定'}\n"
+                    f"补充要求：{instruction or '（无）'}\n\n原文案：\n{text}")
     try:
         result, meta = chat_json_messages(
-            system, [{"role": "user",
-                      "content": f"当前交付面：{surface}\n产品：{material['product'].get('model') or '未指定'}\n"
-                                 f"补充要求：{instruction or '（无）'}\n\n原文案：\n{text}"}],
+            system, [{"role": "user", "content": user_content}],
             schema_hint="只输出 JSON", model=None)
     except ModelError as error:
         return {"ok": False, "error": "MODEL_FAILED", "message": str(error)[:200]}
-    return {"ok": True, "optimized": str(result.get("optimized") or "")[:6000],
-            "changes": [str(x)[:120] for x in (result.get("changes") or [])][:8],
-            "kept": [str(x)[:120] for x in (result.get("kept") or [])][:8],
+    optimized = str(result.get("optimized") or "").strip()
+    if not optimized:
+        # 实测（真实整篇小红书文案）：同一段输入偶发只回 changes/kept，optimized 是空的。
+        # 这是模型抖动，不是文案本身的问题——重试一次；仍拿不到就如实报错，
+        # 绝不拿原文冒充"已经优化过"。
+        try:
+            again, meta = chat_json_messages(
+                system + "\n\n注意：这次的 optimized 必须给出完整文案本身，不能留空，"
+                         "也不能只给改动清单。",
+                [{"role": "user", "content": user_content}],
+                schema_hint="只输出 JSON", model=None)
+        except ModelError as error:
+            return {"ok": False, "error": "MODEL_FAILED", "message": str(error)[:200]}
+        optimized = str(again.get("optimized") or "").strip()
+        if optimized:
+            for key in ("changes", "kept"):
+                if not (result.get(key) or []):
+                    result[key] = again.get(key) or []
+    if not optimized:
+        return {"ok": False, "error": "EMPTY_RESULT",
+                "message": "模型两次都没有返回优化后的文案，请再点一次「文案优化」"}
+    optimized = optimized[:8000]
+    # 改动幅度用**真实 diff**算：模型只抠字眼时这个数字会很小，界面要如实说出来。
+    facts = _copy_diff(text, optimized)
+    model_changes = [str(x)[:120] for x in (result.get("changes") or []) if str(x).strip()][:8]
+    kept = [str(x)[:120] for x in (result.get("kept") or []) if str(x).strip()][:8]
+    # 模型漏报 changes 时用真实 diff 兜底——不能让"改了什么"变成空白。
+    changes = model_changes or facts["derived_changes"][:8]
+    return {"ok": True, "optimized": optimized,
+            "changes": changes,
+            "changes_source": "model" if model_changes else "derived_from_diff",
+            "kept": kept,
+            "kept_source": "model" if kept else "not_reported",
+            "changed_ratio": facts["changed_ratio"],
+            "lines_before": facts["lines_before"], "lines_after": facts["lines_after"],
             "surface": surface, "usage": (meta or {}).get("usage") or {},
-            "note": "只改表达不改事实；新增事实请回到对话确认。"}
+            "note": "整篇重写：语气、节奏、开头钩子与段落结构都重做；事实、参数与限定词原样保留，"
+                    "未新增任何事实。如仍不够理想可再点一次，或回对话补充要求。"}
 
 
 async def generate_image(db: Session, conversation: models.AgentConversation, *,
@@ -305,8 +422,23 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
 
     material = await materials(db, conversation)
     images = material.get("images") or []
-    # One selection rule for the studio and the agent tool, including the rights gate.
-    chosen = assets.pick_reference(images, image_id=image_id)
+    # 参考图有两种：知识库核验原图（image_id）与「新生成产品图」。
+    # 后者用 `gen:<generated_id>` 显式标明——不能拿一个知识库里不存在的 id 去 pick_reference：
+    # pick_reference 在找不到 id 时会**回退到第一张原图**，那就成了"看着用了生成图、实际用了别的图"。
+    generated_reference: dict | None = None
+    if str(image_id).startswith("gen:"):
+        generated_reference = find_generated(str(conversation.id), str(image_id)[4:])
+        if generated_reference is None:
+            return {"ok": False, "error": "REFERENCE_NOT_FOUND",
+                    "message": "这张新生成图的记录已不在本次运行内（进程重启即清空），"
+                               "请重新生成，或改选右侧的知识库原图"}
+        chosen = {"image_id": str(image_id),
+                  "caption": "本次生成的产品图（用作参考）",
+                  "access_url": generated_reference.get("url") or "",
+                  "source": {"kind": "generated_by_studio"}}
+    else:
+        # One selection rule for the studio and the agent tool, including the rights gate.
+        chosen = assets.pick_reference(images, image_id=image_id)
     if chosen is None:
         if images and assets.require_rights():
             return {"ok": False, "error": "ASSET_RIGHTS_UNVERIFIED",
@@ -326,7 +458,8 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
     stored = get_asset(token)
     if not stored:
         return {"ok": False, "error": "REFERENCE_EXPIRED",
-                "message": "产品原图临时地址已过期，请重新打开工作室材料"}
+                "message": "参考图的临时地址已过期（图片资产只在内存里，进程重启或超过有效期即失效），"
+                           "请重新打开工作室材料或改选一张参考图"}
     body, mime = stored
     target_ratio = None
     if ratio and ratio != "kb":
@@ -412,13 +545,45 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
         # proxy instead of staying empty.
         cost_ledger.mark_unpriced(db, booking["reservation_id"], None,
                                   note="模型 " + resolved + "，用量由供应商 usage 字段提供")
-    remember_generated(str(conversation.id), [
-        {"url": row.get("url") or row.get("access_url") or "",
-         "prompt": text[:300], "model": resolved,
-         "recipe_id": (recipe_used or {}).get("recipe_id"),
-         "recipe_name": (recipe_used or {}).get("name"),
-         "at": time.strftime("%Y-%m-%d %H:%M")}
-        for row in (out or []) if isinstance(row, dict)])
+    # 每张生成图都要记住"它是怎么来的"，重绘才有据可依：参考图（image_id / 地址）、
+    # 用户当初输入的原始提示词（重绘要复现原始流程，所以不能用配方拼出来的最终提示词代替）、
+    # 最终提示词（显示用）、配方、模型、比例、质量（由 size 体现）、张数、时间。
+    at = time.strftime("%Y-%m-%d %H:%M")
+    reference_url = str(chosen.get("access_url") or "")
+    rows = []
+    for index, row in enumerate(out or []):
+        if not isinstance(row, dict):
+            continue
+        url = row.get("url") or row.get("access_url") or ""
+        row_id = generated_id(str(conversation.id), url, at, index)
+        # 直接把 generated_id 挂回响应里的图片对象：前端拿到就能立刻用作参考图/重绘的键，
+        # 不必等「最近生成」再拉一次。
+        row["generated_id"] = row_id
+        rows.append({
+            "generated_id": row_id,
+            "url": url,
+            "kind": "generated_scene",
+            "origin": "studio",
+            # prompt=用户原始输入（可能为空：那就由配方拼），composed_prompt=最终真正发出去的提示词
+            "source_prompt": str(prompt or "").strip()[:4000],
+            "composed_prompt": text[:4000],
+            "prompt": text[:300],
+            # 参考图来源
+            "image_id": str(chosen.get("image_id") or ""),
+            "reference_url": reference_url,
+            "reference_kind": "generated" if generated_reference else "kb_original",
+            # 生成参数
+            "recipe_id": (recipe_used or {}).get("recipe_id"),
+            "recipe_name": (recipe_used or {}).get("name"),
+            "model": resolved,
+            "ratio": ratio or "",
+            "size": size or "auto",
+            "quality": "high" if size else "standard",
+            "count": wanted,
+            "style": style or "",
+            "at": at,
+        })
+    remember_generated(str(conversation.id), rows)
     return {"ok": True, "images": out, "channel": channel, "prompt": text,
             "requested_count": wanted, "size": size or "auto",
             # 溯源：本次用的哪个风格配方、是否已批准；没用配方也如实说明原因。
@@ -427,6 +592,7 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
                                                   "state": booking.get("state"),
                                                   "note": booking.get("message", "")},
             "reference": {"image_id": chosen.get("image_id"), "caption": chosen.get("caption"),
-                          "access_url": chosen.get("access_url")},
+                          "access_url": chosen.get("access_url"),
+                          "kind": "generated" if generated_reference else "kb_original"},
             "notice": "以上为 AI 生成的场景图，不是产品实物照：机身比例、按键布局与接口位置由"
                       "模型重绘，不得作为产品外观、配色或接口的依据。"}

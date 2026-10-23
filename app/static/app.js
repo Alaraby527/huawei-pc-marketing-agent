@@ -1982,8 +1982,53 @@
   }
 
   // ===================== 图文工作室 =====================
+  // 参考图统一用字符串键：'kb:<index>'（知识库原图）或 'gen:<generated_id>'（新生成产品图）。
+  // 生成时用的是 refs[0] 这张，所以"设为参考图"会把这张放到第一位。
+  const STUDIO_CLICK_DELAY = 250;   // 单击选中延迟（双击放大冲突处理，规格 §4）
+  let studioClickTimer = null;
+  let studioZoomEl = null;          // 工作室图片放大浮层（全局单例）
+  let studioZoomPayload = null;     // 当前放大的图（含来源信息）
   const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false,
-                       pendingCopy: '', pendingRefIds: []};
+                       pendingCopy: '', pendingRefIds: [],
+                       // 后端能力（/studio 返回）：旧进程不支持 gen: 参考图，必须拦下来，
+                       // 不能让 gen: 被后端静默回退成第一张知识库原图。
+                       capability: {},
+                       // 每张生成图的来源：参考图 / 原始提示词 / 配方 / 模型 / 比例·质量·张数。
+                       // 服务端 remember_generated 也会记一份；这里再记一份本会话的，
+                       // 这样即使后端还没重启，刚生成的图也能按原参数重绘。
+                       provenance: {}, generatedLoading: 0, freshKeys: [],
+                       copyBefore: '', lastHistoryNote: ''};
+
+  function kbRefKey(index) { return 'kb:' + index; }
+  function generatedRefKey(row) {
+    return 'gen:' + String((row && row.generated_id) || (row && row.url) || '');
+  }
+
+  // 一个参考图键 → 真正要用的东西（地址、说明、发给生成接口的 image_id）。
+  function studioRefRow(key) {
+    const text = String(key || '');
+    if (text.indexOf('kb:') === 0) {
+      const row = studioState.images[Number(text.slice(3))];
+      if (!row) return null;
+      return {key: text, kind: 'kb', url: row.access_url || row.url || '',
+              caption: row.caption || row.image_id || '知识库产品原图',
+              image_id: row.image_id || ''};
+    }
+    if (text.indexOf('gen:') === 0) {
+      const id = text.slice(4);
+      const row = (studioState.generated || []).find(item => generatedRefKey(item) === text)
+        || studioState.provenance[id]
+        || studioState.provenance['url:' + id]
+        || null;
+      if (!row) return null;
+      return {key: text, kind: 'generated', url: row.url || '',
+              caption: row.composed_prompt || row.prompt || '本次生成的产品图',
+              // 后端用 'gen:<generated_id>' 明确区分"生成图当参考图"，
+              // 不能拿知识库里不存在的 id 去匹配（那样会静默回退到第一张原图）。
+              image_id: text};
+    }
+    return null;
+  }
 
   // 切换/新建任务时，工作室里与会话绑定的材料必须作废：否则上一个任务的 knowledge base
   // 原图会留在列表里，go-studio 带过来的 image_id 对不上，"对应原图"就到不了位。
@@ -1992,12 +2037,20 @@
     studioState.images = [];
     studioState.refs = [];
     studioState.generated = [];
+    studioState.provenance = {};
+    studioState.generatedLoading = 0;
+    studioState.freshKeys = [];
+    studioState.copyBefore = '';
+    studioState.capability = {};
     const box = $('studio-copy-text');
     if (box) box.value = '';
     const refs = $('studio-refs');
-    if (refs) refs.innerHTML = '<span class="hint">从右侧知识库原图里点选参考图</span>';
+    if (refs) refs.innerHTML = '<span class="hint">从右侧知识库原图或新生成产品图里点选参考图</span>';
     const kb = $('studio-kb-grid');
     if (kb) kb.innerHTML = '<p class="hint">本次创作还没有绑定知识库原图。</p>';
+    renderStudioGenerated();
+    const optimize = $('studio-optimize-result');
+    if (optimize) { optimize.hidden = true; optimize.innerHTML = ''; }
   }
 
   // 配方与模型跟会话无关，必须无条件先加载。
@@ -2032,13 +2085,19 @@
         '<p class="hint">先在对话里建一个任务；本次创作绑定的知识库原图会出现在这里。</p>';
       const hist = $('studio-history-grid');
       if (hist) hist.innerHTML = '<p class="hint">还没有生成记录。</p>';
+      renderStudioGenerated();
       return;
     }
-    if (studioState.loaded && !force) {
+    // 旧进程的 /studio 没有 capability.generated_reference 字段：这时**不要提前返回**，
+    // 重拉一次材料，等后端重启后就能拿到新能力，不必让用户刷新整个页面。
+    const capabilityKnown = !!(studioState.capability
+      && studioState.capability.generated_reference !== undefined);
+    if (studioState.loaded && !force && capabilityKnown) {
       // 已经加载过：材料不会再拉，但这次从对话带入的参考图要立刻就位。
       // （loadStudio 的提前返回就在这里；pendingRefIds 必须在这条路径上也消费掉，
       //  否则第二次点「图文工作室」就带不进参考图。）
       if (applyPendingRefs()) renderStudioRefs();
+      renderStudioGenerated();
       // 带入的文案也要立刻生效：applyPendingCopy() 在最前面，覆盖了提前返回这条路径。
       return;
     }
@@ -2046,6 +2105,7 @@
       const material = await fetch('/api/v2/conversations/' + sessionId + '/studio')
         .then(r => r.json());
       studioState.images = material.images || [];
+      studioState.capability = material.capability || {};
       studioState.loaded = true;
 
       const surface = material.surface || '';
@@ -2088,7 +2148,7 @@
     const box = $('studio-copy-text');
     if (box) box.value = pending;
     const note = $('studio-copy-note');
-    if (note) note.textContent = '文案已从对话带入，可直接编辑；文案优化只改表达、不新增事实。';
+    if (note) note.textContent = '文案已从对话带入，可直接编辑；文案优化会整篇重写语气与节奏，但不新增事实。';
   }
 
   // D：把对话交付图片里带 image_id 的知识库原图自动设为参考图。
@@ -2101,8 +2161,9 @@
     // 与用户已选的参考图合并（不覆盖手工选择），最多 9 张。
     const picked = studioState.refs.slice();
     (studioState.images || []).forEach((row, index) => {
+      const key = kbRefKey(index);
       if (row && row.image_id && ids.indexOf(row.image_id) >= 0
-          && picked.indexOf(index) < 0 && picked.length < 9) picked.push(index);
+          && picked.indexOf(key) < 0 && picked.length < 9) picked.push(key);
     });
     if (picked.length === studioState.refs.length) return 0;
     studioState.refs = picked;
@@ -2169,76 +2230,233 @@
     const label = $('studio-ref-count');
     if (label) label.textContent = '已选 ' + studioState.refs.length + ' 张（最多 9 张）';
     document.querySelectorAll('.studio-kb').forEach((btn) => {
-      btn.classList.toggle('active', studioState.refs.includes(Number(btn.dataset.kb)));
+      btn.classList.toggle('active',
+        studioState.refs.indexOf(kbRefKey(Number(btn.dataset.kb))) >= 0);
+    });
+    document.querySelectorAll('.studio-generated').forEach((btn) => {
+      btn.classList.toggle('active',
+        studioState.refs.indexOf(String(btn.dataset.gen || '')) >= 0);
     });
     if (!box) return;
-    box.innerHTML = studioState.refs.length
-      ? studioState.refs.map((index) => {
-          const row = studioState.images[index] || {};
-          return '<span class="studio-ref"><img src="' +
-            escapeHtml(row.access_url || row.url || '') + '" alt=""></span>';
+    const rows = studioState.refs.map((key) => studioRefRow(key)).filter(Boolean);
+    box.innerHTML = rows.length
+      ? rows.map((row) => {
+          return '<span class="studio-ref" title="' + escapeAttr(row.caption || '') + '"><img src="' +
+            escapeAttr(row.url) + '" alt=""></span>';
         }).join('')
-      : '<span class="hint">从右侧知识库原图里点选参考图</span>';
+      : '<span class="hint">从右侧知识库原图或新生成产品图里点选参考图</span>';
+  }
+
+  // 需求1：右栏「新生成产品图」。本次生成的成品直接落在这里，
+  // 生成过程中先渲染 loading 占位（空白卡片 + 转圈），让用户明确知道正在生成。
+  function renderStudioGenerated() {
+    const grid = $('studio-generated-grid');
+    const count = $('studio-generated-count');
+    if (!grid) return;
+    const rows = studioState.generated || [];
+    const loading = Math.max(0, Math.min(Number(studioState.generatedLoading || 0), 4));
+    if (count) {
+      count.textContent = rows.length + ' 张' + (loading ? '（生成中…）' : '');
+    }
+    const placeholders = [];
+    for (let index = 0; index < loading; index += 1) {
+      placeholders.push('<div class="studio-loading" role="status" aria-live="polite">' +
+        '<span class="studio-spinner" aria-hidden="true"></span><span>正在生成…</span></div>');
+    }
+    const cards = rows.map((row) => {
+      const key = generatedRefKey(row);
+      const active = studioState.refs.indexOf(key) >= 0;
+      const fresh = studioState.freshKeys.indexOf(String(row.generated_id || '')) >= 0;
+      return '<button type="button" class="studio-generated' + (active ? ' active' : '') +
+        (fresh ? ' fresh' : '') + '" data-gen="' + escapeAttr(key) + '" title="' +
+        escapeAttr(row.prompt || row.composed_prompt || '新生成的产品图') + '">' +
+        '<img src="' + escapeAttr(row.url || '') + '" alt="' +
+        escapeAttr(row.prompt || row.composed_prompt || '') + '"></button>';
+    });
+    grid.innerHTML = (rows.length || loading)
+      ? placeholders.join('') + cards.join('')
+      : '<p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。</p>';
+  }
+
+  // 单击＝设为参考图；双击＝放大。浏览器双击前必先触发一次单击，
+  // 所以单击延迟 STUDIO_CLICK_DELAY 执行，期间收到双击就取消单击（与三篇文案选项卡同一套做法）。
+  function scheduleStudioSingle(action) {
+    if (studioClickTimer) { clearTimeout(studioClickTimer); studioClickTimer = null; }
+    studioClickTimer = setTimeout(() => { studioClickTimer = null; action(); }, STUDIO_CLICK_DELAY);
+  }
+
+  function cancelStudioSingle() {
+    if (studioClickTimer) { clearTimeout(studioClickTimer); studioClickTimer = null; }
+  }
+
+  function toggleStudioRef(key) {
+    const text = String(key || '');
+    if (!text) return;
+    const at = studioState.refs.indexOf(text);
+    if (at >= 0) studioState.refs.splice(at, 1);
+    else if (studioState.refs.length < 9) studioState.refs.push(text);
+    else { toast('参考图最多 9 张'); return; }
+    renderStudioRefs();
+    renderStudioGenerated();
+    toast(at >= 0 ? '已取消参考图' : '已设为参考图');
+  }
+
+  // 溯源合并：服务端 remember_generated 记的字段优先，本地这次的记录补空缺。
+  // 旧进程（升级前启动）没记 ratio/reference 的字段，就靠本地记录补齐，重绘仍能原样复现。
+  function mergeGeneratedRow(row, local) {
+    const base = local || {};
+    const pick = (key) => {
+      const value = row[key];
+      if (value !== undefined && value !== null && value !== '') return value;
+      return base[key] !== undefined && base[key] !== null ? base[key] : '';
+    };
+    return {
+      generated_id: row.generated_id || base.generated_id || '',
+      url: row.url || base.url || '',
+      prompt: pick('prompt') || pick('composed_prompt'),
+      composed_prompt: pick('composed_prompt') || pick('prompt'),
+      source_prompt: pick('source_prompt'),
+      image_id: pick('image_id'),
+      reference_url: pick('reference_url'),
+      reference_kind: pick('reference_kind'),
+      recipe_id: pick('recipe_id'),
+      recipe_name: pick('recipe_name'),
+      model: pick('model'),
+      ratio: pick('ratio'),
+      size: pick('size') || 'auto',
+      quality: pick('quality'),
+      count: row.count || base.count || 1,
+      style: pick('style'),
+      at: pick('at'),
+      local: !!base.local,
+    };
+  }
+
+  // 生成结束后把"这张图是怎么来的"记在本地，重绘据此把当初的流程再走一遍。
+  function rememberGeneration(payload, data) {
+    const used = data.recipe || {};
+    const record = {
+      source_prompt: String(payload.prompt || ''),
+      composed_prompt: String(data.prompt || payload.prompt || ''),
+      prompt: String(data.prompt || payload.prompt || ''),
+      image_id: String(payload.image_id || ''),
+      reference_url: String(payload.reference_url || ''),
+      reference_kind: String(payload.reference_kind || ''),
+      recipe_id: used.recipe_id || payload.recipe_id || '',
+      recipe_name: used.recipe_name || used.name || '',
+      model: String(payload.model || ''),
+      ratio: String(payload.ratio || ''),
+      size: String(data.size || payload.size || 'auto'),
+      quality: String(payload.quality || (payload.size ? 'high' : 'standard')),
+      count: Number(data.requested_count || payload.count || 1),
+      style: String(payload.style || ''),
+      at: new Date().toLocaleString('zh-CN', {hour12: false}),
+      local: true,
+    };
+    (data.images || []).forEach((row) => {
+      const url = row.access_url || row.url || '';
+      const id = String(row.generated_id || '');
+      const entry = Object.assign({}, record, {generated_id: id, url: url});
+      if (id) studioState.provenance[id] = entry;
+      if (url) studioState.provenance['url:' + url] = entry;
+      if (id) studioState.freshKeys.push(id);
+    });
   }
 
   async function loadStudioHistory() {
     const grid = $('studio-history-grid');
-    if (!grid || !sessionId) return;
+    if (!grid || !sessionId) { renderStudioGenerated(); return; }
     try {
       const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/generated')
         .then(r => r.json());
-      const rows = data.images || [];
+      studioState.lastHistoryNote = data.note || '';
+      const rows = (data.images || []).map((row) => mergeGeneratedRow(row,
+        studioState.provenance[String(row.generated_id || '')]
+        || studioState.provenance['url:' + (row.url || '')] || {}));
       grid.innerHTML = rows.length ? rows.map((row, index) =>
         '<article class="studio-card">' +
-        '<img src="' + escapeHtml(row.url) + '" alt="">' +
+        '<img src="' + escapeAttr(row.url) + '" alt="">' +
         '<div class="studio-card-body">' +
         '<p class="studio-card-prompt">' + escapeHtml(row.prompt || '') + '</p>' +
         '<div class="studio-card-meta"><span>' + escapeHtml(row.model || '') + '</span>' +
         '<span>' + escapeHtml(row.at || '') + '</span></div>' +
         '<div class="studio-card-actions">' +
-        '<button type="button" class="studio-btn" data-reuse="' + index + '">复用</button>' +
+        '<button type="button" class="studio-btn" data-reuse="' + index + '">复用提示词</button>' +
         '<button type="button" class="studio-btn" data-redraw="' + index + '">重绘</button>' +
         '</div></div></article>').join('')
         : '<p class="hint">还没有生成记录。' + escapeHtml(data.note || '') + '</p>';
       studioState.generated = rows;
     } catch (error) { /* 历史加载失败不影响主流程 */ }
+    // 「最近生成」（底部）与「新生成产品图」（右栏）同源，一次渲染两处。
+    renderStudioGenerated();
+    renderStudioRefs();
   }
 
   async function runStudioGenerate() {
-    if (!sessionId) { toast('先建一个任务'); return; }
+    if (!sessionId) { toast('先建一个任务'); return null; }
     const prompt = ($('studio-prompt') || {}).value || '';
-    if (!prompt.trim()) { toast('请先写提示词'); return; }
-    if (!studioState.refs.length) { toast('请先从右侧选一张参考图'); return; }
-    const btn = $('studio-generate');
-    if (btn) { btn.disabled = true; btn.textContent = '生成中…（约 30–100 秒）'; }
-    const note = $('studio-image-note');
-    if (note) note.textContent = '正在生成…';
-    try {
-      // 质量→尺寸：标准用 auto，高清按比例挑一个大尺寸。如实回报最终用的尺寸。
-      const count = Number(($('studio-count') || {}).value || 1);
-      const quality = ($('studio-quality') || {}).value || 'standard';
-      const ratio = ($('studio-ratio') || {}).value || '';
-      let size = '';
-      if (quality === 'high') {
-        size = ratio === 'portrait' ? '1080x1440'
-             : ratio === 'landscape' ? '1440x1080' : '1024x1536';
+    if (!prompt.trim()) { toast('请先写提示词'); return null; }
+    if (!studioState.refs.length) { toast('请先从右侧选一张参考图'); return null; }
+    // 参考图取 refs[0]：知识库原图发 image_id；新生成产品图发 'gen:<generated_id>'。
+    const reference = studioRefRow(studioState.refs[0]) || {};
+    // 后端（旧进程）不支持 gen: 时**必须拦住**：否则 gen: 会被当成"找不到的 id"，
+    // 后端静默回退到第一张知识库原图——用户以为用的是自己刚生成的图，实际不是。
+    if (reference.kind === 'generated' && !studioState.capability.generated_reference) {
+      const note = $('studio-image-note');
+      if (note) {
+        note.textContent = '当前后端进程还不支持用「新生成产品图」当参考图（该能力要服务重启后才生效）；'
+          + '可以先用右侧的知识库原图生成。';
       }
-      const payload = {
-        prompt: prompt,
-        image_id: (studioState.images[studioState.refs[0]] || {}).image_id || '',
-        recipe_id: ($('studio-recipe') || {}).value || '',
-        ratio: ratio,
-        model: ($('studio-model') || {}).value || '',
-        count: count,
-        size: size,
-      };
+      toast('这一版后端还不支持生成图当参考图，请先用知识库原图');
+      return null;
+    }
+    // 质量→尺寸：标准用 auto，高清按比例挑一个大尺寸。如实回报最终用的尺寸。
+    const count = Number(($('studio-count') || {}).value || 1);
+    const quality = ($('studio-quality') || {}).value || 'standard';
+    const ratio = ($('studio-ratio') || {}).value || '';
+    let size = '';
+    if (quality === 'high') {
+      size = ratio === 'portrait' ? '1080x1440'
+           : ratio === 'landscape' ? '1440x1080' : '1024x1536';
+    }
+    const payload = {
+      prompt: prompt,
+      image_id: reference.image_id || '',
+      recipe_id: ($('studio-recipe') || {}).value || '',
+      ratio: ratio,
+      model: ($('studio-model') || {}).value || '',
+      count: count,
+      size: size,
+      // 这两个字段后端不读，只用于本地溯源记录（重绘要复现参考图来源）。
+      reference_url: reference.url || '',
+      reference_kind: reference.kind || '',
+      quality: quality,
+    };
+    return generateStudioImage(payload, {});
+  }
+
+  // 生成/重绘共用的一条链路：先画 loading 占位，完成后把图片落在右栏「新生成产品图」。
+  async function generateStudioImage(payload, options) {
+    const opts = options || {};
+    const btn = $('studio-generate');
+    const note = $('studio-image-note');
+    const wanted = Math.max(1, Math.min(Number(payload.count || 1), 4));
+    if (btn) { btn.disabled = true; btn.textContent = opts.buttonLabel || '生成中…（约 30–100 秒）'; }
+    if (note) note.textContent = opts.note || '正在生成…';
+    // 需求1：先把占位画出来——用户明确要看见"正在生成"，不是只改按钮文字。
+    studioState.generatedLoading = wanted;
+    studioState.freshKeys = [];
+    renderStudioGenerated();
+    try {
       const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/image',
         {method: 'POST', headers: {'Content-Type': 'application/json'},
          body: JSON.stringify(payload)}).then(r => r.json());
+      studioState.generatedLoading = 0;
       if (!data.ok) {
         if (note) note.textContent = data.message || data.error || '生成失败';
         toast(data.error || '生成失败');
-        return;
+        renderStudioGenerated();
+        return null;
       }
       const used = data.recipe || {};
       if (note) {
@@ -2247,14 +2465,67 @@
           (used.recipe_id
           ? '风格配方：' + (used.recipe_name || used.recipe_id)
           : '未使用配方（' + (used.why_no_recipe || '无已批准配方') + '）') +
-          '；生成的是场景图，不是产品实拍。';
+          '；生成的是场景图，不是产品实拍。图片已落在右栏「新生成产品图」。';
       }
+      rememberGeneration(payload, data);
       await loadStudioHistory();
+      return data;
     } catch (error) {
-      if (note) note.textContent = '生成请求失败';
+      studioState.generatedLoading = 0;
+      if (note) note.textContent = '生成请求失败：' + ((error && error.message) || error);
+      renderStudioGenerated();
+      return null;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '生成图片'; }
     }
+  }
+
+  // 重绘 = 把这张图当初生成时的那条流程再走一遍：
+  // 原来的参考图 + 原来的提示词 + 原来的参数（配方 / 模型 / 比例 / 质量 / 张数），
+  // 复用工作室既有的 /studio/image 接口，参数原样再发一次（缺什么就如实说，不猜）。
+  async function redrawGenerated(key) {
+    const text = String(key || '');
+    const row = (studioState.generated || []).find(item => generatedRefKey(item) === text)
+      || studioState.provenance[text.replace(/^gen:/, '')] || null;
+    if (!row) { toast('找不到这张图的生成记录，无法原样重绘'); return null; }
+    if (!sessionId) { toast('先建一个任务'); return null; }
+    if (!row.image_id) {
+      toast('这张图的参考图来源已丢失（进程重启会清空），请重新选一张参考图');
+      return null;
+    }
+    // 原图当初就是"用生成图当参考图"生成的：旧后端不支持时必须拦住，不能静默换成别的原图。
+    if (String(row.image_id).indexOf('gen:') === 0
+        && !studioState.capability.generated_reference) {
+      const note = $('studio-image-note');
+      if (note) {
+        note.textContent = '这张图的参考图是一张「新生成产品图」；当前后端进程还不支持这种参考图'
+          + '（该能力要服务重启后才生效），所以不能原样重绘。';
+      }
+      toast('后端还不支持生成图当参考图，无法原样重绘');
+      return null;
+    }
+    // 原始提示词优先：配方自动拼提示词的那次，用户输入是空的，必须原样发空 + 同一个配方，
+    // 才能复现"原来的流程"；没有配方时才退回最终提示词。
+    let sourcePrompt = String(row.source_prompt || '');
+    if (!sourcePrompt && !row.recipe_id) {
+      sourcePrompt = String(row.composed_prompt || row.prompt || '');
+    }
+    const payload = {
+      prompt: sourcePrompt,
+      image_id: String(row.image_id || ''),
+      recipe_id: String(row.recipe_id || ''),
+      ratio: String(row.ratio || ''),
+      model: String(row.model || ''),
+      count: Number(row.count || 1),
+      // size 记的是 'auto' 时，原本发的就是空（标准质量）；其余原样发回去。
+      size: String(row.size || '') === 'auto' ? '' : String(row.size || ''),
+      reference_url: String(row.reference_url || ''),
+      reference_kind: String(row.reference_kind || ''),
+      quality: String(row.quality || ''),
+    };
+    const note = $('studio-image-note');
+    if (note) note.textContent = '正在按原来的参考图 / 提示词 / 参数重绘…';
+    return generateStudioImage(payload, {buttonLabel: '重绘中…（约 30–100 秒）'});
   }
 
   async function optimizeStudioCopy() {
@@ -2262,35 +2533,252 @@
     const note = $('studio-copy-note');
     if (!box || !box.value.trim()) { toast('没有可优化的文案'); return; }
     const btn = $('studio-optimize');
-    if (btn) btn.disabled = true;
-    if (note) note.textContent = '正在优化…';
+    const before = box.value;
+    if (btn) { btn.disabled = true; btn.textContent = '整篇重写中…'; }
+    if (note) note.textContent = '正在整篇重写（语气 / 节奏 / 开头钩子）…';
     try {
       const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/copy/optimize',
         {method: 'POST', headers: {'Content-Type': 'application/json'},
-         body: JSON.stringify({content: box.value})}).then(r => r.json());
+         body: JSON.stringify({content: before})}).then(r => r.json());
       if (!data.ok) { if (note) note.textContent = data.message || '优化失败'; return; }
+      const changes = data.changes || [];
+      const kept = data.kept || [];
+      const ratio = typeof data.changed_ratio === 'number'
+        ? Math.round(data.changed_ratio * 100) : null;
+      studioState.copyBefore = before;
       box.value = data.optimized;
+      // 优化后要有肉眼可见的反馈：整篇替换 + 高亮一下 + 一张结果卡（改动/保留/改动幅度/撤销）。
+      box.classList.add('optimized');
+      setTimeout(() => box.classList.remove('optimized'), 2500);
       if (note) {
-        note.textContent = '已优化：' + (data.changes || []).join('；') +
-          (data.kept || []).length ? '（保留：' + (data.kept || []).join('；') + '）' : '';
+        note.textContent = '已整篇重写' + (ratio != null ? '（文字改动 ' + ratio + '%）' : '') +
+          (changes.length ? '：' + changes.join('；') : '。');
       }
+      renderStudioOptimizeResult({changes: changes, kept: kept, ratio: ratio, note: data.note,
+                                  derived: data.changes_source === 'derived_from_diff',
+                                  keptSource: data.kept_source});
+      toast('文案已整篇重写' + (ratio != null ? '（文字改动 ' + ratio + '%）' : '') +
+        (ratio != null && ratio < 2 ? '：改动很少，可再点一次' : ''));
     } catch (error) {
-      if (note) note.textContent = '优化请求失败';
+      if (note) note.textContent = '优化请求失败：' + ((error && error.message) || error);
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) { btn.disabled = false; btn.textContent = '文案优化'; }
     }
+  }
+
+  // 优化结果卡：改动条数 / 真实字符改动比例 / 刻意保留的事实与限定词 / 撤销优化。
+  // 原来这里有个三目优先级 bug（'已优化' + changes + kept.length ? A : B 永远走 A），
+  // 现在拆开写，保留项不再被吞掉。
+  function renderStudioOptimizeResult(info) {
+    const box = $('studio-optimize-result');
+    if (!box) return;
+    const changes = info.changes || [];
+    const kept = info.kept || [];
+    const ratio = info.ratio;
+    box.innerHTML =
+      '<div class="studio-optimize-head"><span>整篇重写完成</span>' +
+      (ratio != null ? '<span class="studio-optimize-ratio">文字改动 ' + ratio + '%</span>' : '') +
+      (info.derived ? '<span>改动清单由真实 diff 得出（模型没逐条回报）</span>' : '') +
+      (ratio != null && ratio < 2 ? '<span>改动很少，可再点一次「文案优化」</span>' : '') +
+      '<button type="button" class="studio-btn" id="studio-optimize-undo">撤销优化</button></div>' +
+      (changes.length ? '<ul><li>改动：' + changes.map(escapeHtml).join('</li><li>') + '</li></ul>' : '') +
+      (kept.length ? '<ul><li>保留：' + kept.map(escapeHtml).join('</li><li>') + '</li></ul>'
+                   : '<span>保留项：模型未逐条回报；事实边界由提示词与一致性核对保证。</span>') +
+      '<span>说明：文字改动率只统计字符替换；参数、型号与「约/仅/选配」等限定词按要求原样保留，' +
+      '所以这个数字不会很高，改动集中在语气、节奏、开头钩子与段落结构。</span>' +
+      (info.note ? '<span>' + escapeHtml(info.note) + '</span>' : '');
+    box.hidden = false;
+    const undo = $('studio-optimize-undo');
+    if (undo) undo.addEventListener('click', () => {
+      const text = $('studio-copy-text');
+      if (text && studioState.copyBefore) text.value = studioState.copyBefore;
+      box.hidden = true;
+      toast('已撤销优化，恢复到优化前的文案');
+    });
+  }
+
+  // ===================== 工作室图片放大（应用内浮层）=====================
+  // 与对话区 variant-zoom / image-zoom 同一套做法：应用内浮层（**不是 window.open**），
+  // 关闭按钮 + Esc + 点遮罩。
+  // 两种图的可用动作**必须区分**（用户明确要求）：
+  //   知识库原图：下载 + 参考 —— **绝对不允许重绘**（它是产品实物依据）；
+  //   新生成产品图：下载 + 参考 + 重绘。
+  function ensureStudioImageZoom() {
+    if (studioZoomEl && document.body.contains(studioZoomEl)) return studioZoomEl;
+    const overlay = document.createElement('div');
+    overlay.className = 'image-zoom';
+    overlay.id = 'studio-image-zoom';
+    overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '图片放大');
+    overlay.innerHTML =
+      '<div class="image-zoom-card">' +
+      '<div class="image-zoom-head">' +
+      '<span class="studio-zoom-origin" id="studio-image-zoom-origin"></span>' +
+      '<span class="image-zoom-caption"></span>' +
+      '<button type="button" class="image-zoom-btn" id="studio-image-zoom-download">下载</button>' +
+      '<button type="button" class="image-zoom-btn" id="studio-image-zoom-ref">参考</button>' +
+      '<button type="button" class="image-zoom-btn studio-redraw" id="studio-image-zoom-redraw">重绘</button>' +
+      '<button type="button" class="image-zoom-close" id="studio-image-zoom-close" ' +
+      'aria-label="关闭">×</button></div>' +
+      '<div class="image-zoom-body"><img class="image-zoom-img" alt=""></div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => {
+      if (event.target.closest('#studio-image-zoom-download')) { downloadStudioZoomImage(); return; }
+      if (event.target.closest('#studio-image-zoom-ref')) { studioZoomSetRef(); return; }
+      if (event.target.closest('#studio-image-zoom-redraw')) { studioZoomRedraw(); return; }
+      if (event.target === overlay
+          || event.target.closest('#studio-image-zoom-close')) closeStudioImageZoom();
+    });
+    const preview = overlay.querySelector('.image-zoom-img');
+    if (preview) preview.addEventListener('error', () => {
+      const caption = overlay.querySelector('.image-zoom-caption');
+      if (caption) caption.textContent = '图片地址已过期，无法预览；可刷新材料后重试。';
+    });
+    // Esc 关闭：只在浮层可见时生效，不干扰对话区那两个浮层。
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && studioZoomEl && !studioZoomEl.hidden) closeStudioImageZoom();
+    });
+    studioZoomEl = overlay;
+    return overlay;
+  }
+
+  function studioImageForKb(index) {
+    const row = studioState.images[index];
+    if (!row) return null;
+    return {kind: 'kb', refKey: kbRefKey(index), url: row.access_url || row.url || '',
+            caption: row.caption || row.image_id || '知识库产品原图',
+            image_id: row.image_id || ''};
+  }
+
+  function studioImageForGenerated(key) {
+    const text = String(key || '');
+    const row = (studioState.generated || []).find(item => generatedRefKey(item) === text);
+    if (!row) return null;
+    return {kind: 'generated', refKey: text, url: row.url || '',
+            caption: row.prompt || row.composed_prompt || '新生成的产品图',
+            generated_id: String(row.generated_id || ''), row: row};
+  }
+
+  function openStudioImageZoom(payload) {
+    if (!payload || !payload.url) { toast('这张图没有可用的地址'); return; }
+    const overlay = ensureStudioImageZoom();
+    studioZoomPayload = payload;
+    const preview = overlay.querySelector('.image-zoom-img');
+    if (preview) { preview.src = payload.url; preview.alt = payload.caption || ''; }
+    const caption = overlay.querySelector('.image-zoom-caption');
+    if (caption) caption.textContent = payload.caption || '';
+    const origin = overlay.querySelector('#studio-image-zoom-origin');
+    if (origin) origin.textContent = payload.kind === 'generated' ? '新生成产品图' : '知识库原图';
+    // 知识库原图不出现「重绘」：它不是 AI 产物，重绘它等于伪造产品外观依据。
+    const redraw = overlay.querySelector('#studio-image-zoom-redraw');
+    if (redraw) redraw.hidden = payload.kind !== 'generated';
+    const download = overlay.querySelector('#studio-image-zoom-download');
+    if (download) { download.disabled = false; download.textContent = '下载'; }
+    const ref = overlay.querySelector('#studio-image-zoom-ref');
+    if (ref) {
+      ref.textContent = studioState.refs.indexOf(payload.refKey) >= 0 ? '已设为参考' : '参考';
+    }
+    overlay.hidden = false;
+    const close = overlay.querySelector('#studio-image-zoom-close');
+    if (close) close.focus();
+  }
+
+  function closeStudioImageZoom() {
+    if (studioZoomEl) studioZoomEl.hidden = true;
+    studioZoomPayload = null;
+  }
+
+  // 下载当前放大图：fetch → blob → <a download>。用户要拿去小红书/其他平台发布，
+  // 所以必须真的下载；取不到（非 200 / 空文件 / 没有地址）就如实提示，不假装成功。
+  async function downloadStudioZoomImage() {
+    const overlay = studioZoomEl;
+    const payload = studioZoomPayload;
+    if (!overlay || !payload) return;
+    const src = payload.url || '';
+    const button = overlay.querySelector('#studio-image-zoom-download');
+    if (!src) { toast('这张图没有可下载的地址'); return; }
+    if (button) { button.disabled = true; button.textContent = '下载中…'; }
+    try {
+      const response = await fetch(src, {credentials: 'same-origin'});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const blob = await response.blob();
+      if (!blob || !blob.size) throw new Error('取到的是空文件');
+      const base = safeFileName(payload.caption || '') ||
+        (payload.kind === 'generated' ? 'studio-generated' : 'product-image');
+      const ext = imageExtension(blob, src);
+      downloadBlob(blob, base + (ext ? '.' + ext : ''));
+      toast('图片已下载');
+      if (button) button.textContent = '已下载';
+    } catch (error) {
+      toast('下载失败：' + ((error && error.message) || '无法取到图片'));
+      if (button) button.textContent = '下载失败';
+    } finally {
+      setTimeout(() => {
+        if (button && document.body.contains(button)) {
+          button.disabled = false;
+          button.textContent = '下载';
+        }
+      }, 2000);
+    }
+  }
+
+  // 参考：自动设为参考图，并放到第一位（生成时真正使用的那张），有选中态 + toast 反馈。
+  function studioZoomSetRef() {
+    const payload = studioZoomPayload;
+    if (!payload || !payload.refKey) { toast('这张图不能作为参考图'); return; }
+    const at = studioState.refs.indexOf(payload.refKey);
+    if (at >= 0) studioState.refs.splice(at, 1);
+    studioState.refs.unshift(payload.refKey);
+    studioState.refs = studioState.refs.filter(
+      (key, index) => studioState.refs.indexOf(key) === index).slice(0, 9);
+    renderStudioRefs();
+    renderStudioGenerated();
+    const ref = studioZoomEl && studioZoomEl.querySelector('#studio-image-zoom-ref');
+    if (ref) ref.textContent = '已设为参考';
+    toast('已设为参考图（生成时优先使用这一张）');
+  }
+
+  function studioZoomRedraw() {
+    const payload = studioZoomPayload;
+    if (!payload || payload.kind !== 'generated') {
+      // 兜底：知识库原图即便被误触发也没有重绘这条路。
+      toast('知识库原图不提供重绘');
+      return;
+    }
+    const key = payload.refKey;
+    closeStudioImageZoom();
+    redrawGenerated(key);
   }
 
   function bindStudio() {
     on('studio-kb-grid', 'click', (event) => {
       const btn = event.target.closest('[data-kb]');
       if (!btn) return;
-      const index = Number(btn.dataset.kb);
-      const at = studioState.refs.indexOf(index);
-      if (at >= 0) studioState.refs.splice(at, 1);
-      else if (studioState.refs.length < 9) studioState.refs.push(index);
-      else { toast('参考图最多 9 张'); return; }
-      renderStudioRefs();
+      // 单击延迟：双击放大前浏览器一定先触发一次单击，不能在这时候误选（规格 §4）。
+      scheduleStudioSingle(() => toggleStudioRef(kbRefKey(Number(btn.dataset.kb))));
+    });
+    on('studio-kb-grid', 'dblclick', (event) => {
+      const btn = event.target.closest('[data-kb]');
+      if (!btn) return;
+      cancelStudioSingle();
+      event.preventDefault();
+      openStudioImageZoom(studioImageForKb(Number(btn.dataset.kb)));
+    });
+    // 右栏「新生成产品图」：单击＝设为参考图，双击＝放大（下载 / 参考 / 重绘）。
+    on('studio-generated-grid', 'click', (event) => {
+      const btn = event.target.closest('[data-gen]');
+      if (!btn) return;
+      scheduleStudioSingle(() => toggleStudioRef(String(btn.dataset.gen || '')));
+    });
+    on('studio-generated-grid', 'dblclick', (event) => {
+      const btn = event.target.closest('[data-gen]');
+      if (!btn) return;
+      cancelStudioSingle();
+      event.preventDefault();
+      openStudioImageZoom(studioImageForGenerated(String(btn.dataset.gen || '')));
     });
     on('studio-prompt', 'input', () => {
       const box = $('studio-prompt');
@@ -2322,12 +2810,13 @@
       const redraw = event.target.closest('[data-redraw]');
       const promptBox = $('studio-prompt');
       if (reuse && promptBox) {
-        promptBox.value = studioState.generated[Number(reuse.dataset.reuse)].prompt || '';
+        const row = studioState.generated[Number(reuse.dataset.reuse)] || {};
+        promptBox.value = row.source_prompt || row.prompt || '';
         toast('提示词已填入');
       }
-      if (redraw && promptBox) {
-        promptBox.value = studioState.generated[Number(redraw.dataset.redraw)].prompt || '';
-        runStudioGenerate();
+      if (redraw) {
+        const row = studioState.generated[Number(redraw.dataset.redraw)];
+        if (row) redrawGenerated(generatedRefKey(row));
       }
     });
   }

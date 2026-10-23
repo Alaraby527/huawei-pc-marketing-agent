@@ -44,8 +44,11 @@ def fresh_db(tmp_path, monkeypatch):
     db_layer.reset_for_tests(url)
     db_layer.init_db()
     studio.reset_cache()
+    # 「最近生成」是模块级内存，测试之间必须隔离，否则 c-studio 的桶会跨测试累积。
+    studio.reset_generated()
     yield
     studio.reset_cache()
+    studio.reset_generated()
     db_layer.reset_for_tests(url)
 
 
@@ -304,14 +307,210 @@ def test_the_workbench_endpoints_exist_and_are_wired():
 
 
 def test_copy_optimisation_only_changes_expression():
-    """优化最容易被做成"加料"，所以提示词必须把事实边界写死。"""
+    """优化最容易被做成"加料"，所以提示词必须把事实边界写死。
+
+    用户实测反馈"优化后好像没有效果"，所以提示词还必须把**改动幅度**写成硬性要求
+    （重写开头钩子 / 重排段落节奏 / 平台语感），并且要带回真实改动比例。
+    """
     import inspect
     from app import studio
     source = inspect.getsource(studio.optimize_copy)
+    # 事实边界（原有结论，一条都不能少）
     assert "只改表达，不新增事实" in source
     assert "不得增加卖点、参数、价格、优惠、承诺" in source
     assert "不得替换或改写型号" in source
     assert '"changes"' in source and '"kept"' in source, "要带回改了什么、保留了什么"
+    # 改动幅度（这轮新增：不能只抠字眼）
+    assert "重写开头钩子" in source
+    assert "较大改动" in source, "changes 要描述真实做过的较大改动"
+    assert "至少 3 条" in source, "changes 不能只给一两条就交差"
+    assert '"约/最高/选配/仅某版本"等限定词必须原样保留' in source
+    assert "不得新增实测经历、口碑、排名" in source
+    assert "changed_ratio" in source, "要给出真实改动比例，幅度小就要能看出来"
+    assert "changes_source" in source, "模型没回报 changes 时要用真实 diff 兜底，并标明来源"
+
+
+def test_optimise_retries_once_when_the_model_returns_an_empty_rewrite(monkeypatch):
+    """实测：同一段真实小红书文案偶发只回 changes/kept、optimized 为空（模型抖动）。
+
+    要重试一次；仍拿不到就如实报 EMPTY_RESULT，不拿原文冒充"已经优化过"。
+    """
+    _pin_materials(monkeypatch)
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"changes": ["重写开头"], "kept": ["参数"], "optimized": ""}, {"usage": {}}
+        return {"changes": [], "kept": [], "optimized": "换了个说法的整篇文案。"}, {"usage": {}}
+
+    monkeypatch.setattr("app.model.chat_json_messages", flaky)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.optimize_copy(session, conversation, content="原来的说法。"))
+    assert calls["n"] == 2, "空结果要重试一次"
+    assert result["ok"] is True and result["optimized"] == "换了个说法的整篇文案。"
+    # 第一次拿到的 changes/kept 不能丢
+    assert result["changes"] == ["重写开头"] and result["kept"] == ["参数"]
+
+    # 两次都空：必须如实报错
+    monkeypatch.setattr("app.model.chat_json_messages", lambda *a, **k: ({"optimized": ""}, {}))
+    failed = _run(studio.optimize_copy(session, conversation, content="原来的说法。"))
+    assert failed["ok"] is False and failed["error"] == "EMPTY_RESULT"
+    session.close()
+
+
+def test_optimise_never_returns_an_empty_change_list(monkeypatch):
+    """实测（真实整篇小红书文案）：模型有时只回 optimized，changes/kept 是空的。
+
+    空 changes 会让用户完全"感知不到效果"，所以要用真实 diff 兜底，
+    并如实标明这是 diff 得出的、不是模型的自述。
+    """
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr("app.model.chat_json_messages", lambda *a, **k: (
+        {"optimized": "全新开头！\n\n第二段换了说法。\n\n参数 16 GB 原样保留。"}, {"usage": {}}))
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.optimize_copy(
+        session, conversation,
+        content="屏幕是触控的。\n\n内存 16 GB。\n\n参数 16 GB 原样保留。"))
+    assert result["ok"] is True, result
+    assert result["changes"], "改动清单不能是空白的"
+    assert result["changes_source"] == "derived_from_diff"
+    assert result["changed_ratio"] > 0
+    session.close()
+
+
+def test_optimise_reports_the_real_change_ratio_and_keeps_facts(monkeypatch):
+    """只有一行 note 的"已优化"说服不了用户：要给出真实字符改动比例。"""
+    _pin_materials(monkeypatch)
+
+    # chat_json_messages 是同步函数（内部自己处理超时），这里不能用 async 替身。
+    monkeypatch.setattr("app.model.chat_json_messages", lambda *a, **k: (
+        {"optimized": "开机就惊艳！\n\n屏幕手感顺滑。",
+         "changes": ["重写开头钩子", "拆成短句"],
+         "kept": ["型号与参数原样保留"]}, {"usage": {}}))
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.optimize_copy(session, conversation, content="屏幕是触控的。"))
+    assert result["ok"] is True, result
+    assert result["changes"] and result["kept"]
+    assert result["changes_source"] == "model"
+    assert 0.0 <= result["changed_ratio"] <= 1.0
+    assert result["changed_ratio"] > 0, "整篇重写过，改动比例不可能是 0"
+    session.close()
+
+
+def test_every_generated_image_records_what_a_redraw_needs(monkeypatch):
+    """重绘 = 把当初那条流程再走一遍，所以每张图的来源必须逐张记住：
+    参考图（image_id / 地址）、用户原始提示词、配方、模型、比例 / 质量 / 张数。"""
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr(studio, "get_asset", lambda token: (b"\x89PNG-data", "image/png"))
+    monkeypatch.setattr(studio, "store_asset", lambda body, mime: "/api/v1/assets/out-1")
+
+    async def fake_thread(fn, *args):
+        return [b"generated-png-1", b"generated-png-2"], "primary"
+
+    monkeypatch.setattr(studio.asyncio, "to_thread", fake_thread)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.generate_image(
+        session, conversation, prompt="宿舍书桌", ratio="portrait", image_id="I-1",
+        size="1080x1440", count=2))
+    assert result["ok"] is True, result
+    rows = studio.generated_history(conversation.id)
+    assert len(rows) == 2
+    for row in rows:
+        assert row["image_id"] == "I-1"                       # 原来的参考图
+        assert row["reference_url"] == "/api/v1/assets/ref-token"
+        assert row["reference_kind"] == "kb_original"
+        assert row["source_prompt"] == "宿舍书桌"              # 用户原始提示词，重绘要用它
+        assert row["composed_prompt"]
+        assert row["model"] and row["ratio"] == "portrait"
+        assert row["size"] == "1080x1440" and row["count"] == 2
+        assert row["quality"] == "high"
+        assert row["generated_id"]
+    assert len({row["generated_id"] for row in rows}) == 2, "每张图要有独立标识"
+    assert result["images"][0]["generated_id"] == rows[0]["generated_id"]
+    studio.reset_generated()
+    session.close()
+
+
+def test_a_generated_image_can_be_used_as_the_next_reference(monkeypatch):
+    """右栏「新生成产品图」单击设为参考图后，生成接口必须真的用它。
+
+    拿一个知识库里不存在的 id 去 ``pick_reference`` 会**静默回退到第一张原图**，
+    那就成了"看着用了生成图、实际用了别的原图"，所以生成图用 ``gen:<generated_id>`` 标明。
+    """
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr(studio, "get_asset", lambda token: (b"\x89PNG-data", "image/png"))
+    monkeypatch.setattr(studio, "store_asset", lambda body, mime: "/api/v1/assets/out-1")
+
+    async def fake_thread(fn, *args):
+        return [b"generated-png"], "primary"
+
+    monkeypatch.setattr(studio.asyncio, "to_thread", fake_thread)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    first = _run(studio.generate_image(session, conversation, prompt="第一次"))
+    gen_id = first["images"][0]["generated_id"]
+    second = _run(studio.generate_image(session, conversation, prompt="接着改",
+                                        image_id="gen:" + gen_id))
+    assert second["ok"] is True, second
+    assert second["reference"]["kind"] == "generated"
+    assert second["reference"]["image_id"] == "gen:" + gen_id
+    rows = studio.generated_history(conversation.id)
+    assert rows[0]["reference_kind"] == "generated"
+    assert rows[0]["reference_url"] == "/api/v1/assets/out-1"
+    studio.reset_generated()
+    session.close()
+
+
+def test_an_unknown_generated_reference_is_refused_not_silently_replaced(monkeypatch):
+    """最危险的是"看着用了生成图、实际用了别的原图"：必须显式拒绝。"""
+    _pin_materials(monkeypatch)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.generate_image(session, conversation, prompt="x",
+                                        image_id="gen:nope"))
+    assert result["ok"] is False and result["error"] == "REFERENCE_NOT_FOUND"
+    session.close()
+
+
+def test_the_generated_grid_and_the_zoom_are_wired_and_kb_has_no_redraw():
+    """需求1/2/3/4 的区分必须钉在代码里：新生成产品图区块 + 应用内放大 + 两种图动作不同。"""
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    for element in ("studio-generated-grid", "studio-image-zoom", "studio-image-zoom-close",
+                    "studio-image-zoom-download", "studio-image-zoom-ref",
+                    "studio-image-zoom-redraw"):
+        # 放大浮层是动态创建的（overlay.id / #id 选择器），所以检查标识确实在代码里被使用。
+        assert element in js, element
+    # 区块在右栏、知识库原图下方
+    assert html.index('id="studio-kb-grid"') < html.index('id="studio-generated-grid"')
+    assert "on('studio-generated-grid', 'click'" in js
+    assert "on('studio-generated-grid', 'dblclick'" in js
+    # loading 占位是**一张真的卡片 + 转圈**，不是只改按钮文字
+    assert '"studio-loading"' in js and '"studio-spinner"' in js
+    assert "studioState.generatedLoading" in js
+    # 双击＝应用内浮层，不许 window.open
+    zoom_at = js.index("  function openStudioImageZoom(")
+    zoom_body = js[zoom_at:js.index("  function closeStudioImageZoom(", zoom_at)]
+    assert "window.open" not in zoom_body
+    # 区分：知识库原图双击后不出现「重绘」按钮
+    assert "redraw.hidden = payload.kind !== 'generated'" in js
+    # 旧后端不支持 gen: 参考图时必须拦住（否则会静默回退到第一张原图）
+    assert "studioState.capability.generated_reference" in js
+    assert '"generated_reference": True' in Path("app/studio.py").read_text()
+    # 重绘要复用当初记录的参考图 / 提示词 / 参数，而不是当前表单
+    assert "source_prompt" in js and "reference_url" in js
 
 
 def test_generated_history_is_honest_about_persistence():

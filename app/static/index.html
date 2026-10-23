@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.33.0-deliveryzoom">
+<link rel="stylesheet" href="/static/style.css?v=0.34.0-studioimages">
 </head>
 <body>
 <div class="app-shell">
@@ -196,7 +196,9 @@
               <button type="button" class="studio-btn" id="studio-optimize">文案优化</button>
               <button type="button" class="studio-btn primary" id="studio-copy">一键复制</button>
             </div>
-            <p class="studio-note" id="studio-copy-note">文案优化只改表达、不新增事实。</p>
+            <p class="studio-note" id="studio-copy-note">文案优化会整篇重写语气、节奏与开头钩子；事实、参数与「约/最高/选配」等限定词原样保留，不新增任何事实。</p>
+            <!-- 文案优化后的可见反馈：改动条数 + 真实改动比例 + 撤销优化 -->
+            <div class="studio-optimize-result" id="studio-optimize-result" hidden></div>
           </section>
 
           <!-- 中：图片工作台 -->
@@ -269,8 +271,20 @@
               <h3>知识库原图</h3>
               <span class="studio-chip" id="studio-kb-count">检测中…</span>
             </header>
-            <p class="studio-note">点一下设为参考图；已选的可再次点击取消。</p>
+            <p class="studio-note">单击设为参考图；已选的可再次点击取消。双击放大后只能下载或设为参考图——知识库原图是产品实物依据，不许重绘。</p>
             <div class="studio-kb-grid" id="studio-kb-grid"></div>
+
+            <!-- 新生成产品图：本次生成的成品直接落在这里（生成过程中显示转圈占位） -->
+            <div class="studio-generated-block">
+              <header class="studio-col-head">
+                <h3>新生成产品图</h3>
+                <span class="studio-chip" id="studio-generated-count">0 张</span>
+              </header>
+              <p class="studio-note">生成中会先出现占位卡片；完成后图片直接显示在这里。单击设为参考图，双击放大（下载 / 参考 / 重绘）。</p>
+              <div class="studio-generated-grid" id="studio-generated-grid">
+                <p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。</p>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -278,7 +292,7 @@
         <section class="studio-history" aria-label="最近生成">
           <header class="studio-col-head">
             <h3>最近生成</h3>
-            <span class="studio-note">本次任务会优先显示在这里，可继续作为参考图</span>
+            <span class="studio-note">与右栏「新生成产品图」同源；重绘按当初的参考图与参数再发一次</span>
             <button type="button" class="studio-btn" id="studio-history-refresh">刷新</button>
           </header>
           <div class="studio-history-grid" id="studio-history-grid">
@@ -380,7 +394,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.33.0-deliveryzoom" defer></script>
-<script src="/static/workspace.js?v=0.33.0-deliveryzoom" defer></script>
+<script src="/static/app.js?v=0.34.0-studioimages" defer></script>
+<script src="/static/workspace.js?v=0.34.0-studioimages" defer></script>
 </body>
 </html>
