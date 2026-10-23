@@ -1968,6 +1968,24 @@
   });
 
   // B：交付图片点击在新标签打开原图（不引库）。
+  // 知识库原图的 access_url 是临时令牌、会过期。加载失败时若只留一个圆角空框 + 型号名，
+  // 看起来就和候选 pill 一样，用户会以为 agent 又让他重选一次型号。
+  // 所以失败必须显式化：隐藏破图、给出可读原因。error 事件不冒泡，必须用捕获阶段。
+  chatLog.addEventListener('error', (event) => {
+    const img = event.target;
+    if (!img || img.tagName !== 'IMG') return;
+    if (!img.closest('.draft-images, .image-results')) return;
+    const figure = img.closest('figure') || img.parentNode;
+    if (figure) figure.classList.add('image-broken');
+    img.hidden = true;
+    if (figure && !figure.querySelector('.image-broken-note')) {
+      const note = document.createElement('span');
+      note.className = 'image-broken-note';
+      note.textContent = '图片地址已过期，暂时无法显示；点「刷新材料」可重新取图。';
+      img.insertAdjacentElement('afterend', note);
+    }
+  }, true);
+
   chatLog.addEventListener('click', (event) => {
     const img = event.target && event.target.closest ? event.target.closest('img') : null;
     if (!img || !img.closest('.draft-images, .image-results')) return;
