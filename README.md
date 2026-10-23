@@ -22,11 +22,20 @@
 
 > 截图来自 Public / Running 的魔搭实例：左侧任务栏、热点搜索入口、中间自由输入对话框和可折叠右侧工作栏。完整验收记录见 [`docs/12_线上验证记录.md`](docs/12_线上验证记录.md)。
 
-### 小红书扫码热点（内部服务）
+### 热点来源（MCP 已移除）
 
-顶栏的“连接小红书”会弹出二维码。用户用小红书 App 完成扫码登录和授权后，主应用拉取实时笔记作为热点线索；未登录、未配置或 MCP 不可用时，自动回退公开热榜/微博/编辑方向。小红书 MCP 是**内部授权服务**，不是第二个用户入口；用户始终只使用主应用。
+> ⚠️ **小红书扫码热点所用的内部授权 MCP 服务已整体移除**——它没有实际作用且登录困难
+> （云端扫码常被小红书风控拦截，要求短信验证而 MCP 无法提交）。相关模块、路由与测试已删除，
+> `XHS_MCP_BASE` / `XHS_MCP_TOKEN` 不再被读取。
 
-> 公网演示不要登录个人主账号；登录会话由实例共享，重启后失效。云端扫码常被小红书风控拦截（要求短信验证，MCP 无法提交），可改用服务端 Cookie 导入：见 [`docs/15_小红书连接上线指南.md`](docs/15_小红书连接上线指南.md)。`XHS_MCP_BASE` 与 `XHS_MCP_TOKEN` 只配置在服务端 Secrets。
+现在的热点取源是两条，都不依赖扫码登录：
+
+- **热梗（联网搜索）**：走 Serper 检索近期网络用语，再由模型整理成热点清单。需配置 `SERPER_API_KEY`；
+  **不配会退回无密钥抓取（duckduckgo-lite / bing-html），容器环境里常被挑战页挡住**，表现为
+  「搜索有返回但没有一条是关于网络用语的」→ 空列表（系统按设计拒绝用无关结果凑清单）。
+- **平台热榜**：抖音 / 微博 / 知乎 / 小红书的公开热榜条目。
+
+热点可「参考到对话」带入对话并沉淀进本次任务资料，后续生成的 3 篇文案都会结合它。
 
 ## 架构
 
@@ -183,7 +192,58 @@ curl -s http://127.0.0.1:7860/api/v1/conversations/turn \
 
 合规核验目前是**确定性规则扫描**（绝对化用语、无依据体验、未核实价格/促销、数字可追溯性），不是逐条语义事实核验；导出报告会明确标注这一点。
 
-## 六页样稿
+## 证据与样图（评审对照）
+
+### 风格配方实际生成样图（24 个配方）
+
+配方库 R01–R24 逐张生成样图，**已人工逐张验收：批准 22 个、剔除 2 个**（R04 水墨空间、R22 文字主视觉
+都丢了产品本体）。批准是带具名审批人、时间与**逐张 sha256 证据**的记录，不是把配方字段改成 approved。
+
+<table>
+<tr>
+<td><a href="docs/evidence/recipes/R01_杂志编辑.jpg"><img src="docs/evidence/recipes/R01_杂志编辑.jpg" width="150" alt="R01 杂志编辑"></a><br>R01 杂志编辑</td>
+<td><a href="docs/evidence/recipes/R05_电影叙事.jpg"><img src="docs/evidence/recipes/R05_电影叙事.jpg" width="150" alt="R05 电影叙事"></a><br>R05 电影叙事</td>
+<td><a href="docs/evidence/recipes/R12_黏土世界.jpg"><img src="docs/evidence/recipes/R12_黏土世界.jpg" width="150" alt="R12 黏土世界"></a><br>R12 黏土世界</td>
+<td><a href="docs/evidence/recipes/R13_像素游戏背景.jpg"><img src="docs/evidence/recipes/R13_像素游戏背景.jpg" width="150" alt="R13 像素游戏"></a><br>R13 像素游戏</td>
+</tr>
+<tr>
+<td><a href="docs/evidence/recipes/R04_水墨空间.jpg"><img src="docs/evidence/recipes/R04_水墨空间.jpg" width="150" alt="R04 水墨空间（已剔除）"></a><br>R04 水墨空间 <b>已剔除</b></td>
+<td><a href="docs/evidence/recipes/R22_文字主视觉.jpg"><img src="docs/evidence/recipes/R22_文字主视觉.jpg" width="150" alt="R22 文字主视觉（已剔除）"></a><br>R22 文字主视觉 <b>已剔除</b></td>
+<td><a href="docs/evidence/reference/kb_reference.jpg"><img src="docs/evidence/reference/kb_reference.jpg" width="150" alt="参考原图"></a><br>参考原图（图生图输入）</td>
+<td><a href="docs/evidence/screenshots/04_图文工作室重绘结果_generated_scene.jpg"><img src="docs/evidence/screenshots/04_图文工作室重绘结果_generated_scene.jpg" width="150" alt="重绘结果"></a><br>重绘结果（generated_scene）</td>
+</tr>
+</table>
+
+**全部 28 张**见 [`docs/evidence/recipes/`](docs/evidence/recipes/)（含 R01/R02 的多次迭代版），
+生成方式与验收结果见该目录 [README](docs/evidence/recipes/README.md)。
+
+生成链路只有一条：**知识库核验产品原图 + 配方提示词 → 图生图**。不提供纯文生图。
+
+> 该目录是**压缩后的展示副本，不是 sha256 证据原件**（原图 51.6 MB → 展示版 1.8 MB）。
+> 这些是生成图（`kind = generated_scene`）**不是产品实拍**，不得用于证明产品外观或当作所选配置实拍。
+> 产品图片版权归原权利人，仅用于项目展示与效果评估。
+
+### 说明书附录插图
+
+从《作品说明书_复赛版.docx》附录 A 提取（内嵌在 docx 里评审看不到）：
+
+<table>
+<tr>
+<td><a href="docs/evidence/screenshots/01_工作台界面_0.16x线上版_历史.jpg"><img src="docs/evidence/screenshots/01_工作台界面_0.16x线上版_历史.jpg" width="230" alt="工作台界面"></a><br>工作台界面（<b>0.16.x 历史版</b>）</td>
+<td><a href="docs/evidence/screenshots/03_知识库核验原图.jpg"><img src="docs/evidence/screenshots/03_知识库核验原图.jpg" width="150" alt="知识库核验原图"></a><br>知识库核验原图</td>
+<td><a href="docs/evidence/screenshots/05_配方R16知识手账_实际生成样图.jpg"><img src="docs/evidence/screenshots/05_配方R16知识手账_实际生成样图.jpg" width="150" alt="R16 知识手账"></a><br>R16 知识手账生成样图</td>
+</tr>
+</table>
+
+⚠️ 第一张是 **0.16.x 引导式流程版本的界面**（说明书第 1 章自述"线上截图仅代表 0.16.x 行为"），
+**不代表当前版本**；当前版本已改为 LangGraph 自主 + 三板块（对话 / 热点榜单 / 图文工作室）。
+详见 [`docs/evidence/screenshots/README.md`](docs/evidence/screenshots/README.md)。
+
+### 六页样稿（历史形态）
+
+> ⚠️ **六页图文已从当前版本整体删除**：工具 `render_visuals`、页面结构、海报路由与长图 ZIP 一并移除。
+> 交付形态改为「3 篇文案 + 知识库原图 + 图文工作室」。以下样稿仅作**历史形态**展示。
+> 删后旧对话重放调用该工具会显式返回 `TOOL_REMOVED`，不静默失效。
 
 下面是使用真实产品资料和原图渲染的六页样稿，用于展示图文结构与版式，**不代表当前会话的生成结果**。
 
