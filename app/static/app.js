@@ -513,6 +513,14 @@
       chatLog.innerHTML = '';
       visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
         '<p>' + escapeHtml(item.content || '').replace(/\n/g, '<br>') + '</p>'));
+      // 参考进来的热点是写进任务资料的**持久事实**（规格 §6）：任务重开后也要在对话里可见，
+      // 否则用户会以为"热点没参考进去"。material.hotspot 恒有 title/source，按 title 判空。
+      const replayedHotspot = ((conversation.material || {}).hotspot || {});
+      if (String(replayedHotspot.title || '').trim()) {
+        addMessage('assistant', '<p class="hint">热点已参考：「' +
+          escapeHtml(replayedHotspot.title) +
+          '」已在本次任务资料里，后面生成的 3 篇文案都会结合它。</p>');
+      }
       const task = conversation.task || {};
       // The autonomous runner has no guided "stage"; render whatever the task actually
       // holds instead of gating on stage names only the legacy runner produces.
@@ -1923,16 +1931,23 @@
   async function referenceHotspot(payload) {
     const title = (payload && payload.title) || '';
     if (!title) return;
-    if (!sessionId) { toast('先在对话里建一个任务，再把热点参考进去'); return; }
+    // 热点「参考到对话」是主路径（规格 §6），没有活跃任务时**自动建一个**，
+    // 不再弹"先在对话里建一个任务"把人挡回去。建不出来就如实说失败，不假装成功。
+    const ready = await ensureConversationForHotspot();
+    if (!ready) {
+      toast('没能建出任务，热点没有参考进去，请重试');
+      return;
+    }
     // 热点先"进入对话"：作为一条可见的用户侧记录，用户能看见这次参考资料是什么。
     switchView('chat');
     addMessage('operator', '<p>参考热点：' + escapeHtml(title) +
       (payload.source ? '（' + escapeHtml(payload.source) + '）' : '') + '</p>');
     const result = await postHotspotMaterial(payload);
     if (!result.ok) {
+      const why = result.message || '接口未就绪';
       addMessage('assistant', '<p class="hint">热点已记在这条对话里，但并入本次任务资料失败：' +
-        escapeHtml(result.message || '接口未就绪') + '。</p>');
-      toast('并入任务资料失败');
+        escapeHtml(why) + '。后续文案不会带上它，可以稍后再点一次「参考到对话」。</p>');
+      toast('热点并入失败：' + why);
       return;
     }
     // 以服务端返回为准标记"已参考"。
@@ -1945,10 +1960,41 @@
                   // material.hotspot 始终带 title/source 两个键，无热点时 title 是空串，
                   // 所以这里按 title 是否为空判断，而不是按"键是否存在"。
                   (hotspot.title) ? '热点 ' + hotspot.title : ''].filter(Boolean);
-    addMessage('assistant', '<p class="hint">已把热点「' + escapeHtml(title) +
-      '」并入本次任务资料，后续文案会结合它。' +
-      (bits.length ? '（当前资料：' + escapeHtml(bits.join('、')) + '）' : '') + '</p>');
-    toast('已参考到对话');
+    // 可见记录：明确写"热点已参考"，让用户知道参考成功、可以接着补充信息。
+    addMessage('assistant', '<p class="hint">热点已参考：「' + escapeHtml(title) +
+      '」已并入本次任务资料，后面生成的 3 篇文案都会结合它。' +
+      (bits.length ? '（当前资料：' + escapeHtml(bits.join('、')) + '）' : '') +
+      ' 你可以直接接着补充人群 / 场景 / 活动，或继续走完交付流程。</p>');
+    toast('热点已参考到对话');
+  }
+
+  // 没有活跃会话时自动建一个（与 sendV2 建会话走同一个接口，服务端拥有默认 runner 版本）。
+  // 建出来就是一个干净的新任务：上一个任务的交付卡与工作室材料绝不带进来。
+  async function ensureConversationForHotspot() {
+    if (sessionId) return true;
+    try {
+      const response = await fetch('/api/v2/conversations', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      const id = String(data.conversation_id || '');
+      if (!id) return false;
+      sessionId = id;
+      applyLockState(null);   // 新会话默认未锁定，避免沿用上一个会话的锁定显示
+      resetDeliveryNodes();
+      resetStudioSession();
+      // 新会话的"已参考"状态归零：新任务里这些热点确实还没参考进去。
+      referencedHotspots.clear();
+      chatLog.innerHTML = WELCOME_HTML;
+      loadSurfaceLock();
+      await loadTasks();
+      refreshReferencedButtons();
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   // 热点卡片里的「参考到对话」按钮状态：参考过就显示"已参考"，避免重复并入。
@@ -2360,6 +2406,13 @@
       if (id) studioState.provenance[id] = entry;
       if (url) studioState.provenance['url:' + url] = entry;
       if (id) studioState.freshKeys.push(id);
+      // 本地先放一张成品卡：并发时随后那次「最近生成」拉取万一失败，用户也已经看见这张图，
+      // 不会出现"接口报成功、界面上什么都没有"。历史拉回来后整批替换，不会重复。
+      const key = generatedRefKey(entry);
+      const exists = (studioState.generated || []).some(item => generatedRefKey(item) === key);
+      if (key !== 'gen:' && !exists) {
+        studioState.generated = [entry, ...(studioState.generated || [])];
+      }
     });
   }
 
@@ -2394,8 +2447,9 @@
 
   async function runStudioGenerate() {
     if (!sessionId) { toast('先建一个任务'); return null; }
+    // 提示词是**选填**：留空时后端会按所选风格配方拼提示词；没有配方就按交付面自动挑一个
+    // 已批准配方，都没有才退回通用提示词（app/studio.py 的 generate_image）。所以这里不再拦。
     const prompt = ($('studio-prompt') || {}).value || '';
-    if (!prompt.trim()) { toast('请先写提示词'); return null; }
     if (!studioState.refs.length) { toast('请先从右侧选一张参考图'); return null; }
     // 参考图取 refs[0]：知识库原图发 image_id；新生成产品图发 'gen:<generated_id>'。
     const reference = studioRefRow(studioState.refs[0]) || {};
@@ -2435,47 +2489,96 @@
     return generateStudioImage(payload, {});
   }
 
-  // 生成/重绘共用的一条链路：先画 loading 占位，完成后把图片落在右栏「新生成产品图」。
+  // 生成/重绘共用的一条链路。
+  // 实测串行的真正原因：前端**不是**循环调用——它发的是**一个**请求，body 里带 count=N，
+  // 后端把 N 转发成上游一次 n=N 的调用并整体 await。于是四张图绑在同一个响应里：
+  // 要等最慢的一张回来才一起显示，其中一张失败还会拖掉整批，单张超时预算也被整批共用。
+  // 现在改成：前端按张数并发发起 N 个 count=1 的请求（并发上限 4），谁先完成谁先落位。
+  const STUDIO_MAX_CONCURRENCY = 4;
+
+  // 单张请求：完成后立刻把它替换进右栏「新生成产品图」——不等另外几张。
+  // 占位先收、再拉历史：这样"成品 + 剩余占位"的总格数始终等于请求张数，不会多出一格。
+  async function generateOneStudioImage(payload) {
+    const body = Object.assign({}, payload, {count: 1});
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      studioState.generatedLoading = Math.max(0, Number(studioState.generatedLoading || 0) - 1);
+      renderStudioGenerated();
+    };
+    try {
+      const response = await fetch('/api/v2/conversations/' + sessionId + '/studio/image',
+        {method: 'POST', headers: {'Content-Type': 'application/json'},
+         body: JSON.stringify(body)});
+      let data = null;
+      try { data = await response.json(); } catch (error) { data = null; }
+      if (!response.ok || !data || !data.ok) {
+        settle();
+        return {ok: false, message: (data && (data.message || data.error)) ||
+                                     ('HTTP ' + response.status)};
+      }
+      rememberGeneration(body, data);
+      settle();
+      // 每张完成就重渲染一次：N 个占位里，这一张换成成品，其余继续转圈。
+      await loadStudioHistory();
+      return {ok: true, data: data};
+    } catch (error) {
+      settle();
+      return {ok: false, message: '网络错误：' + ((error && error.message) || error)};
+    }
+  }
+
   async function generateStudioImage(payload, options) {
     const opts = options || {};
     const btn = $('studio-generate');
     const note = $('studio-image-note');
-    const wanted = Math.max(1, Math.min(Number(payload.count || 1), 4));
+    // 并发上限 4：用户要 3–4 张，最多同时打 4 个上游请求，不无限打。
+    const wanted = Math.max(1, Math.min(Number(payload.count || 1), STUDIO_MAX_CONCURRENCY));
     if (btn) { btn.disabled = true; btn.textContent = opts.buttonLabel || '生成中…（约 30–100 秒）'; }
-    if (note) note.textContent = opts.note || '正在生成…';
+    if (note) {
+      note.textContent = opts.note || (wanted > 1
+        ? '已并发提交 ' + wanted + ' 张（最多同时 ' + STUDIO_MAX_CONCURRENCY +
+          ' 张，每张约 30–100 秒）；完成一张显示一张。'
+        : '正在生成…（约 30–100 秒）');
+    }
     // 需求1：先把占位画出来——用户明确要看见"正在生成"，不是只改按钮文字。
     studioState.generatedLoading = wanted;
     studioState.freshKeys = [];
     renderStudioGenerated();
     try {
-      const data = await fetch('/api/v2/conversations/' + sessionId + '/studio/image',
-        {method: 'POST', headers: {'Content-Type': 'application/json'},
-         body: JSON.stringify(payload)}).then(r => r.json());
-      studioState.generatedLoading = 0;
-      if (!data.ok) {
-        if (note) note.textContent = data.message || data.error || '生成失败';
-        toast(data.error || '生成失败');
-        renderStudioGenerated();
-        return null;
+      const jobs = [];
+      for (let index = 0; index < wanted; index += 1) {
+        jobs.push(generateOneStudioImage(payload));
       }
-      const used = data.recipe || {};
+      const results = await Promise.all(jobs);
+      const okRows = results.filter(row => row && row.ok);
+      const failed = results.filter(row => row && !row.ok);
       if (note) {
-        note.textContent = '已生成 ' + ((data.images || []).length) + ' 张（请求 ' +
-          (data.requested_count || 1) + ' 张，尺寸 ' + (data.size || 'auto') + '）。' +
-          (used.recipe_id
-          ? '风格配方：' + (used.recipe_name || used.recipe_id)
-          : '未使用配方（' + (used.why_no_recipe || '无已批准配方') + '）') +
-          '；生成的是场景图，不是产品实拍。图片已落在右栏「新生成产品图」。';
+        if (okRows.length) {
+          const first = okRows[0].data || {};
+          const used = first.recipe || {};
+          note.textContent = '已生成 ' + okRows.length + ' / ' + wanted + ' 张（尺寸 ' +
+            (first.size || 'auto') + '）。' +
+            (used.recipe_id
+              ? '风格配方：' + (used.recipe_name || used.recipe_id)
+              : '未使用配方（' + (used.why_no_recipe || '无已批准配方') + '）') +
+            '；生成的是场景图，不是产品实拍。图片已落在右栏「新生成产品图」。' +
+            (failed.length
+              ? '另有 ' + failed.length + ' 张失败：' +
+                ((failed[0] && failed[0].message) || '未知原因')
+              : '');
+        } else {
+          note.textContent = (failed[0] && failed[0].message) || '生成失败';
+        }
       }
-      rememberGeneration(payload, data);
-      await loadStudioHistory();
-      return data;
-    } catch (error) {
-      studioState.generatedLoading = 0;
-      if (note) note.textContent = '生成请求失败：' + ((error && error.message) || error);
-      renderStudioGenerated();
-      return null;
+      // 失败要如实说，不假装成功：全失败报原因，部分成功报清成功/失败各几张。
+      if (!okRows.length) toast((failed[0] && failed[0].message) || '生成失败');
+      else if (failed.length) toast('部分成功：' + okRows.length + ' 张成功，' + failed.length + ' 张失败');
+      return okRows.length ? okRows[0].data : null;
     } finally {
+      studioState.generatedLoading = 0;
+      renderStudioGenerated();
       if (btn) { btn.disabled = false; btn.textContent = '生成图片'; }
     }
   }
@@ -2525,7 +2628,8 @@
     };
     const note = $('studio-image-note');
     if (note) note.textContent = '正在按原来的参考图 / 提示词 / 参数重绘…';
-    return generateStudioImage(payload, {buttonLabel: '重绘中…（约 30–100 秒）'});
+    return generateStudioImage(payload, {buttonLabel: '重绘中…（约 30–100 秒）',
+                                         note: '正在按原来的参考图 / 提示词 / 参数重绘…'});
   }
 
   async function optimizeStudioCopy() {

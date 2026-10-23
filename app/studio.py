@@ -518,7 +518,21 @@ async def generate_image(db: Session, conversation: models.AgentConversation, *,
     if not booking.get("ok"):
         return {"ok": False, "error": booking.get("error") or "BILLING_BLOCKED",
                 "message": str(booking.get("message") or "计费被拒绝"), "ledger": booking}
-    timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "300")))
+    # 计费记录写完后**立刻提交**，把写事务（SQLite 是单写者）在进上游之前放开。
+    # 踩过的坑（并发实测，2026-10-23 上游恢复后）：ledger 只 flush 不 commit，事务于是横跨
+    # 整个 30–100 秒的阻塞生图调用；4 张并发时后来者写自己的计费记录只能等 busy_timeout
+    # 超时，抛 "database is locked" → HTTP 500，结果 4 张里只有 1 张成功。
+    # 提交也符合账本语义：付费尝试在提交前就先落账，进程中途挂掉也留有记录。
+    try:
+        db.commit()
+    except Exception as error:  # noqa: BLE001 - 落账失败必须如实中止，不静默继续
+        db.rollback()
+        return {"ok": False, "error": "LEDGER_COMMIT_FAILED",
+                "message": "生图计费记录未能落库（" + type(error).__name__ +
+                           "），已中止本次生图；没有把这次调用当成成功"}
+    # 默认 120 秒：上游卡死时用户不该干等 5 分钟才看到失败。仍然走同一个环境变量入口，
+    # 需要更长的可自己设 IMAGE_TIMEOUT_SECONDS，不在这里硬编码绕过配置。
+    timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "120")))
     try:
         # 张数：界面上可选 1–4；之前这里写死 1，所以"张数"是假的。
         wanted = max(1, min(int(count or 1), 4))

@@ -163,6 +163,17 @@ def _request(path: str, data: bytes, content_type: str, timeout: int,
         detail = error.read().decode(errors="replace")[:300]
         raise ImageChannelError(f"图像通道返回 {error.code}：{detail}", 502) from None
     except (urllib.error.URLError, TimeoutError, OSError) as error:
+        # 超时必须说清是**上游超时**，而不是笼统的"生成失败"：上游卡死时用户要能立刻知道
+        # 是等超时了，而不是自己的参数写错了。urllib 的超时既可能是 TimeoutError 本身，
+        # 也可能被包在 URLError.reason 里，两种都要认。
+        reason = getattr(error, "reason", None)
+        timed_out = isinstance(error, TimeoutError) or isinstance(reason, TimeoutError)
+        if not timed_out:
+            text = (str(error) + " " + str(reason or "")).lower()
+            timed_out = "timed out" in text or "timeout" in text
+        if timed_out:
+            raise ImageChannelError(
+                f"上游生图服务超时（约 {int(timeout)} 秒无响应），请稍后重试", 504) from None
         raise ImageChannelError("图像通道连接失败：" + str(error)[:200], 502) from None
 
 

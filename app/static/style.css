@@ -673,6 +673,9 @@ details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px d
 .studio-field-head{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2)}
 .studio-req{font-size:10px;color:#b25b00;background:rgba(178,91,0,.08);
   border-radius:4px;padding:1px 5px}
+/* 提示词是选填：徽标要与"必填"在视觉上区分开，不再暗示非填不可。 */
+.studio-opt{font-size:10px;color:var(--text-3);background:var(--surface-3);
+  border-radius:4px;padding:1px 5px}
 .studio-hint-right{margin-left:auto;font-size:10px;color:var(--text-3)}
 .studio-copy-text{width:100%;min-height:280px;resize:vertical;padding:12px;
   border:1px solid var(--divider-strong);border-radius:var(--radius-m);background:var(--surface);

@@ -655,3 +655,148 @@ def test_the_candidate_board_is_not_squeezed_into_a_tiny_scroller():
     assert "max-height:46vh;overflow-y:auto" not in css, "不许再压回 46vh 小滚动框"
     # 结果区总是含示例栏与输入框，:empty 永不成立，所以不能用 flex-grow 抢高度
     assert ".result-area{flex:1 1 auto" not in css
+
+
+# ------------------------------------- 并发 / 超时 / 提示词选填（2026-10-23）
+
+def test_a_missing_prompt_is_composed_instead_of_refused(monkeypatch):
+    """提示词改成选填：留空时后端必须自己拼出提示词，不能空着发给上游、也不能拒绝。
+
+    路径（app/studio.py 的 generate_image）：显式 recipe_id → 该配方；
+    否则按本次会话锁定的交付面自动挑一个**已批准**配方；都没有才退回通用提示词。
+    """
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr(studio, "get_asset", lambda token: (b"\x89PNG-data", "image/png"))
+    monkeypatch.setattr(studio, "store_asset", lambda body, mime: "/api/v1/assets/out-1")
+    seen: dict = {}
+
+    async def fake_thread(fn, *args):
+        # 调用形态：generate_from_product(body, text, mime, model, size, n, ratio, timeout)
+        seen["composed"] = args[1]
+        return [b"generated-png"], "primary"
+
+    monkeypatch.setattr(studio.asyncio, "to_thread", fake_thread)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+    result = _run(studio.generate_image(session, conversation, prompt=""))
+    assert result["ok"] is True, result
+    assert result["prompt"].strip(), "留空也要拼出提示词"
+    assert seen["composed"] == result["prompt"]
+    # 如实说明这次为什么没用配方（这个会话没有锁定交付面），不算假装用了配方。
+    assert result["recipe"]["recipe_id"] is None
+    assert result["recipe"]["why_no_recipe"]
+    session.close()
+
+
+def test_the_prompt_field_is_optional_in_the_ui_and_the_js():
+    """界面要明确写"选填"，前端也不能再拦「请先写提示词」。"""
+    from pathlib import Path
+    html = Path("app/static/index.html").read_text()
+    js = Path("app/static/app.js").read_text()
+    assert 'id="studio-prompt"' in html, "id 不许删"
+    # 只看"提示词"这一行的字段头，别把上面参考图的"必填"一起框进来
+    head_at = html.index("<span>提示词</span>")
+    prompt_head = html[head_at:head_at + 120]
+    assert "选填" in prompt_head, "提示词必须明确标成选填"
+    assert "必填" not in prompt_head, "提示词不得再标必填"
+    assert "请先写提示词" not in js, "前端不能再因为提示词为空把人挡回去"
+
+
+def test_the_image_timeout_defaults_to_two_minutes_and_still_reads_the_env(monkeypatch):
+    """上游卡死时用户不该干等 5 分钟：默认 120 秒，但仍走 IMAGE_TIMEOUT_SECONDS 覆盖。"""
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr(studio, "get_asset", lambda token: (b"\x89PNG-data", "image/png"))
+    monkeypatch.setattr(studio, "store_asset", lambda body, mime: "/api/v1/assets/out-1")
+    seen: dict = {}
+
+    async def fake_thread(fn, *args):
+        seen["timeout"] = args[-1]
+        return [b"generated-png"], "primary"
+
+    monkeypatch.setattr(studio.asyncio, "to_thread", fake_thread)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    _pin_product(session, conversation)
+
+    monkeypatch.delenv("IMAGE_TIMEOUT_SECONDS", raising=False)
+    _run(studio.generate_image(session, conversation, prompt="x"))
+    assert seen["timeout"] == 120
+
+    monkeypatch.setenv("IMAGE_TIMEOUT_SECONDS", "240")
+    _run(studio.generate_image(session, conversation, prompt="x"))
+    assert seen["timeout"] == 240, "环境变量仍然能覆盖默认值"
+    studio.reset_generated()
+    session.close()
+
+
+def test_the_frontend_fans_out_concurrent_single_image_requests():
+    """实测"串行"的根因不是前端循环，也不是后端锁：前端只发**一个** count=N 的请求，
+    后端把它转成上游一次 n=N 的调用整体 await，N 张因此绑在同一个响应里。
+
+    现在前端要并发发起 N 个 count=1 的请求，并发上限 4，并且每张完成就替换自己的占位、
+    不等全部完成。纯前端改动没有 JS 测试框架，所以按本文件既有做法钉住契约字符串。
+    """
+    from pathlib import Path
+    js = Path("app/static/app.js").read_text()
+    assert "const STUDIO_MAX_CONCURRENCY = 4" in js, "并发上限必须是 4"
+    assert "Object.assign({}, payload, {count: 1})" in js, "每张一个独立的 count=1 请求"
+    assert "Promise.all(jobs)" in js, "多个请求要并发发起，不是顺序 await"
+    assert "studioState.generatedLoading = wanted" in js, "先画 N 张占位"
+    assert "studioState.generatedLoading = Math.max(0, Number(studioState.generatedLoading || 0) - 1)" in js
+    # 部分失败要如实报，不合并成一句成功
+    assert "部分成功：" in js
+    # 后端单次 count=N 的路径保持兼容，没有被删掉
+    from app import studio as studio_mod
+    import inspect
+    source = inspect.getsource(studio_mod.generate_image)
+    assert "wanted = max(1, min(int(count or 1), 4))" in source
+    assert '"requested_count": wanted' in source
+
+
+def test_concurrent_generations_do_not_collide_on_the_ledger(monkeypatch):
+    """并发实测（2026-10-23 上游恢复后，4 张 count=1 打到运行中的服务）：
+
+    3 张返回 HTTP 500，数据库里只多了一条计费记录。根因是计费记录只 flush 不 commit，
+    写事务横跨整个 30–100 秒的阻塞生图调用；SQLite 是单写者，后来者写自己的计费记录
+    等到 busy_timeout 超时 → "database is locked"。
+
+    所以 generate_image 必须在进上游之前提交这次落账。这里用 4 个并发调用 + 独立会话复现：
+    修好之后 4 张必须全部成功。
+    """
+    import time as time_mod
+
+    _pin_materials(monkeypatch)
+    monkeypatch.setattr(studio, "get_asset", lambda token: (b"\x89PNG-data", "image/png"))
+    monkeypatch.setattr(studio, "store_asset", lambda body, mime: "/api/v1/assets/out-1")
+
+    async def fake_thread(fn, *args):
+        # 模拟"阻塞"的上游调用：事务如果还开着，后面的并发调用就会撞写锁。
+        await asyncio.sleep(0.2)
+        return [b"generated-png"], "primary"
+
+    monkeypatch.setattr(studio.asyncio, "to_thread", fake_thread)
+    setup = db_layer.session_factory()()
+    conversation = _conversation(setup, "c-concurrent")
+    _pin_product(setup, conversation)
+    setup.commit()
+    setup.close()
+
+    async def one(index):
+        own = db_layer.session_factory()()
+        try:
+            row = own.get(models.AgentConversation, "c-concurrent")
+            return await studio.generate_image(own, row, prompt="并发第 " + str(index) + " 张")
+        finally:
+            own.close()
+
+    async def four():
+        return await asyncio.gather(*[one(i) for i in range(4)])
+
+    started = time_mod.monotonic()
+    results = _run(four())
+    elapsed = time_mod.monotonic() - started
+    assert [row.get("ok") for row in results] == [True, True, True, True], results
+    assert elapsed < 0.7, "4 个 0.2 秒的调用必须重叠，不能串成 0.8 秒以上"
+    assert len(studio.generated_history("c-concurrent")) == 4
+    studio.reset_generated()

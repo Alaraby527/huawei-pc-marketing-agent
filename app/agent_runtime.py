@@ -806,7 +806,8 @@ async def _generate_scene(ctx, args):
 
     ratio = RATIO_PRESETS.get(str(args.get("ratio", "")).strip())
     size = str(args.get("size", "")).strip() or None
-    timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "300")))
+    # 与工作室同一条配置入口：默认 120 秒（上游卡死要更快暴露，不干等 5 分钟）。
+    timeout = max(30, int(os.getenv("IMAGE_TIMEOUT_SECONDS", "120")))
     if remaining is not None:
         timeout = int(max(20, min(timeout, remaining)))
     started = time.monotonic()
