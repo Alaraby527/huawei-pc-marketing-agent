@@ -1,6 +1,7 @@
 """Part A: live ima evidence -> versioned materials; no model invents product facts."""
 import asyncio
 import hashlib
+import os
 import re
 import secrets
 import time
@@ -96,9 +97,17 @@ def conflicts(facts):
     return result
 
 
-# Capability URLs keep signatures out of handoffs. Restart or TTL expires images.
+# Capability URLs keep signatures out of handoffs.
+#
+# 原来的取值有两个都会让用户看到"图片地址已过期"的问题：
+#   1) ASSET_TTL = 1800（30 分钟）——在对话里看图、再跳到图文工作室，中间很容易超过 30 分钟；
+#   2) 只保留 60 个资产——存到第 61 张时最早的会被挤掉，即使还在 TTL 内也没了。
+# 现在默认放宽到 12 小时、上限 400 个，并可用环境变量覆盖。注意：资产仍在内存里，
+# 所以**进程重启仍会清空**（这一点没有变，也不该被说成已解决）。
 ASSETS = {}
-ASSET_TTL = 1800
+ASSET_TTL = int(os.getenv("ASSET_TTL_SECONDS") or 12 * 3600)
+ASSET_MAX_COUNT = int(os.getenv("ASSET_MAX_COUNT") or 400)
+ASSET_MAX_BYTES = int(os.getenv("ASSET_MAX_BYTES") or 400_000_000)
 
 
 def store_asset(body, mime):
@@ -106,7 +115,8 @@ def store_asset(body, mime):
     for token in list(ASSETS):
         if ASSETS[token][2] < now:
             del ASSETS[token]
-    while ASSETS and (len(ASSETS)>=60 or sum(len(v[0]) for v in ASSETS.values())+len(body)>80_000_000):
+    while ASSETS and (len(ASSETS) >= ASSET_MAX_COUNT
+                   or sum(len(v[0]) for v in ASSETS.values()) + len(body) > ASSET_MAX_BYTES):
         del ASSETS[next(iter(ASSETS))]
     token = secrets.token_urlsafe(24)
     ASSETS[token] = (body,mime,now+ASSET_TTL)

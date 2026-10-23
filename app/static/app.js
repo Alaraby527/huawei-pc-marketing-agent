@@ -537,16 +537,6 @@
     })), '工具调用');
   }
 
-  // 去图文工作室：把当前会话的产品与文案带过去，生图与改文案都在那边完成。
-  function studioEntryHtml() {
-    const id = escapeHtml(sessionId || '');
-    return '<div class="studio-entry">'
-      + '<span>要配图或继续改文案？</span>'
-      + '<a class="studio-link" href="/studio/workbench?conversation=' + id + '"'
-      + ' target="_blank" rel="noopener">去图文工作室 →</a>'
-      + '<span class="studio-note">产品与文案会一起带过去；生图由你在工作室里手动触发。</span>'
-      + '</div>';
-  }
 
   // B：交付卡整体搬进这条 assistant 消息，标题/正文/操作按钮/生成图片都跟着进对话流。
   function renderV2Artifact(conversation, messageEl) {
@@ -574,8 +564,11 @@
     if (sessionId) {
       try { localStorage.setItem('hwpc_conversation', sessionId); } catch (error) { /* 隐私模式忽略 */ }
     }
+    // 旧的「去图文工作室 →」锚点（另开 /studio/workbench 页面）已删除：
+    // 与新增的 #go-studio 按钮功能重复，用户要求只保留一个入口。
+    // #go-studio 走 switchView('studio')，是应用内切换且会自动带入文案与图片。
     const studioHost = $('draft-studio');
-    if (studioHost) studioHost.innerHTML = studioEntryHtml();
+    if (studioHost) { studioHost.innerHTML = ''; studioHost.hidden = true; }
     const pages = content.pages || [];
     $('pages-empty').hidden = pages.length > 0;
     $('pages-grid').hidden = pages.length === 0;
