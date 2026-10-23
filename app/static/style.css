@@ -122,10 +122,11 @@ h1,h2,h3,p{margin:0}
 .work-panel.collapsed{flex-basis:0;width:0;border:none;opacity:0;pointer-events:none}
 .work-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--divider);font-size:12px;font-weight:600;color:var(--text-2)}
 .pane{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--divider);border-radius:var(--radius-l);overflow:hidden}
-.pane-head{flex:0 0 auto;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px 12px;border-bottom:1px solid var(--divider)}
-.pane-title{font-size:16px;font-weight:600;line-height:1.3}
-.pane-sub{font-size:11px;color:var(--text-3);margin-top:2px}
-.engine-badge{font-size:11px;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:4px 9px;white-space:nowrap}
+.pane-head{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:7px 10px 6px;border-bottom:1px solid var(--divider);overflow:hidden}
+.pane-title{font-size:12px;font-weight:600;line-height:1.25}
+.pane-sub{font-size:9px;color:var(--text-3);margin-top:1px}
+.engine-badge{font-size:9px;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:2px 7px;white-space:nowrap}
 .count-badge{min-width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--surface-3);color:var(--text-2);font-size:12px}
 
 .chat-pane{min-width:0}
@@ -491,8 +492,11 @@ details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px d
 .section-btn:hover{background:var(--surface-2);color:var(--text)}
 .section-btn.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
 
-.section-tabs{flex:0 0 44px;display:flex;align-items:center;gap:4px;padding:0 24px;
-  background:var(--surface);border-bottom:1px solid var(--divider);overflow-x:auto}
+/* 高度改为按内容，且空的时候完全不占位：对话板块没有子选项卡，原来固定 44px 会留一条空白色带。 */
+.section-tabs{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding:0 24px;
+  min-height:0;height:auto;background:var(--surface);
+  border-bottom:1px solid var(--divider);overflow-x:auto}
+.section-tabs:empty{display:none}
 .section-tabs[hidden]{display:none}
 .section-tab{border:none;background:none;color:var(--text-3);border-radius:999px;
   padding:5px 12px;font-size:12px;white-space:nowrap;
@@ -502,11 +506,12 @@ details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px d
 
 /* ===================== 对话标题栏中间的交付面选项卡 ===================== */
 .pane-head-title{min-width:0}
-.surface-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+.surface-bar{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;justify-content:center;
+  min-width:0;overflow:hidden}
 .surface-tabs{display:flex;gap:2px;align-items:center;background:var(--surface-2);
   border:1px solid var(--divider);border-radius:999px;padding:3px}
 .surface-btn{border:none;background:none;color:var(--text-2);border-radius:999px;
-  padding:6px 14px;font-size:12px;font-weight:500;white-space:nowrap;
+  padding:3px 9px;font-size:10px;font-weight:500;white-space:nowrap;
   transition:background .15s var(--ease),color .15s var(--ease)}
 .surface-btn:hover{color:var(--brand)}
 .surface-btn.active{background:var(--surface);color:var(--brand);font-weight:600;
@@ -518,8 +523,8 @@ details.tool-trace{display:block;margin-top:8px;padding-top:6px;border-top:1px d
   padding:3px 9px;font-size:10px}
 .moments-split button.active{background:var(--surface);color:var(--brand);font-weight:600;
   box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.lock-state{font-size:11px;color:var(--brand);background:var(--brand-soft);
-  border-radius:999px;padding:4px 10px;white-space:nowrap}
+.lock-state{font-size:9px;color:var(--brand);background:var(--brand-soft);
+  border-radius:999px;padding:2px 7px;white-space:nowrap}
 .lock-state[hidden]{display:none}
 
 /* ===================== 产出区（原工作栏内容迁入对话区）===================== */

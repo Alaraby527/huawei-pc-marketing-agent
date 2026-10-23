@@ -215,5 +215,9 @@ def test_board_tabs_reuse_the_pill_style_not_the_section_tabs_class():
     assert "section-tab' + (key === hotMode" not in js, "不能再用 section-tab"
     # 旧的覆写规则必须清掉，否则 44px 仍会作用
     assert ".hot-tabs-row .section-tabs{" not in css
-    # 那条 44px 规则本身还在（全局横条仍需要它），但要确保不作用于热点行
-    assert ".section-tabs{flex:0 0 44px" in css
+    # 原来这里断言"44px 规则本身还在"。现在它已被彻底移除——因为对话板块没有子选项卡，
+    # 固定 44px 会在纵向容器里留一条空白色带。改成断言"隐患已根除"：
+    # flex 改为按内容（0 0 auto），所以放进横向容器也不会再变成 44px 宽的一竖条。
+    assert ".section-tabs{flex:0 0 44px" not in css, "44px 会让空格板占位、并让热点行变竖条"
+    assert ".section-tabs{flex:0 0 auto" in css, "必须按内容定尺寸"
+    assert ".section-tabs:empty{display:none}" in css, "空的选项卡条不许占位"
