@@ -23,7 +23,7 @@ from . import ledger
 from .errors import sanitize_observation
 
 # Tools that mutate business state. Read-only tools are safe to retry freely.
-WRITE_TOOLS = frozenset({"save_artifact", "render_visuals"})
+WRITE_TOOLS = frozenset({"save_artifact", "update_task_material"})
 
 
 class ToolGateway:

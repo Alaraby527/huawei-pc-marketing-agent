@@ -69,13 +69,44 @@ class _StudioContext:
 
 
 def _fixed_product(task: dict) -> dict:
-    """The product settled earlier in the conversation, if there is one."""
+    """The product settled earlier in the conversation, if there is one.
+
+    Reads the new archive first (``material.models`` / ``selected_models``, 1–2 models) and
+    falls back to the legacy ``candidates[0]`` structure, so tasks created before the new
+    flow still open with their product instead of an empty studio.
+    """
+    rows = _fixed_products(task)
+    if rows:
+        return rows[0]
+    if task.get("flow"):
+        # 新流程的 candidates 只是搜索候选；没有明确选定就没有绑定产品，
+        # 不能把候选第一位当成用户选过的型号。
+        return {}
     for candidate in (task.get("candidates") or []):
         if isinstance(candidate, dict) and candidate.get("product_id"):
             return {"product_id": candidate["product_id"],
                     "model": candidate.get("model") or "",
                     "facts_count": candidate.get("facts_count")}
     return {}
+
+
+def _fixed_products(task: dict) -> list[dict]:
+    """Every settled model, in the user's selection order."""
+    from . import task_material
+
+    models = task_material.normalize(task).get("models") or []
+    candidates = [row for row in (task.get("candidates") or []) if isinstance(row, dict)]
+    by_id = {str(row.get("product_id")): row for row in candidates}
+    rows: list[dict] = []
+    for row in models:
+        product_id = str(row.get("product_id") or "")
+        if not product_id:
+            continue
+        legacy = by_id.get(product_id) or {}
+        rows.append({"product_id": product_id,
+                     "model": row.get("model") or legacy.get("model") or "",
+                     "facts_count": legacy.get("facts_count")})
+    return rows
 
 
 def _latest_artifact(db: Session, conversation_id: str):
@@ -138,6 +169,9 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
     # AgentConversation has no title column: the list view derives one from the task state
     # or the first message, and the studio must use the same source rather than invent one.
     summary = agent_runtime.conversation_summary(db, conversation)
+    from . import task_material
+    archive = task_material.normalize(task)
+    fixed_models = _fixed_products(task)
     return {
         "conversation_id": conversation.id,
         "title": summary.get("title", ""),
@@ -147,8 +181,13 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
                     "model": (product.model if product is not None
                               else product_ref.get("model", "")),
                     "facts_count": product_ref.get("facts_count"),
-                    "audience": str(task.get("audience") or ""),
-                    "scenario": str(task.get("scenario") or "")},
+                    "audience": str(archive.get("audience") or ""),
+                    "scenario": str(archive.get("scenario") or "")},
+        # Multi-model selection (1–2) plus the accumulative archive, so the studio no longer
+        # shows only the first candidate of a 2-model task.
+        "selected_models": fixed_models,
+        "material": task_material.payload(archive),
+        "variants": task.get("variants") or [],
         "candidates": [row for row in (task.get("candidates") or []) if isinstance(row, dict)],
         "images": images,
         # Roles and rights are derived from the KB's own provenance and reported as such;

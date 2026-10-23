@@ -51,13 +51,6 @@
   const SEND_ICON = sendBtn.innerHTML;
 
   const PLATFORM_NAMES = { xiaohongshu: '小红书', wechat_article: '公众号', moments: '门店朋友圈', poster: '门店海报' };
-  const PLATFORM_TABS = {
-    xiaohongshu: [['plan', '图文方案'], ['pages', '六页图文'], ['verify', '核验结果'], ['evidence', '证据'], ['sample', '六页样稿']],
-    wechat_article: [['plan', '文章方案'], ['pages', '段落结构'], ['verify', '核验结果'], ['evidence', '证据']],
-    moments: [['plan', '短文案'], ['pages', '配图'], ['verify', '核验结果'], ['evidence', '证据']],
-    poster: [['plan', '海报方案'], ['pages', '版面'], ['verify', '核验结果'], ['evidence', '证据']],
-  };
-  const ROLE_NAMES = { hook: '封面', scene: '场景', proof: '事实', detail: '细节', decision: '决策', close: '收尾' };
   const FIELD_NAMES = { audience: '客户画像', budget: '预算', scenario: '使用场景', preferences: '偏好', required_software: '必用软件 / 系统', objective: '内容目标' };
   const TASKS_KEY = 'huawei-agent-tasks-v1';
   const WORK_PANEL_KEY = 'huawei-agent-work-panel';
@@ -69,10 +62,26 @@
   // D：最近一次交付（文案 + 图片身份），只由渲染函数写入，供「去图文工作室」带入。
   let lastDelivery = {copy: '', imageIds: [], imageUrls: []};
 
+  // F：三篇文案的选项卡状态。
+  // 单击＝选中，双击＝放大；只有"选中的那一篇"会被「图文工作室」与「一键导出」消费。
+  let selectedVariant = null;      // {variant, images, material, board}
+  let variantClickTimer = null;    // 单击延迟计时器（双击冲突处理）
+  let variantPending = null;       // 等待执行的单击 {board, tab}
+  let variantZoomEl = null;        // 放大浮层（全局单例，见 ensureVariantZoom）
+  const VARIANT_CLICK_DELAY = 250; // 规格：单击后延迟约 250ms 再执行选中
+
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text == null ? '' : String(text);
     return div.innerHTML;
+  }
+
+  // 放进 HTML 属性（如 data-ref-title="…"）时必须连引号一起转义：
+  // escapeHtml 走的是文本节点，不会转义引号，热点标题里带 ASCII 引号就会把属性截断。
+  function escapeAttr(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function addMessage(role, html) {
@@ -118,16 +127,82 @@
     const park = $('delivery-park');
     const board = $('candidate-board');
     const card = $('draft-card');
+    const entry = $('delivery-entry');
     if (park && board) { board.hidden = true; park.appendChild(board); }
     if (park && card) { card.hidden = true; park.appendChild(card); }
+    if (park && entry) { entry.hidden = true; park.appendChild(entry); }
     lastDelivery = {copy: '', imageIds: [], imageUrls: []};
     syncDeliveryEntry();
   }
 
-  // C：只有真的产出了交付文案才显示「去图文工作室」。
+  // 修 Bug#1「交付卡带着上一轮内容跟到新消息」。
+  // 机制：#draft-card / #candidate-board / #image-results 是**共享节点被 appendChild 搬运**，
+  // 而重渲染只在"这一轮真的调用了对应渲染函数"时才发生。于是某一轮没有配图/没有草稿时，
+  // 节点会带着上一轮的内容被搬进新消息，旧型号、旧原图看起来就像这一轮的产出。
+  // 修法：把"清空共享节点"和"重新填充"分开——每轮开始先清空并搬回停机位，
+  // 只有这一轮真的有产出时，渲染函数才把它重新挂进新消息并填充。宁可空着，也不让旧内容跟过来。
+  function clearDeliveryNodes() {
+    const board = $('candidate-board');
+    const card = $('draft-card');
+    const images = $('image-results');
+    const draftImages = $('draft-images');
+    const park = $('delivery-park');
+    if (images) { images.hidden = true; images.innerHTML = ''; }
+    if (draftImages) draftImages.innerHTML = '';
+    if (board) { board.hidden = true; board.innerHTML = ''; }
+    if (card) {
+      card.hidden = true;
+      ['draft-title', 'draft-meta', 'draft-body', 'draft-cta', 'draft-eyebrow'].forEach((id) => {
+        const node = $(id);
+        if (node) node.textContent = '';
+      });
+      const tags = $('draft-tags');
+      if (tags) tags.innerHTML = '';
+      const state = $('draft-state');
+      if (state) { state.textContent = ''; state.className = 'draft-state'; }
+    }
+    if (park && board) park.appendChild(board);
+    if (park && card) park.appendChild(card);
+  }
+
+  // 新一轮开始时用：清空共享节点，让上一轮的内容不可能跟到新消息里。
+  // 但**不动**"已选中的那一篇"与两个按钮：这一轮如果没有新交付，用户仍然能导出上一轮选中的那篇。
+  function beginTurnDelivery() {
+    clearDeliveryNodes();
+  }
+
+  // 新建 / 切换 / 删除任务时用：整体收回，连选中态与入口一起重置。
+  function resetDeliveryNodes() {
+    clearDeliveryNodes();
+    selectedVariant = null;
+    cancelVariantSelect();
+    closeVariantZoom();   // 放大浮层不属于任何消息，换任务时必须关掉
+    parkDelivery();   // 清 lastDelivery + 把入口收回停机位
+  }
+
+  // 新一轮真的产出了交付内容时，旧的选中态作废（新一批选项卡需要重新选）。
+  function clearDeliverySelection() {
+    selectedVariant = null;
+    cancelVariantSelect();
+    lastDelivery = {copy: '', imageIds: [], imageUrls: []};
+    syncDeliveryEntry();
+  }
+
+  // C：入口只在"确实有可交付的文案"时出现；并且被搬到那一轮交付图的最下方。
   function syncDeliveryEntry() {
     const entry = $('delivery-entry');
-    if (entry) entry.hidden = !(lastDelivery.copy || '').trim();
+    if (!entry) return;
+    const has = Boolean(selectedVariant && selectedVariant.variant) ||
+      Boolean((lastDelivery.copy || '').trim());
+    entry.hidden = !has;
+  }
+
+  function placeDeliveryEntry(host) {
+    const entry = $('delivery-entry');
+    if (!entry) return;
+    const target = host || lastAssistantMessage();
+    if (target && entry.parentNode !== target) target.appendChild(entry);
+    syncDeliveryEntry();
   }
 
   // E：工具痕迹收进默认折叠的「执行过程」。
@@ -270,7 +345,7 @@
       if ((data.deleted || []).includes(sessionId)) {
         sessionId = null;
         applyLockState(null);
-        parkDelivery();
+        resetDeliveryNodes();
         chatLog.innerHTML = '';
       }
       batchSelected.clear();
@@ -340,13 +415,13 @@
     applyLockState(null);
     lastResult = null;
     lastUserText = '';
-    parkDelivery();
+    // 清空并搬回上一轮的交付节点，新任务里绝不带上一个任务的卡片内容。
+    resetDeliveryNodes();
+    resetStudioSession();
     chatLog.innerHTML = WELCOME_HTML;
     optionsWrap.hidden = true;
     optionsWrap.innerHTML = '';
     quickActions.hidden = true;
-    $('image-results').hidden = true;
-    $('image-results').innerHTML = '';
     $('publish-state').textContent = '尚未通过核验，不可发布';
     $('publish-state').className = '';
     hideTaskMenu();
@@ -377,7 +452,8 @@
       const visible = (conversation.messages || []).filter(item =>
         (item.role === 'user' || item.role === 'assistant') &&
         !(item.role === 'assistant' && (!item.content || item.content.startsWith('{"__tool_calls__'))));
-      if (!visible.length && !(conversation.artifacts || []).length) {
+      const replayVariants = variantsFrom(conversation);
+      if (!visible.length && !(conversation.artifacts || []).length && !replayVariants.length) {
         toast('这个任务还没有内容');
         return;
       }
@@ -385,20 +461,26 @@
       lastResult = null;
       loadSurfaceLock();
       lastUserText = [...visible].reverse().find(item => item.role === 'user')?.content || '';
-      parkDelivery();
+      resetDeliveryNodes();   // 回放前先清空共享节点，避免上一个任务的交付卡混进来
+      resetStudioSession();   // 工作室里绑定的材料属于任务，切任务必须作废
       chatLog.innerHTML = '';
       visible.forEach(item => addMessage(item.role === 'user' ? 'operator' : 'assistant',
         '<p>' + escapeHtml(item.content || '').replace(/\n/g, '<br>') + '</p>'));
       const task = conversation.task || {};
       // The autonomous runner has no guided "stage"; render whatever the task actually
       // holds instead of gating on stage names only the legacy runner produces.
-      if (task.candidates && task.candidates.length) {
+      if (replayVariants.length) {
+        // 三篇文案（新流程）：回放到最后一条 assistant 消息里，交付入口跟着到图片下方。
+        renderVariants(conversation, lastAssistantMessage());
+      } else if (task.candidates && task.candidates.length) {
         renderV2Candidates(task.candidates);
       } else if (task.plan && !(conversation.artifacts || []).length) {
         renderV2Plan(task.plan, task.selected);
       }
-      if ((conversation.artifacts || []).length) renderV2Artifact(conversation);
-      if (task.images && task.images.length) renderV2Images(task.images);
+      if (!replayVariants.length && (conversation.artifacts || []).length) {
+        renderV2Artifact(conversation);
+      }
+      if (!replayVariants.length && task.images && task.images.length) renderV2Images(task.images);
       switchView('chat');
       if (isNarrow()) setSidebar(false);
       await loadTasks();
@@ -462,7 +544,7 @@
         '<div class="agent-running">' +
         '<span class="trace-step active">tool · 官方知识库</span>' +
         '<span class="trace-step">skill · 图片核验</span>' +
-        '<span class="trace-step">skill · 六页方案</span>' +
+        '<span class="trace-step">skill · 文案方向</span>' +
         '<span class="trace-step">skill · 合规扫描</span></div>');
     } else if (loadingNode) {
       loadingNode.remove();
@@ -537,12 +619,25 @@
     })), '工具调用');
   }
 
+  // 本轮到底成功跑过哪些工具：只有 LangGraph 自主 runner 会逐轮上报 tool_finished，
+  // 其他 runner 返回 null，表示"判断不了"，调用方沿用旧行为（不做额外限制）。
+  // 用它来区分"这一轮的产出"与"从 checkpoint state 带过来的上一轮字段"。
+  function roundToolGate(payload) {
+    const version = (payload && payload.runner_version) ||
+      ((payload && payload.usage) || {}).runner_version || '';
+    if (String(version).indexOf('langgraph') !== 0) return null;
+    return (Array.isArray(payload.events) ? payload.events : [])
+      .filter(item => item && item.type === 'tool_finished' && item.ok !== false)
+      .map(item => item.tool || '');
+  }
+
 
   // B：交付卡整体搬进这条 assistant 消息，标题/正文/操作按钮/生成图片都跟着进对话流。
   function renderV2Artifact(conversation, messageEl) {
     const artifacts = (conversation && conversation.artifacts) || [];
     const artifact = artifacts[0];
     if (!artifact || !artifact.content) return;
+    clearDeliverySelection();   // 新一轮交付：旧的选中态作废
     $('image-results').hidden = true;
     $('image-results').innerHTML = '';
     const content = artifact.content;
@@ -569,18 +664,7 @@
     // #go-studio 走 switchView('studio')，是应用内切换且会自动带入文案与图片。
     const studioHost = $('draft-studio');
     if (studioHost) { studioHost.innerHTML = ''; studioHost.hidden = true; }
-    const pages = content.pages || [];
-    $('pages-empty').hidden = pages.length > 0;
-    $('pages-grid').hidden = pages.length === 0;
-    $('pages-grid').innerHTML = pages.map((page, index) =>
-      '<article class="page-card"><div class="page-card-head"><span class="page-role">' +
-      escapeHtml(ROLE_NAMES[page.role] || page.role || '页面') + '</span><span class="page-number">' +
-      String(index + 1).padStart(2, '0') + ' / ' + String(pages.length).padStart(2, '0') +
-      '</span></div><h4 class="page-title">' + escapeHtml(page.title || '') +
-      '</h4><p class="page-text">' + escapeHtml(page.text || '') + '</p>' +
-      ((page.fact_ids || []).length ? '<div class="page-facts">' + page.fact_ids.map(id =>
-        '<span class="fact-chip">' + escapeHtml(id) + '</span>').join('') + '</div>' : '') +
-      '</article>').join('');
+    // 7 页图文（页面卡片 / ZIP）已按用户要求整体删除，这里不再渲染任何页面结构。
     // D：记住这次交付的文案，供「去图文工作室」带入（图片身份由本轮 renderV2Images 补上，
     // 先清空上一轮的图片，避免这一轮没有配图时把旧图片当成这次的交付）。
     lastDelivery.copy = [content.title, content.body,
@@ -589,7 +673,8 @@
                         .filter(Boolean).join('\n\n');
     lastDelivery.imageIds = [];
     lastDelivery.imageUrls = [];
-    syncDeliveryEntry();
+    // 交付入口跟着这条消息走，保证按钮就在这一轮交付内容的下方。
+    placeDeliveryEntry(card.parentNode);
     switchTab('plan');
     chatLog.scrollTop = chatLog.scrollHeight;
     loadTasks();
@@ -634,8 +719,6 @@
     $('draft-tags').innerHTML = '';
     $('draft-state').textContent = '待确认';
     $('draft-state').className = 'draft-state';
-    $('pages-empty').hidden = false;
-    $('pages-grid').hidden = true;
     // 「方案确认」还不是交付文案，所以不显示「去图文工作室」。
     lastDelivery.copy = '';
     lastDelivery.imageIds = [];
@@ -650,7 +733,9 @@
   function renderV2Images(images) {
     const host = $('image-results');
     if (!host) return;
-    if (!images || !images.length) { host.hidden = true; return; }
+    // 没有配图时必须**清空内容**而不只是隐藏：否则上一轮的图片会留在共享节点里，
+    // 卡片被搬到新消息时旧图跟着走（Bug#1 的同一根因）。
+    if (!images || !images.length) { host.hidden = true; host.innerHTML = ''; return; }
     // 图片在 #draft-card 内。若这张卡还没进对话流（本轮没有 artifact / plan），
     // 就现在挂到当前 assistant 消息里，保证图片真的出现在对话里而不是留在停机位。
     const card = $('draft-card');
@@ -667,6 +752,295 @@
     lastDelivery.imageIds = images.map(image => image.image_id).filter(Boolean);
     lastDelivery.imageUrls = images.map(image => image.access_url).filter(Boolean);
     syncDeliveryEntry();
+  }
+
+  // ===================== 三篇文案（新流程核心交互）=====================
+  // 数据契约（后端并行实现，字段缺失一律安全退化）：
+  //   variants: [{variant_id, label, title, body, tags, models}]
+  //   material: {audience, platform, scenario, campaign, models:[{product_id, model}], hotspot}
+  //   images:   [{image_id, access_url, caption}]
+  // 只渲染后端真的给回来的东西：缺 variants 就不走这条渲染路径，绝不伪造。
+  function asList(value) {
+    return Array.isArray(value) ? value.filter(Boolean) : [];
+  }
+
+  function variantsFrom(source) {
+    if (!source) return [];
+    const direct = asList(source.variants);
+    if (direct.length) return direct;
+    const task = source.task || {};
+    if (asList(task.variants).length) return asList(task.variants);
+    const material = source.material || {};
+    if (asList(material.variants).length) return asList(material.variants);
+    return [];
+  }
+
+  function imagesFrom(source) {
+    if (!source) return [];
+    const direct = asList(source.images);
+    if (direct.length) return direct;
+    const material = source.material || {};
+    if (asList(material.images).length) return asList(material.images);
+    const task = source.task || {};
+    return asList(task.images);
+  }
+
+  function materialFrom(source) {
+    if (!source) return {};
+    return source.material || (source.task && source.task.material) || {};
+  }
+
+  function variantCopyText(variant) {
+    const v = variant || {};
+    return [v.title, v.body, (v.tags || []).map(tag => '#' + tag).join(' ')]
+      .filter(Boolean).join('\n\n');
+  }
+
+  // variant.models 是 product_id，material.models 才带可读型号名；能对上就用名字，
+  // 对不上就显示 id —— 不编造型号名。
+  function variantModelNames(variant, material) {
+    const rows = asList(material && material.models);
+    return ((variant && variant.models) || []).map((id) => {
+      const hit = rows.find(row => row && (row.product_id === id || row.model === id));
+      return (hit && hit.model) || id;
+    });
+  }
+
+  function materialSummaryHtml(material) {
+    const m = material || {};
+    const models = asList(m.models).map(row => row && (row.model || row.product_id)).filter(Boolean);
+    const hotspot = m.hotspot || {};
+    const bits = [
+      m.audience ? '人群：' + m.audience : '',
+      m.platform ? '平台：' + (SURFACE_LABELS[m.platform] || m.platform) : '',
+      m.scenario ? '场景：' + m.scenario : '',
+      m.campaign ? '活动：' + m.campaign : '',
+      models.length ? '型号：' + models.join(' / ') : '',
+      hotspot.title ? '热点：' + hotspot.title : '',
+    ].filter(Boolean);
+    if (!bits.length) return '';
+    return '<div class="variant-material">本次任务资料 · <span>' +
+      bits.map(escapeHtml).join('</span> · <span>') + '</span></div>';
+  }
+
+  // 三篇文案渲染成三个"不大"的选项卡；下方是该型号的知识库产品原图；
+  // 图片最下方是 #go-studio / #export-delivery 两个按钮。
+  // 图片按契约取 images[].access_url；缺 images 时就不画图，不编造。
+  function renderVariants(source, messageEl) {
+    const variants = variantsFrom(source);
+    if (!variants.length) return false;
+    const images = imagesFrom(source);
+    const material = materialFrom(source);
+    const host = messageEl || lastAssistantMessage() || addMessage('assistant', '');
+    // 新一批选项卡 = 需要重新选：上一轮选中的那篇在这里作废。
+    clearDeliverySelection();
+    const board = document.createElement('section');
+    board.className = 'variant-board';
+    board.__variants = variants;
+    board.__images = images;
+    board.__material = material;
+    board.__selected = null;
+    const labelOf = (variant, index) => variant.label || ('方向' + String.fromCharCode(65 + index));
+    const tabs = variants.map((variant, index) => {
+      const names = variantModelNames(variant, material);
+      return '<button type="button" class="variant-tab" data-variant-index="' + index +
+        '" title="单击选中 · 双击查看全文">' +
+        '<span class="variant-tab-label">' + escapeHtml(labelOf(variant, index)) + '</span>' +
+        '<span class="variant-tab-title">' + escapeHtml(variant.title || '（无标题）') + '</span>' +
+        (names.length ? '<span class="variant-tab-models">' + escapeHtml(names.join(' / ')) + '</span>' : '') +
+        '</button>';
+    }).join('');
+    const figures = images.map(image =>
+      '<figure><img src="' + escapeHtml(image.access_url || '') + '" alt="' +
+      escapeHtml(image.caption || '知识库产品原图') + '" loading="lazy" data-image-id="' +
+      escapeHtml(image.image_id || '') + '" title="点击查看原图"><figcaption>' +
+      escapeHtml(image.caption || '知识库原图') + '</figcaption></figure>').join('');
+    board.innerHTML =
+      '<div class="variant-board-head"><span class="variant-board-title">' +
+      variants.length + ' 篇文案</span>' +
+      '<span class="variant-board-hint">单击选中要交付的那篇 · 双击看全文</span></div>' +
+      '<div class="variant-tabs">' + tabs + '</div>' +
+      materialSummaryHtml(material) +
+      (figures ? '<div class="variant-images">' + figures + '</div>' : '');
+    // 单击/双击冲突：单击延后 VARIANT_CLICK_DELAY 才执行选中；
+    // 期间收到 dblclick 就取消这次选中，直接放大。
+    board.addEventListener('click', (event) => {
+      const tab = event.target.closest('.variant-tab');
+      if (tab) scheduleVariantSelect(board, tab);
+    });
+    board.addEventListener('dblclick', (event) => {
+      const tab = event.target.closest('.variant-tab');
+      if (!tab) return;
+      cancelVariantSelect();
+      // 慢速双击：第一次的选中可能已经生效，这里一并撤销，避免"想放大却被选中"。
+      if (board.__selected === Number(tab.dataset.variantIndex)) deselectVariant(board);
+      openVariantZoom(board, tab);
+    });
+    host.appendChild(board);
+    placeDeliveryEntry(board);   // 两个按钮放在图片最下方
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return true;
+  }
+
+  function scheduleVariantSelect(board, tab) {
+    variantPending = {board, tab};
+    if (variantClickTimer) clearTimeout(variantClickTimer);
+    variantClickTimer = setTimeout(() => {
+      variantClickTimer = null;
+      const pending = variantPending;
+      variantPending = null;
+      if (pending) selectVariant(pending.board, pending.tab);
+    }, VARIANT_CLICK_DELAY);
+  }
+
+  function cancelVariantSelect() {
+    if (variantClickTimer) { clearTimeout(variantClickTimer); variantClickTimer = null; }
+    variantPending = null;
+  }
+
+  function selectVariant(board, tab) {
+    const index = Number(tab.dataset.variantIndex);
+    const variant = (board.__variants || [])[index];
+    if (!variant) return;
+    board.__selected = index;
+    board.querySelectorAll('.variant-tab').forEach((item) => {
+      item.classList.toggle('active', item === tab);
+    });
+    // 只有"选中的这一篇"会被工作室与导出消费。
+    selectedVariant = {variant, images: board.__images || [],
+                       material: board.__material || {}, board};
+    lastDelivery.copy = '';
+    lastDelivery.imageIds = [];
+    lastDelivery.imageUrls = [];
+    syncDeliveryEntry();
+    toast('已选中「' + (variant.label || ('方向' + (index + 1))) + '」');
+  }
+
+  function deselectVariant(board) {
+    board.__selected = null;
+    board.querySelectorAll('.variant-tab').forEach((item) => item.classList.remove('active'));
+    if (selectedVariant && selectedVariant.board === board) selectedVariant = null;
+    syncDeliveryEntry();
+  }
+
+  // 放大态：全局单例浮层，内容每次打开时重写，隐藏时不显示任何内容（不会留上一轮的残留）。
+  function ensureVariantZoom() {
+    if (variantZoomEl && document.body.contains(variantZoomEl)) return variantZoomEl;
+    const overlay = document.createElement('div');
+    overlay.className = 'variant-zoom';
+    overlay.id = 'variant-zoom';
+    overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '文案全文');
+    overlay.innerHTML =
+      '<div class="variant-zoom-card">' +
+      '<div class="variant-zoom-head"><span class="variant-zoom-label"></span>' +
+      '<h3 class="variant-zoom-title"></h3>' +
+      '<button type="button" class="variant-zoom-close" id="variant-zoom-close" ' +
+      'aria-label="关闭">×</button></div>' +
+      '<div class="variant-zoom-body"></div>' +
+      '<div class="variant-zoom-foot"><div class="variant-zoom-tags"></div>' +
+      '<div class="variant-zoom-models"></div></div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay || event.target.closest('#variant-zoom-close')) closeVariantZoom();
+    });
+    variantZoomEl = overlay;
+    return overlay;
+  }
+
+  function openVariantZoom(board, tab) {
+    const index = Number(tab.dataset.variantIndex);
+    const variant = (board.__variants || [])[index] || {};
+    const material = board.__material || {};
+    const overlay = ensureVariantZoom();
+    overlay.querySelector('.variant-zoom-label').textContent =
+      variant.label || ('方向' + (index + 1));
+    overlay.querySelector('.variant-zoom-title').textContent = variant.title || '（无标题）';
+    overlay.querySelector('.variant-zoom-body').textContent = variant.body || '';
+    overlay.querySelector('.variant-zoom-tags').innerHTML =
+      (variant.tags || []).map(tag => '<span>#' + escapeHtml(tag) + '</span>').join('');
+    overlay.querySelector('.variant-zoom-models').innerHTML =
+      variantModelNames(variant, material).map(name =>
+        '<span class="variant-model">' + escapeHtml(name) + '</span>').join('');
+    overlay.hidden = false;
+    const close = overlay.querySelector('#variant-zoom-close');
+    if (close) close.focus();
+  }
+
+  function closeVariantZoom() {
+    if (variantZoomEl) variantZoomEl.hidden = true;
+  }
+
+  // ===================== 一键导出（不引任何库）=====================
+  function safeFileName(text) {
+    return String(text || '').replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // 文案与对应原图一起下载：一个 .txt（标题 / 正文 / 标签 / 任务资料 / 图片说明）
+  // + 每张原图各一个文件。为了 zip 引库不值得（规格允许下载两个文件）。
+  async function exportDelivery() {
+    const picked = selectedVariant;
+    if (!picked || !picked.variant) { toast('请先选一篇文案'); return; }
+    const variant = picked.variant;
+    const images = picked.images || [];
+    const material = picked.material || {};
+    const models = variantModelNames(variant, material);
+    const lines = [variant.title || '（无标题）', '', variant.body || '', '',
+                   (variant.tags || []).map(tag => '#' + tag).join(' ')];
+    if (models.length) lines.push('', '关联型号：' + models.join(' / '));
+    const bits = [
+      material.audience ? '人群：' + material.audience : '',
+      material.platform ? '平台：' + (SURFACE_LABELS[material.platform] || material.platform) : '',
+      material.scenario ? '场景：' + material.scenario : '',
+      material.campaign ? '活动：' + material.campaign : '',
+      (material.hotspot && material.hotspot.title) ? '热点：' + material.hotspot.title : '',
+    ].filter(Boolean);
+    if (bits.length) lines.push('', '本次任务资料：' + bits.join('；'));
+    if (images.length) {
+      lines.push('', '附：该型号的知识库产品原图（说明 / 来源地址）');
+      images.forEach((image, index) => {
+        lines.push('- ' + (image.caption || image.image_id || ('原图 ' + (index + 1))) +
+          '：' + (image.access_url || ''));
+      });
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const base = safeFileName(variant.label || variant.title) || '文案';
+    const filename = '华为PC-' + base + '-' + stamp + '.txt';
+    downloadBlob(new Blob([lines.join('\n')], {type: 'text/plain;charset=utf-8'}), filename);
+    let okImages = 0;
+    for (let index = 0; index < images.length; index += 1) {
+      const url = images[index].access_url;
+      if (!url) continue;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('image');
+        const blob = await response.blob();
+        const ext = (blob.type || '').indexOf('png') >= 0 ? '.png'
+          : (blob.type || '').indexOf('webp') >= 0 ? '.webp' : '.jpg';
+        downloadBlob(blob, filename.replace(/\.txt$/, '') + '-原图' + (index + 1) + ext);
+        okImages += 1;
+      } catch (error) {
+        // 取不到就如实说（地址已写进文案文件），不假装成功。
+      }
+    }
+    const failed = images.length - okImages;
+    if (!images.length) toast('已下载文案（这一轮没有原图）');
+    else if (!failed) toast('已下载：文案 + ' + okImages + ' 张原图（浏览器若拦截多文件下载，请允许）');
+    else toast('已下载文案；' + failed + ' 张原图取不到，地址已写进文案文件');
   }
 
   // 交付面建议：先问用户，确认后才切换。UI 自动跳到对应选项卡，底层锁定也跟着改。
@@ -754,21 +1128,42 @@
         addMessage('assistant', '<p>' + escapeHtml(data.message || '任务执行失败') + '</p>');
         return;
       }
+      // 这一轮开始前先清空共享交付节点：这一轮没有产出时，绝不把上一轮的内容带进新消息。
+      beginTurnDelivery();
       const messageEl = addMessage('assistant', '<p>' +
         escapeHtml(data.reply || '已完成').replace(/\n/g, '<br>') + '</p>' + eventTrace(data.events));
       renderV2Actions(messageEl, data.actions);
       renderSurfaceSuggestion(messageEl, data.surface_suggestion);
-      if (data.candidates && data.candidates.length) {
+      // Bug#1/#2 的另一半根因：run 的 payload 里 images / candidates / artifact 会从 checkpoint
+      // 的 state 带过来，所以"这一轮没取图"时 data.images 仍可能是上一轮的图。
+      // 用本轮 run 自己的 tool_finished 事件判断这一轮到底产出了什么，避免旧图/旧 pill 重复出现。
+      const gate = roundToolGate(data);
+      const roundUsed = (names) => gate === null ||
+        gate.some(name => names.indexOf(name) >= 0);
+      // 新流程：三篇文案（variants）+ 该型号知识库原图（images）。
+      // 字段缺失／后端还没就绪时，variantsFrom 返回空数组，直接走原来的渲染路径。
+      // 选项卡下方的原图属于"这次交付的那个型号"，按契约直接取 data.images；
+      // 而下面的旧版交付卡只在"本轮真的取过图 / 真的存过交付物"时才渲染，
+      // 避免上一轮的卡片被重新贴到新消息里（规格第 7 节 bug#1/#2）。
+      const imagesThisRound = roundUsed(['find_product_images', 'render_visuals']);
+      const roundImages = imagesThisRound ? asList(data.images) : [];
+      let usedVariants = renderVariants(data, messageEl);
+      if (!usedVariants && roundUsed(['search_products']) && data.candidates && data.candidates.length) {
         renderV2Candidates(data.candidates, messageEl);
-      } else {
-        const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
-        if (conversation.artifacts && conversation.artifacts.length) {
-          renderV2Artifact(conversation, messageEl);
+      } else if (!usedVariants) {
+        // 只有这一轮真的 save_artifact 时，才把会话里的最新交付拉过来渲染。
+        if (roundUsed(['save_artifact'])) {
+          const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
+          usedVariants = renderVariants(conversation, messageEl);
+          if (!usedVariants && conversation.artifacts && conversation.artifacts.length) {
+            renderV2Artifact(conversation, messageEl);
+          }
         } else if (data.plan) {
           renderV2Plan(data.plan, data.selected, messageEl);
         }
       }
-      if (data.images) renderV2Images(data.images);
+      // variants 路径的图片已经画在选项卡下方，不能再往旧的 #draft-card 里塞一遍。
+      if (!usedVariants && roundImages.length) renderV2Images(roundImages);
       chatLog.scrollTop = chatLog.scrollHeight;
     } catch (error) {
       addMessage('assistant', '<p>网络错误，请稍后重试。</p>');
@@ -791,7 +1186,6 @@
     renderOptions(result.questions);
     renderCandidates(result);
     renderDraft(result);
-    renderPages(result);
     renderEvidence(result.handoff);
     renderVerify(result);
     renderStepper(result);
@@ -811,7 +1205,7 @@
     if (result.handoff || (result.candidates && result.candidates.length)) steps.push(['tool · 官方知识库', 'done']);
     if (result.candidates && result.candidates.length) steps.push(['skill · 候选核验', 'done']);
     if (result.selected) steps.push(['gate · 产品确认', 'done']);
-    if (result.draft) steps.push(['skill · 六页方案', 'done']);
+    if (result.draft) steps.push(['skill · 文案方案', 'done']);
     if (result.compliance_report) {
       steps.push(['skill · 合规扫描', result.compliance_report.passed ? 'done' : 'warn']);
     }
@@ -929,9 +1323,10 @@
     attachToMessage(card);
     if (!card) return;
     card.hidden = false;
+    clearDeliverySelection();   // 新一轮交付：旧的选中态作废
     const slots = result.slots || {};
     const platform = PLATFORM_NAMES[draft.platform] || draft.platform_name || '小红书';
-    $('draft-eyebrow').textContent = platform + ' · 六页图文方案';
+    $('draft-eyebrow').textContent = platform + ' · 图文方案';
     $('draft-title').textContent = draft.title || '';
     $('draft-meta').textContent = [slots.audience, slots.scenario, slots.objective].filter(Boolean).join(' · ');
     $('draft-body').textContent = draft.body || '';
@@ -950,7 +1345,8 @@
                         .filter(Boolean).join('\n\n');
     lastDelivery.imageIds = images.map(image => image.image_id).filter(Boolean);
     lastDelivery.imageUrls = images.map(image => image.access_url).filter(Boolean);
-    syncDeliveryEntry();
+    // 交付入口跟着这条消息（老 v1 路径也保持"按钮在交付内容下方"）。
+    placeDeliveryEntry(card.parentNode);
     const exportLink = $('export-link');
     if (result.can_publish && sessionId) {
       exportLink.href = '/api/v1/conversations/' + sessionId + '/export?format=markdown';
@@ -958,56 +1354,15 @@
     } else {
       exportLink.hidden = true;
     }
-    const postersLink = $('posters-link');
-    if (sessionId && draft.pages && draft.pages.length) {
-      postersLink.href = '/api/v1/conversations/' + sessionId + '/posters.zip';
-      postersLink.hidden = false;
-    } else {
-      postersLink.hidden = true;
-    }
+    // 7 页图文的「下载六页图片 ZIP / 页面卡片」已按用户要求整体删除。
     const key = (draft.title || '') + '|' + (draft.body || '').slice(0, 20);
     if (key !== lastCoverKey) {
       lastCoverKey = key;
     }
   }
 
-  function renderPages(result) {
-    const draft = result.draft;
-    const grid = $('pages-grid');
-    const empty = $('pages-empty');
-    const tools = $('pages-tools');
-    if (!draft || !draft.pages || !draft.pages.length) {
-      grid.hidden = true;
-      empty.hidden = false;
-      if (tools) tools.hidden = true;
-      return;
-    }
-    empty.hidden = true;
-    grid.hidden = false;
-    if (tools) {
-      tools.hidden = false;
-      const link = $('posters-link-pages');
-      if (sessionId) link.href = '/api/v1/conversations/' + sessionId + '/posters.zip';
-    }
-    const handoff = result.handoff || {};
-    const images = {};
-    (handoff.images || []).forEach(image => { images[image.image_id] = image; });
-    const facts = {};
-    (handoff.facts || []).forEach(fact => { facts[fact.fact_id] = fact.text.split('\n')[0]; });
-    grid.innerHTML = draft.pages.map((page, index) => {
-      const image = images[page.image_id];
-      const factChips = (page.fact_ids || []).map(id =>
-        '<span class="fact-chip" title="' + escapeHtml(facts[id] || id) + '">' + escapeHtml(id) + '</span>').join('');
-      return '<article class="page-card">' +
-        '<div class="page-card-head"><span class="page-role">' + escapeHtml(ROLE_NAMES[page.role] || page.role) + '</span>' +
-        '<span class="page-number">0' + (index + 1) + ' / 06</span></div>' +
-        (image ? '<img class="page-image" src="' + escapeHtml(image.access_url) + '" alt="' + escapeHtml(image.caption) + '" loading="lazy">' : '') +
-        '<h4 class="page-title">' + escapeHtml(page.title) + '</h4>' +
-        '<p class="page-text">' + escapeHtml(page.text) + '</p>' +
-        (factChips ? '<div class="page-facts">' + factChips + '</div>' : '') +
-        '</article>';
-    }).join('');
-  }
+  // 7 页图文的 renderPages() 已按用户要求整体删除（连同 #pages-grid / #pages-empty /
+  // #pages-tools / ZIP 下载链接）。这里保留一个空注释位，避免调用点被误加回来。
 
   function renderEvidence(handoff) {
     const status = $('evidence-status');
@@ -1328,28 +1683,124 @@
     }
   }
 
-  // 把热点复用进对话：带上名称、短文与搜索词，让模型基于热点本身写文案。
+  // 热点「参考到对话」：热点进入对话（可见记录）+ 补进本次任务资料。
   // 不抓链接内容——服务端抓小红书需要登录态，会撞风控（见 docs/15）。
   let organizedCache = [];
-  function useTopic(index) {
-    const topic = organizedCache[index];
-    if (!topic) return;
+  // 已参考的热点标题：只用于界面显示"已参考"；真正的状态以服务端返回为准。
+  const referencedHotspots = new Set();
+
+  function hotspotSourceLabel() {
+    if (hotMode === 'topics') return '热梗（联网搜索）';
+    const hit = CHART_PLATFORMS.find(item => item[0] === hotMode);
+    return hit ? hit[1] : hotMode;
+  }
+
+  // 依次尝试主路由与后端提供的兜底别名；两者都失败才算失败，绝不假装成功。
+  async function postHotspotMaterial(payload) {
+    const paths = ['/material/hotspot', '/hotspot'];
+    let lastMessage = '';
+    for (let index = 0; index < paths.length; index += 1) {
+      let response = null;
+      try {
+        response = await fetch('/api/v2/conversations/' + sessionId + paths[index], {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        lastMessage = '网络错误';
+        continue;
+      }
+      let data = null;
+      try { data = await response.json(); } catch (error) { data = null; }
+      if (response.ok) return {ok: true, data: data || {}};
+      if (response.status !== 404) {
+        lastMessage = (data && (data.message || data.error)) || ('HTTP ' + response.status);
+        return {ok: false, message: lastMessage};
+      }
+      lastMessage = (data && (data.message || data.error)) || '接口不存在（404）';
+    }
+    return {ok: false, message: lastMessage || '并入任务资料失败'};
+  }
+
+  async function referenceHotspot(payload) {
+    const title = (payload && payload.title) || '';
+    if (!title) return;
+    if (!sessionId) { toast('先在对话里建一个任务，再把热点参考进去'); return; }
+    // 热点先"进入对话"：作为一条可见的用户侧记录，用户能看见这次参考资料是什么。
     switchView('chat');
-    const parts = ['用这个热点写一条华为 PC 的文案。',
-                   '热点：' + topic.topic,
-                   '类别：' + topic.kind,
-                   '说明：' + (topic.intro || topic.gist)];
-    if ((topic.keywords || []).length) parts.push('相关搜索词：' + topic.keywords.join('、'));
-    parts.push('注意：热点只作选题背景，产品事实仍以知识库为准，不得编造热点细节。');
-    const text = parts.join('\n');
-    input.value = text;
-    input.focus();
-    toast('热点已带入输入框，可先改再发送');
+    addMessage('operator', '<p>参考热点：' + escapeHtml(title) +
+      (payload.source ? '（' + escapeHtml(payload.source) + '）' : '') + '</p>');
+    const result = await postHotspotMaterial(payload);
+    if (!result.ok) {
+      addMessage('assistant', '<p class="hint">热点已记在这条对话里，但并入本次任务资料失败：' +
+        escapeHtml(result.message || '接口未就绪') + '。</p>');
+      toast('并入任务资料失败');
+      return;
+    }
+    // 以服务端返回为准标记"已参考"。
+    referencedHotspots.add(title);
+    const material = (result.data && result.data.material) || {};
+    const hotspot = (result.data && result.data.hotspot) || material.hotspot || {};
+    refreshReferencedButtons();
+    const bits = [material.audience ? '人群 ' + material.audience : '',
+                  material.scenario ? '场景 ' + material.scenario : '',
+                  // material.hotspot 始终带 title/source 两个键，无热点时 title 是空串，
+                  // 所以这里按 title 是否为空判断，而不是按"键是否存在"。
+                  (hotspot.title) ? '热点 ' + hotspot.title : ''].filter(Boolean);
+    addMessage('assistant', '<p class="hint">已把热点「' + escapeHtml(title) +
+      '」并入本次任务资料，后续文案会结合它。' +
+      (bits.length ? '（当前资料：' + escapeHtml(bits.join('、')) + '）' : '') + '</p>');
+    toast('已参考到对话');
+  }
+
+  // 热点卡片里的「参考到对话」按钮状态：参考过就显示"已参考"，避免重复并入。
+  function refreshReferencedButtons() {
+    document.querySelectorAll('[data-ref-topic]').forEach((button) => {
+      const title = button.getAttribute('data-ref-title') || '';
+      const done = referencedHotspots.has(title);
+      button.textContent = done ? '已参考' : '参考到对话';
+      button.classList.toggle('referenced', done);
+      button.disabled = done;
+    });
+  }
+
+  // 把榜单卡片上的按钮还原成后端约定的 body（title/source/url/kind/gist/intro/keywords）。
+  function referenceFromButton(button) {
+    const title = button.getAttribute('data-ref-title') || '';
+    const rawIndex = button.getAttribute('data-ref-topic');
+    const topic = (rawIndex === null || rawIndex === '') ? null : organizedCache[Number(rawIndex)];
+    if (topic) {
+      referenceHotspot({
+        title: topic.topic || title, source: hotspotSourceLabel(),
+        url: (topic.links || [])[0] || '', kind: topic.kind || '',
+        gist: topic.gist || '', intro: topic.intro || '', keywords: topic.keywords || [],
+      });
+      return;
+    }
+    referenceHotspot({
+      title: title, source: hotspotSourceLabel(), url: '',
+      kind: '', gist: '', intro: '', keywords: [],
+    });
   }
 
   // ===================== 图文工作室 =====================
   const studioState = {refs: [], images: [], recipes: [], models: [], generated: [], loaded: false,
                        pendingCopy: '', pendingRefIds: []};
+
+  // 切换/新建任务时，工作室里与会话绑定的材料必须作废：否则上一个任务的 knowledge base
+  // 原图会留在列表里，go-studio 带过来的 image_id 对不上，"对应原图"就到不了位。
+  function resetStudioSession() {
+    studioState.loaded = false;
+    studioState.images = [];
+    studioState.refs = [];
+    studioState.generated = [];
+    const box = $('studio-copy-text');
+    if (box) box.value = '';
+    const refs = $('studio-refs');
+    if (refs) refs.innerHTML = '<span class="hint">从右侧知识库原图里点选参考图</span>';
+    const kb = $('studio-kb-grid');
+    if (kb) kb.innerHTML = '<p class="hint">本次创作还没有绑定知识库原图。</p>';
+  }
 
   // 配方与模型跟会话无关，必须无条件先加载。
   // 踩过的 bug：原来它们和 materials 挤在同一个 Promise.all 里、且被 `if (!sessionId) return`
@@ -1387,7 +1838,10 @@
     }
     if (studioState.loaded && !force) {
       // 已经加载过：材料不会再拉，但这次从对话带入的参考图要立刻就位。
+      // （loadStudio 的提前返回就在这里；pendingRefIds 必须在这条路径上也消费掉，
+      //  否则第二次点「图文工作室」就带不进参考图。）
       if (applyPendingRefs()) renderStudioRefs();
+      // 带入的文案也要立刻生效：applyPendingCopy() 在最前面，覆盖了提前返回这条路径。
       return;
     }
     try {
@@ -1707,14 +2161,18 @@
     const topics = data.topics || [];
     organizedCache = topics;
     list.innerHTML = topics.length
-      ? topics.map((topic, index) =>
-          '<article class="topic-card" data-topic="' + index + '">' +
+      ? topics.map((topic, index) => {
+          const done = referencedHotspots.has(topic.topic);
+          return '<article class="topic-card" data-topic="' + index + '">' +
           '<div class="topic-head"><span class="topic-kind">' + escapeHtml(topic.kind) + '</span>' +
           '<strong>' + escapeHtml(topic.topic) + '</strong></div>' +
           '<p class="topic-gist">' + escapeHtml(topic.gist) + '</p>' +
           (topic.intro ? '<p class="topic-intro">' + escapeHtml(topic.intro) + '</p>' : '') +
           '<div class="topic-actions">' +
-          '<button type="button" class="chip" data-use-topic="' + index + '">用这个热点写文案</button>' +
+          // 规格：热点榜里每个热点都能「参考到对话」——点一下热点进入对话并补进任务资料。
+          '<button type="button" class="chip' + (done ? ' referenced' : '') +
+          '" data-ref-topic="' + index + '" data-ref-title="' + escapeAttr(topic.topic) + '"' +
+          (done ? ' disabled' : '') + '>' + (done ? '已参考' : '参考到对话') + '</button>' +
           ((topic.links || [])[0]
             ? '<a class="chip" href="' + escapeHtml(topic.links[0]) + '" target="_blank" rel="noopener">在小红书打开 ↗</a>'
             : '') +
@@ -1725,7 +2183,8 @@
           ((topic.source_titles || []).length
             ? '<p class="topic-src">原始条目：' + topic.source_titles.map(escapeHtml).join(' ／ ') + '</p>'
             : '') +
-          '</article>').join('')
+          '</article>';
+        }).join('')
       : '<p class="hint">这一轮没有整理出好玩的热点（剔除了新闻事件与其他品牌后为空，这是正常结果）。</p>';
   }
 
@@ -1780,14 +2239,22 @@
     }
     if (!list) return;
     list.innerHTML = (board.items || []).length
-      ? (board.items || []).map(item =>
-          '<article class="topic-card chart-card">' +
+      ? (board.items || []).map((item) => {
+          const done = referencedHotspots.has(item.title);
+          return '<article class="topic-card chart-card">' +
           '<div class="topic-head"><span class="topic-kind">#' + escapeHtml(String(item.rank)) + '</span>' +
           '<strong>' + escapeHtml(item.title) + '</strong></div>' +
           (item.hot ? '<p class="topic-gist">热度 ' + escapeHtml(String(item.hot)) + '</p>' : '') +
-          (item.url ? '<div class="topic-actions"><a class="chip" href="' + escapeHtml(item.url) +
-            '" target="_blank" rel="noopener">打开原文 ↗</a></div>' : '') +
-          '</article>').join('')
+          '<div class="topic-actions">' +
+          // 榜单条目同样是"每个热点都能参考到对话"。
+          '<button type="button" class="chip' + (done ? ' referenced' : '') +
+          '" data-ref-topic="" data-ref-title="' + escapeAttr(item.title) + '"' +
+          (done ? ' disabled' : '') + '>' + (done ? '已参考' : '参考到对话') + '</button>' +
+          (item.url ? '<a class="chip" href="' + escapeHtml(item.url) +
+            '" target="_blank" rel="noopener">打开原文 ↗</a>' : '') +
+          '</div>' +
+          '</article>';
+        }).join('')
       : '<p class="hint">' + escapeHtml(board.note || '本次没有返回内容。') + '</p>';
   }
 
@@ -1850,6 +2317,9 @@
     }
   }
 
+  // 工作栏（含「六页图文 / 六页样稿」选项卡与面板）已按用户要求删除。
+  // 7 页图文的 renderWorkTabs() / populateSamplePages() 也一并删除，避免半个坏掉的界面。
+  // switchTab 保留为空操作：老的 v1 渲染路径仍会调用它，但目标节点已不存在。
   function switchTab(name) {
     const workTabs = $('work-tabs');
     if (!workTabs) return;   // 工作栏已删除
@@ -1857,25 +2327,6 @@
     document.querySelectorAll('.tab-panel').forEach(panel => { panel.hidden = true; });
     const panel = $('panel-' + name);
     if (panel) panel.hidden = false;
-  }
-
-  function renderWorkTabs(platform) {
-    if (!$('work-tabs')) return;   // 工作栏已删除
-    const list = PLATFORM_TABS[platform] || PLATFORM_TABS.xiaohongshu;
-    $('work-tabs').innerHTML = list.map(([key, label], index) =>
-      '<button class="tab' + (index === 0 ? ' active' : '') + '" data-tab="' + key + '" role="tab">' +
-      label + '</button>').join('');
-    switchTab(list[0][0]);
-  }
-
-  function populateSamplePages() {
-    const wrap = $('sample-pages');
-    if (!wrap) return;
-    wrap.innerHTML = Array.from({ length: 6 }, (_, index) => {
-      const number = String(index + 1).padStart(2, '0');
-      return '<a class="sample-page" href="/static/samples/sketch/page-' + number + '.png" target="_blank" rel="noreferrer">' +
-        '<img src="/static/samples/sketch/page-' + number + '.png" alt="样稿第' + number + '页" loading="lazy"><span>第 ' + number + ' 页</span></a>';
-    }).join('');
   }
 
   form.addEventListener('submit', (event) => {
@@ -1948,17 +2399,25 @@
     send(text);
   });
 
-  // C/D：「去图文工作室」= 用现有的 switchView('studio')，切换前把对话里的最新交付写进 studioState。
+  // C/D：「图文工作室」= 用现有的 switchView('studio')，切换前把**选中的那一篇**与对应原图
+  // 写进 studioState（不是"最新一篇"）。
   on('go-studio', 'click', () => {
-    const copy = (lastDelivery.copy || '').trim();
-    if (!copy) { toast('还没有可带入的交付文案'); return; }
+    const picked = selectedVariant;
+    const copy = picked ? variantCopyText(picked.variant)
+      : (lastDelivery.copy || '').trim();
+    if (!copy) { toast('请先选一篇文案'); return; }
     studioState.pendingCopy = copy;
     // 只带 image_id：工作室参考图来自 /studio 的 materials.images，两边同源才对得上。
     // 对话里「一键生图」产生的图片没有 image_id、也不在 materials.images 里，
     // 无法自动进参考图或「最近生成」（后者只由工作室自己的生成动作写入）——这里不伪造。
-    studioState.pendingRefIds = (lastDelivery.imageIds || []).slice();
+    studioState.pendingRefIds = picked
+      ? (picked.images || []).map(image => image.image_id).filter(Boolean)
+      : (lastDelivery.imageIds || []).slice();
     switchView('studio');
   });
+
+  // 「一键导出」：下载【选中的那篇文案 + 对应的原图】；未选中时明确提示，不静默失败。
+  on('export-delivery', 'click', () => { exportDelivery(); });
 
   // B：交付图片点击在新标签打开原图（不引库）。
   // 知识库原图的 access_url 是临时令牌、会过期。加载失败时若只留一个圆角空框 + 型号名，
@@ -1967,7 +2426,7 @@
   chatLog.addEventListener('error', (event) => {
     const img = event.target;
     if (!img || img.tagName !== 'IMG') return;
-    if (!img.closest('.draft-images, .image-results')) return;
+    if (!img.closest('.draft-images, .image-results, .variant-images')) return;
     const figure = img.closest('figure') || img.parentNode;
     if (figure) figure.classList.add('image-broken');
     img.hidden = true;
@@ -1981,7 +2440,7 @@
 
   chatLog.addEventListener('click', (event) => {
     const img = event.target && event.target.closest ? event.target.closest('img') : null;
-    if (!img || !img.closest('.draft-images, .image-results')) return;
+    if (!img || !img.closest('.draft-images, .image-results, .variant-images')) return;
     const src = img.getAttribute('src');
     if (src) window.open(src, '_blank', 'noopener');
   });
@@ -2205,8 +2664,8 @@
     }
   });
   document.addEventListener('click', (event) => {
-    const use = event.target.closest('[data-use-topic]');
-    if (use) { useTopic(Number(use.getAttribute('data-use-topic'))); return; }
+    const use = event.target.closest('[data-ref-topic]');
+    if (use) { referenceFromButton(use); return; }
     if (event.target.closest('#task-menu') || event.target.closest('[data-menu]')) return;
     hideTaskMenu();
   });
@@ -2236,7 +2695,11 @@
 
   document.addEventListener('keydown', (event) => {
     const meta = event.metaKey || event.ctrlKey;
-    if (!meta) return;
+    if (!meta) {
+      // 放大态用 Esc 关闭（关闭后回到紧凑的选项卡）。
+      if (event.key === 'Escape') closeVariantZoom();
+      return;
+    }
     if (event.key.toLowerCase() === 'n') {
       event.preventDefault();
       newTask();
@@ -2271,7 +2734,6 @@
       setSidebar(sidebarOpenPref);
     }
   });
-  renderWorkTabs(selectedPlatform);
   loadTasks();
 
   window.AgentApp = { getSessionId: () => sessionId, switchView };
@@ -2280,6 +2742,5 @@
   loadImageStyles();
   loadXhsStatus();
   loadModels();
-  populateSamplePages();
   input.focus();
 })();

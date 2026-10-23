@@ -1,17 +1,15 @@
-"""Render the six-page plan as shareable 1080x1440 PNG posters.
+"""Render one 1080x1440 template preview PNG with Pillow.
 
-The original prototype in the supplied ZIP renders HTML with Playwright. This
-module keeps the same deliverable contract (six fixed roles, official product
-images, fact callouts) but renders directly with Pillow so the main app does
-not need a browser runtime. It never redraws or invents product appearance:
+The 7-page 小红书图文方案 deliverable (six fixed roles + long-image ZIP download) was removed
+per ``docs/新对话流程规格.md`` §0: a task now delivers 3 copy variants plus knowledge-base
+original photos. What remains here is only the single-page renderer still used by the
+rednote workspace's layout/style previews. It never redraws or invents product appearance:
 only the verified material image is placed on the page.
 """
 from __future__ import annotations
 
 import io
 import os
-import threading
-import zipfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -54,8 +52,6 @@ _FONT_CANDIDATES = {
     ],
 }
 _font_cache: dict[tuple[int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
-_cache: dict[tuple, list[bytes]] = {}
-_cache_lock = threading.Lock()
 
 
 def _font(size: int, bold: bool = False):
@@ -265,36 +261,3 @@ def render_page(draft, handoff, index: int) -> bytes:
     out = io.BytesIO()
     canvas.convert("RGB").save(out, format="PNG", optimize=True)
     return out.getvalue()
-
-
-def render_all(draft, handoff):
-    pages = draft.get("pages") or []
-    if not pages:
-        raise ValueError("没有六页方案")
-    return [render_page(draft, handoff, index) for index in range(min(6, len(pages)))]
-
-
-def pages_for(session_id: str, revision: int, draft, handoff):
-    key = (session_id, revision, draft.get("title", ""), draft.get("body", "")[:48])
-    with _cache_lock:
-        cached = _cache.get(key)
-    if cached:
-        return cached
-    pages = render_all(draft, handoff)
-    with _cache_lock:
-        if len(_cache) >= 8:
-            _cache.pop(next(iter(_cache)))
-        _cache[key] = pages
-    return pages
-
-
-def zip_bytes(pages):
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("README.txt",
-                         "华为 PC 营销工作台六页图文图片\n"
-                         "1080×1440 PNG，共六页；产品外观来自官方知识库素材。\n"
-                         "文案为规则/模型辅助生成，发布前请人工复核。\n")
-        for index, page in enumerate(pages, 1):
-            archive.writestr(f"page-{index:02d}.png", page)
-    return output.getvalue()

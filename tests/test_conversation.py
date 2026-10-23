@@ -326,7 +326,9 @@ def test_unverified_price_can_generate_conditional_draft_without_price(mocked):
         r=await service.turn(Turn(session_id=sid,message='继续生成型号级附条件稿，不写价格'))
         assert r['status']=='needs_input'
         r=await service.turn(Turn(session_id=sid,message='到店体验'))
-        assert r['status']=='draft_ready' and r['draft']['pages']
+        # 原断言里还要求 draft['pages']；规格 §0 删掉了 7 页图文，草稿只交付文案本体，
+        # 「附条件、不写价格」的原意保留。
+        assert r['status']=='draft_ready' and r['draft']['body'] and 'pages' not in r['draft']
         assert '价格' not in r['draft']['body'] or '以门店' in r['draft']['body']
     asyncio.run(run())
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.31.0-assets">
+<link rel="stylesheet" href="/static/style.css?v=0.32.0-newflow">
 </head>
 <body>
 <div class="app-shell">
@@ -123,18 +123,18 @@
                 </select>
                 <input id="image-prompt" class="image-prompt" placeholder="提示词（可选，留空自动生成）">
                 <select id="image-style" class="model-select" aria-label="图片风格"></select>
-                <a id="posters-link" class="btn-secondary" href="#" hidden download>下载六页图片 ZIP</a>
                 <a id="export-link" class="btn-secondary" href="#" hidden>下载完整报告 ↗</a>
               </div>
               <div class="image-results" id="image-results" hidden></div>
-              <p class="draft-footnote">页面结构与事实依据可在“六页图文”和“核验结果”中查看。</p>
             </article>
           </div>
 
-          <!-- C：对话下方的工作室入口。只在真的产出交付文案后才显示（无交付时 hidden）。 -->
+          <!-- C：交付区的两个出路。选中一篇文案后，这个入口会被搬进那一轮交付图的**最下方**。
+               未选中任何一篇时点「一键导出」会明确提示“请先选一篇”，不静默失败。 -->
           <div class="delivery-entry" id="delivery-entry" hidden>
-            <button type="button" class="btn-primary" id="go-studio">去图文工作室</button>
-            <span class="hint" id="go-studio-hint">交付文案会一起带过去；带 image_id 的知识库原图会自动设为参考图。对话里「一键生图」产生的图片不会进入工作室「最近生成」——那份记录只由工作室自己的生成动作写入。</span>
+            <button type="button" class="btn-primary" id="go-studio">图文工作室</button>
+            <button type="button" class="btn-secondary" id="export-delivery">一键导出</button>
+            <span class="hint" id="go-studio-hint">先选中一篇文案：两个按钮都作用于选中的那篇。带 image_id 的知识库原图会自动设为工作室参考图；对话里「一键生图」产生的图片不会进入工作室「最近生成」——那份记录只由工作室自己的生成动作写入。</span>
           </div>
         </div>
 
@@ -329,25 +329,17 @@
         </div>
       </section>
 
-      <!-- 原工作栏里的四个面板：UI 上已删除，但保留在 DOM 中（完全隐藏），
-           以免既有渲染路径报错；图文工作室设计好后再决定它们的去处。 -->
+      <!-- 原工作栏里的两个面板：UI 上已删除，但保留在 DOM 中（完全隐藏），
+           以免既有渲染路径报错。
+           7 页图文（页面卡片 #pages-grid / #pages-empty / 样稿 #sample-pages /
+           ZIP 下载链接）已按用户要求整体删除，后端对应接口由另一处同步删除。 -->
       <div class="legacy-panels" hidden aria-hidden="true">
-        <div class="tab-panel" id="panel-pages" role="tabpanel" hidden>
-          <div class="empty-state" id="pages-empty"></div>
-          <div class="pages-tools" id="pages-tools" hidden>
-            <a id="posters-link-pages" class="btn-secondary" href="#" download>下载图片 ZIP</a>
-          </div>
-          <div class="pages-grid" id="pages-grid" hidden></div>
-        </div>
         <div class="tab-panel" id="panel-verify" role="tabpanel" hidden>
           <div class="empty-state" id="verify-empty"></div>
           <div id="verify-content" hidden></div>
         </div>
         <div class="tab-panel" id="panel-evidence" role="tabpanel" hidden>
           <div id="evidence-tab-content"></div>
-        </div>
-        <div class="tab-panel" id="panel-sample" role="tabpanel" hidden>
-          <div class="sample-pages" id="sample-pages"></div>
         </div>
       </div>
 
@@ -387,7 +379,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.31.0-assets" defer></script>
-<script src="/static/workspace.js?v=0.31.0-assets" defer></script>
+<script src="/static/app.js?v=0.32.0-newflow" defer></script>
+<script src="/static/workspace.js?v=0.32.0-newflow" defer></script>
 </body>
 </html>

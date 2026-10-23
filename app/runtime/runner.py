@@ -26,7 +26,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from .. import agent_runtime, db as db_layer, models
+from .. import agent_runtime, db as db_layer, models, task_material
 from . import (RUNNER_VERSION, admission, dedup, lease, ledger, outbox,
                semantic)
 from .context import RuntimeContext, build_context
@@ -605,7 +605,9 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
     else:
         content_status = None
     # Surface *why* a delivery was flagged, so the operator surface and the UI do not
-    # have to re-derive it from the prose.
+    # have to re-derive it from the prose. The task archive and the 3 delivered variants are
+    # persisted first so the event and the replay path agree on one shape.
+    material, variants = _sync_task_state(db, conversation, status, ctx, payload)
     agent_runtime._event(run, "run_result", runner_version=RUNNER_VERSION,
                          status=status, usage=totals,
                          content_status=content_status, can_publish=False,
@@ -613,6 +615,8 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
                          artifact=payload.get("artifact_ref"),
                          candidates=payload.get("candidates") or [],
                          images=payload.get("images") or [],
+                         variants=variants,
+                         material=material,
                          unverified_experience=candidate.get("unverified_experience") or [],
                          unverified_numbers=candidate.get("unverified_numbers") or [],
                          unsupported_numbers=candidate.get("unsupported_numbers") or [],
@@ -625,17 +629,25 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
     run.stop_reason = telemetry[:160]
     run.usage = {"runner_version": RUNNER_VERSION, **totals}
     run.finished_at = agent_runtime._now()
-    _sync_task_state(db, conversation, status, ctx, payload)
     db.flush()
 
 
 def _sync_task_state(db: Session, conversation: models.AgentConversation, status: str,
-                     ctx: RuntimeContext, state: dict | None = None) -> None:
-    """Keep the task-history row usable without clobbering 0.16 title/pin data."""
+                     ctx: RuntimeContext, state: dict | None = None) -> tuple[dict, list]:
+    """Keep the task-history row usable without clobbering 0.16 title/pin data.
+
+    Also the single place that persists the run's outcome into the **task archive**: the
+    accumulative material (人群/平台/场景/活动/选定型号/热点) and the 3 delivered variants, so a
+    reopened task can replay them without re-running the model. Returns the archive and the
+    variants in their delivery-contract shapes for the run_result event.
+    """
     state_row = db.get(models.AgentTaskState, conversation.id)
     data = dict(state_row.data or {}) if state_row else {}
     payload = dict(state or {})
     data["runner_version"] = RUNNER_VERSION
+    # Written by the new 3-variant flow: keeps the legacy "candidates[0] is the chosen
+    # product" fallback from firing for a task where candidates are only search results.
+    data["flow"] = "variants_v1"
     data["artifact_count"] = db.query(models.AgentArtifact).filter(
         models.AgentArtifact.conversation_id == conversation.id).count()
     if payload.get("candidates"):
@@ -646,6 +658,38 @@ def _sync_task_state(db: Session, conversation: models.AgentConversation, status
                               for item in ctx.tool_ctx.last_search["products"][:3]]
     if payload.get("images"):
         data["images"] = payload["images"]
+
+    # Variants come from the saved artifact first (the deliverable itself), then from any
+    # variants the caller already projected into the payload.
+    variants = list(payload.get("variants") or [])
+    artifact_ref = payload.get("artifact_ref") or {}
+    if not variants and artifact_ref.get("artifact_id"):
+        loaded = agent_runtime._load_artifact(ctx.tool_ctx, dict(artifact_ref))
+        if loaded.get("ok"):
+            variants = task_material.variants_from_content(loaded.get("content"))
+    if variants:
+        data["variants"] = variants
+
+    # Selection: only two things count as a choice — `update_task_material(models=…)` (already
+    # written into `data["material"]`) and the saved artifact's `product_ids`. A search or an
+    # evidence read is NOT a selection: listing candidates must never record a chosen model.
+    product_ids: list[str] = []
+    if artifact_ref.get("artifact_id"):
+        loaded = agent_runtime._load_artifact(ctx.tool_ctx, dict(artifact_ref))
+        content = loaded.get("content") if loaded.get("ok") else {}
+        if isinstance(content, dict):
+            product_ids = [str(value) for value in (content.get("product_ids") or [])
+                           if str(value or "").strip()]
+    if product_ids:
+        def resolve_model(value):
+            product = (agent_runtime._resolve_product(ctx.tool_ctx.catalog, value, ctx.tool_ctx)
+                       if ctx.tool_ctx.catalog else None)
+            return ({"product_id": product.product_id, "model": product.model}
+                    if product else None)
+
+        task_material.merge(data, {"models": product_ids}, resolver=resolve_model)
+
+    material = task_material.payload(task_material.normalize(data))
     if state_row is None:
         try:
             # Read-then-insert races: two concurrent turns on one conversation both see no
@@ -655,7 +699,7 @@ def _sync_task_state(db: Session, conversation: models.AgentConversation, status
                 db.add(models.AgentTaskState(conversation_id=conversation.id, stage=status,
                                              data=data))
                 db.flush()
-            return
+            return material, variants
         except IntegrityError:
             # Another turn created it in between. Re-read through a fresh statement: the
             # identity map would otherwise keep answering "no such row".
@@ -663,10 +707,11 @@ def _sync_task_state(db: Session, conversation: models.AgentConversation, status
                 models.AgentTaskState.conversation_id == conversation.id)).first()
             if state_row is None:
                 # It has not committed yet; that transaction writes its own state.
-                return
+                return material, variants
     state_row.stage = status
     state_row.data = data
     db.flush()
+    return material, variants
 
 
 def delete_ledgers(db: Session, conversation_id: str) -> None:

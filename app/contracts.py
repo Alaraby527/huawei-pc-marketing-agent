@@ -12,8 +12,6 @@ class Platform(str, Enum):
     MOMENTS = "moments"
     POSTER = "poster"
 
-PAGE_ROLES = ("hook", "scene", "proof", "detail", "decision", "close")
-
 class Task(StrictModel):
     product_query: str = Field(min_length=1, max_length=300)
     audience: str = Field(min_length=1, max_length=300)

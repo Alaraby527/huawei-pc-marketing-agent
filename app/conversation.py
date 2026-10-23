@@ -512,7 +512,7 @@ class ConversationService:
         action=request.action
         def audit_current(draft):
             return audit_copy(draft['title'],draft['body'],draft.get('tags',[]),draft.get('cta',''),
-                              handoff['facts'],risks,draft.get('pages'),allowed_text)
+                              handoff['facts'],risks,allowed_text)
         if s.draft and action=='continue':
             # Natural-language confirmation/edit requests are accepted at the draft gate too.
             if text in ['通过','确认','可以','没问题','可以发布','发布']: action='approve_draft'

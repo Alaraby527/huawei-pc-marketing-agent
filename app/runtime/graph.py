@@ -223,12 +223,8 @@ def build_graph(saver, ctx: RuntimeContext):
                     ctx.tool_ctx.evidence_read = True
                     ctx.tool_ctx.last_search = outcome
 
-            if name in ("find_product_images", "render_visuals") and outcome.get("ok"):
+            if name == "find_product_images" and outcome.get("ok"):
                 rows = outcome.get("images") or []
-                # find_product_images returns image records; render_visuals returns bare
-                # asset URLs. Requiring dicts meant a successful render never reached the
-                # payload, so the UI showed no gallery while the reply said the cards
-                # were rendered.
                 normalized = []
                 for row in rows[:6]:
                     if isinstance(row, dict):

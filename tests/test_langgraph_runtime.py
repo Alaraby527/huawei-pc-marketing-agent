@@ -585,6 +585,78 @@ def test_candidates_are_surfaced_for_the_work_panel(monkeypatch):
     assert conversation["task"]["candidates"][0]["product_id"] == "P-test"
 
 
+def test_delivery_contract_carries_variants_material_and_images(monkeypatch):
+    """规格 §4 的数据契约：run 返回 data.variants / data.material / data.images。
+
+    同时验证回放路径：会话详情顶层与 task 下都能读到同一份 3 篇文案与资料存档。
+    """
+    class FakeImage:
+        image_id = "IMG-1"
+        caption = "HUAWEI MateBook Test 官方产品图"
+        access_url = "/api/v1/assets/IMG-1"
+
+    async def fake_images(*args, **kwargs):
+        return [FakeImage()], []
+
+    monkeypatch.setattr("app.agent_runtime.verified_images", fake_images)
+    variants = [{"variant_id": f"v{index}", "label": f"方向{index}",
+                 "title": f"标题{index}", "body": "内存 16 GB",
+                 "tags": ["校园", "华为PC"], "models": ["P-test"]}
+                for index in range(1, 4)]
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [
+            _call("update_task_material", {"audience": "大学生", "platform": "小红书",
+                                           "scenario": "校园学习", "campaign": "开学季",
+                                           "models": ["P-test"],
+                                           "hotspot": {"title": "开学季选本热",
+                                                       "source": "热梗（联网搜索）"}}, "a1"),
+            _call("read_product_evidence", {"product_id": "P-test"}, "a2")]},
+        {"content": "", "tool_calls": [
+            _call("save_artifact", {"artifact_type": "variants",
+                                    "content": {"product_ids": ["P-test"],
+                                                "variants": variants}}, "a3"),
+            _call("find_product_images", {"product_id": "P-test"}, "a4")]},
+        {"content": "已经按资料写好 3 篇，并附上知识库原图。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "资料齐了，输出最后交付内容").json()
+    assert data["status"] == "completed"
+
+    assert [row["variant_id"] for row in data["variants"]] == ["v1", "v2", "v3"]
+    assert data["variants"][0]["models"] == ["P-test"]
+    assert data["material"]["audience"] == "大学生"
+    assert data["material"]["platform"] == "xiaohongshu" or data["material"]["platform"] == "小红书"
+    assert data["material"]["campaign"] == "开学季"
+    assert data["material"]["models"] == [{"product_id": "P-test",
+                                          "model": "HUAWEI MateBook Test"}]
+    assert data["material"]["hotspot"] == {"title": "开学季选本热",
+                                          "source": "热梗（联网搜索）"}
+    assert data["images"] and data["images"][0]["image_id"] == "IMG-1"
+
+    conversation = client.get(f"/api/v2/conversations/{cid}").json()
+    assert [row["variant_id"] for row in conversation["variants"]] == ["v1", "v2", "v3"]
+    assert conversation["task"]["variants"][0]["title"] == "标题1"
+    assert conversation["material"]["hotspot"]["title"] == "开学季选本热"
+    assert conversation["task"]["material"]["audience"] == "大学生"
+
+
+def test_a_search_never_records_a_selected_model(monkeypatch):
+    """列出候选 ≠ 选定型号：只有 update_task_material 或交付物的 product_ids 才算选择。
+
+    否则用户只是问“有哪些型号”，资料里就会出现一个他从未选过的型号。
+    """
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_products", {"query": "MateBook"})]},
+        {"content": "知识库里有这款。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    _send(cid, "有哪些型号").json()
+    conversation = client.get(f"/api/v2/conversations/{cid}").json()
+    assert conversation["task"]["candidates"]
+    assert conversation["material"]["models"] == []
+    assert conversation["selected_models"] == []
+
+
 def test_original_images_are_surfaced_for_the_work_panel(monkeypatch):
     class FakeImage:
         image_id = "IMG-1"

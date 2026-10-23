@@ -21,12 +21,12 @@ from .ima import ImaClient, ImaError, configured
 from .local_kb import default_client, kb_source, local_kb_ready
 from .conversation import Turn, service, DialogueError, ask
 from .model import image_configured, ModelError, allowed_models, default_model, model_catalog
-from .posters import pages_for, render_page, zip_bytes
+from .posters import render_page
 from . import db as db_layer
 from . import models
 from . import rednote
 from .agent import AgentTurn, run_agent
-from . import agent_runtime, studio
+from . import agent_runtime, studio, task_material
 from .runtime import RUNNER_VERSION as LG_RUNNER_VERSION
 from .runtime import runner as lg_runner
 from .runtime.state import FINAL_STATUSES as LG_FINAL_STATUSES
@@ -260,28 +260,6 @@ async def conversation_state(session_id: str):
     return payload
 
 
-@app.get("/api/v1/conversations/{session_id}/posters/{page}.png")
-def poster_page(session_id: str, page: int):
-    s = service.sessions.get(session_id)
-    if not s or not s.draft or not s.handoff_cache:
-        return JSONResponse(status_code=409, content={"message": "当前会话还没有可渲染的六页方案"})
-    if page < 1 or page > 6:
-        return JSONResponse(status_code=404, content={"message": "页码必须是 1-6"})
-    pages = pages_for(session_id, s.revision, s.draft, s.handoff_cache)
-    return Response(pages[page - 1], media_type="image/png",
-                    headers={"Cache-Control": "private, max-age=60"})
-
-
-@app.get("/api/v1/conversations/{session_id}/posters.zip")
-def poster_zip(session_id: str):
-    s = service.sessions.get(session_id)
-    if not s or not s.draft or not s.handoff_cache:
-        return JSONResponse(status_code=409, content={"message": "当前会话还没有可渲染的六页方案"})
-    pages = pages_for(session_id, s.revision, s.draft, s.handoff_cache)
-    return Response(zip_bytes(pages), media_type="application/zip",
-                    headers={"Content-Disposition": 'attachment; filename="huawei-pc-posters.zip"'})
-
-
 def export_markdown(draft, handoff, compliance):
     """Four-part output required by the brief: scenario / evidence / copy / verification."""
     task = handoff["materials"]["task"]
@@ -295,15 +273,6 @@ def export_markdown(draft, handoff, compliance):
             lines.append(f"- [{fid}] {fact['text'][:120]} —— 来源：{fact['source']['title']}")
     lines += ["", "# 三、图文软文", f"**{draft['title']}**", "", draft["body"], "",
               "行动引导：" + draft.get("cta", ""), "话题：" + " ".join("#" + t for t in draft.get("tags", []))]
-    pages = draft.get("pages") or []
-    if pages:
-        lines += ["", "## 六页图文方案"]
-        role_names = {"hook": "封面", "scene": "场景", "proof": "事实", "detail": "细节",
-                      "decision": "决策", "close": "收尾"}
-        for index, page in enumerate(pages, 1):
-            refs = "、".join(page.get("fact_ids") or []) or "无"
-            lines += ["", f"### 第{index}页 · {role_names.get(page.get('role'), page.get('role'))}",
-                      f"**{page.get('title', '')}**", page.get("text", ""), f"事实依据：{refs}"]
     for item in draft.get("image_plan", []):
         image = next((i for i in handoff["images"] if i["image_id"] == item["image_id"]), None)
         caption = image["caption"] if image else item["image_id"]
@@ -766,6 +735,39 @@ def v2_set_surface(conversation_id: str, payload: dict | None = None, db=Depends
         return JSONResponse(status_code=400, content=result)
     db.commit()
     return result
+
+
+@app.post("/api/v2/conversations/{conversation_id}/material/hotspot")
+@app.post("/api/v2/conversations/{conversation_id}/hotspot")
+async def v2_material_hotspot(conversation_id: str, payload: dict | None = None, db=Depends(v2_db)):
+    """把选中的热点并入本次任务资料（规格 §6：热点沉淀进 material.hotspot）。
+
+    前端「参考到对话」/「参考到任务」走这条主路由。一份实现挂两个装饰器：曾经出现过同一
+    语义两条路径不一致的问题，所以兜底别名不是第二份实现。
+    """
+    conversation = db.get(models.AgentConversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail={"code": "CONVERSATION_NOT_FOUND",
+                                                     "message": "会话不存在"})
+    body = payload or {}
+    hotspot = task_material.hotspot_from_body(body)
+    if not str(hotspot.get("title") or "").strip():
+        return JSONResponse(status_code=400, content={
+            "code": "HOTSPOT_TITLE_REQUIRED", "message": "热点需要 title，未并入任务资料"})
+    state = db.get(models.AgentTaskState, conversation.id)
+    if state is None:
+        state = models.AgentTaskState(conversation_id=conversation.id, stage="intake", data={})
+        db.add(state)
+        db.flush()
+    data = dict(state.data or {})
+    material = task_material.merge(data, {"hotspot": hotspot})
+    state.data = data
+    db.flush()
+    db.commit()
+    stored = dict(task_material.normalize(data).get("hotspot") or {})
+    return {"ok": True, "hotspot": stored, "material": task_material.payload(material),
+            "conversation_id": conversation.id,
+            "note": "已并入本次任务资料；后续 3 篇文案都会结合这个热点，且不会因为下一轮没再提到而丢失。"}
 
 
 @app.get("/api/v1/hot-topics")

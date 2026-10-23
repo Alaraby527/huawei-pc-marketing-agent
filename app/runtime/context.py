@@ -96,7 +96,8 @@ def surface_directive(db: Session, conversation: models.AgentConversation) -> st
         lines.append("- 标题候选 " + str(row["title_candidates"]) + " 个，单个建议不超过 "
                      + str(row.get("title_soft_max") or "") + " 字")
     if row.get("card_count_range"):
-        lines.append("- 卡片 " + "-".join(str(v) for v in row["card_count_range"]) + " 页")
+        # 7 页图文已删除（规格 §0）；交付物固定 3 篇文案，不能再按卡片页数写。
+        lines.append("- 交付物固定为 3 篇文案（标题+正文+话题标签），不要产出卡片页数或长图")
     if row.get("headline_soft_max"):
         lines.append("- 主标题建议不超过 " + str(row["headline_soft_max"]) + " 字")
     if row.get("max_text_lines"):
@@ -113,6 +114,45 @@ def surface_directive(db: Session, conversation: models.AgentConversation) -> st
     return "\n".join(lines)
 
 
+def material_directive(db: Session, conversation: models.AgentConversation) -> str:
+    """The accumulative task archive, shown to the model on every decide step.
+
+    Read-only presentation: the model is told to write through ``update_task_material`` so the
+    archive has a single writer, and so a later turn sees exactly what earlier turns recorded.
+    """
+    from .. import task_material
+
+    state = db.get(models.AgentTaskState, conversation.id)
+    data = dict(state.data or {}) if state else {}
+    material = task_material.normalize(data)
+    lines = ["【本次任务资料（可累加；要补充请调用 update_task_material，不要直接编）】"]
+    labels = (("audience", "目标人群"), ("platform", "发布平台"),
+              ("scenario", "使用环境·场景"), ("campaign", "要打的活动"))
+    lines.append("- 目标人群：" + (material["audience"] or "（未收集）"))
+    lines.append("- 发布平台：" + (material["platform"] or "（未收集）"))
+    lines.append("- 使用环境·场景：" + (material["scenario"] or "（未收集）"))
+    lines.append("- 要打的活动：" + (material["campaign"] or "（未收集，可回“没有”）"))
+    model_rows = material.get("models") or []
+    models_text = "、".join(str(row.get("model") or row.get("product_id") or "")
+                            for row in model_rows if row.get("model") or row.get("product_id"))
+    lines.append("- 选定型号：" + (models_text or
+                                   "（未确定：先收齐四件事，再去知识库匹配 2–4 款候选让用户选 1–2 款）"))
+    hotspot = material.get("hotspot") or {}
+    if str(hotspot.get("title") or "").strip():
+        source = str(hotspot.get("source") or "").strip()
+        lines.append("- 参考热点：" + str(hotspot["title"]) + (("（来源：" + source + "）") if source else ""))
+    else:
+        lines.append("- 参考热点：（无）")
+    missing = [label for key, label in labels if not material.get(key)]
+    if not model_rows:
+        missing.append("选定型号")
+    lines.append("缺少：" + ("、".join(missing) if missing else
+                            "无——资料已齐：先只回一句很短的确认（是否输出最后交付内容？）"))
+    lines.append("规则：不要问型号；用户已点名型号时直接查证据；交付固定 3 篇混着写的文案，"
+                 "不产出页（pages）结构。")
+    return "\n".join(lines)
+
+
 def build_context(db: Session, conversation: models.AgentConversation, run: models.AgentRun,
                   model: str | None = None) -> RuntimeContext:
     def cancelled() -> bool:
@@ -122,11 +162,13 @@ def build_context(db: Session, conversation: models.AgentConversation, run: mode
         return ledger.fresh_run_status(run.id) == "cancelled"
 
     tool_ctx = agent_runtime.ToolContext(db=db, conversation=conversation, run=run)
+    directive = "\n\n".join(part for part in (material_directive(db, conversation),
+                                              surface_directive(db, conversation)) if part)
     return RuntimeContext(
         db=db, conversation=conversation, run=run, model=model,
         gateway=ModelGateway(db, conversation_id=conversation.id, run_id=run.id,
                              model=model, cancel_check=cancelled,
-                             directive=surface_directive(db, conversation)),
+                             directive=directive),
         tools=ToolGateway(tool_ctx, cancel_check=cancelled),
         tool_ctx=tool_ctx,
         max_decisions=_env_int("LG_MAX_MODEL_CALLS", 12, 1, 40),
