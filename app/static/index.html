@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.32.0-newflow">
+<link rel="stylesheet" href="/static/style.css?v=0.33.0-deliveryzoom">
 </head>
 <body>
 <div class="app-shell">
@@ -129,12 +129,13 @@
             </article>
           </div>
 
-          <!-- C：交付区的两个出路。选中一篇文案后，这个入口会被搬进那一轮交付图的**最下方**。
-               未选中任何一篇时点「一键导出」会明确提示“请先选一篇”，不静默失败。 -->
+          <!-- C：交付区的两个出路。只要这一轮产出了交付物（3 篇文案或原图），这个入口就显示在
+               交付图的**最下方**，不需要先点选。未选中任何一篇时点按钮会明确提示“请先选一篇文案”，
+               不静默失败。 -->
           <div class="delivery-entry" id="delivery-entry" hidden>
             <button type="button" class="btn-primary" id="go-studio">图文工作室</button>
             <button type="button" class="btn-secondary" id="export-delivery">一键导出</button>
-            <span class="hint" id="go-studio-hint">先选中一篇文案：两个按钮都作用于选中的那篇。带 image_id 的知识库原图会自动设为工作室参考图；对话里「一键生图」产生的图片不会进入工作室「最近生成」——那份记录只由工作室自己的生成动作写入。</span>
+            <span class="hint" id="go-studio-hint">两个按钮都作用于选中的那篇文案（未选中会提示先选一篇）。本轮交付里所有带 image_id 的知识库原图都会自动设为工作室参考图；对不上或没有 image_id 的图不会被勾选，不伪造参考图。对话里「一键生图」产生的图片也不会进入工作室「最近生成」——那份记录只由工作室自己的生成动作写入。</span>
           </div>
         </div>
 
@@ -379,7 +380,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.32.0-newflow" defer></script>
-<script src="/static/workspace.js?v=0.32.0-newflow" defer></script>
+<script src="/static/app.js?v=0.33.0-deliveryzoom" defer></script>
+<script src="/static/workspace.js?v=0.33.0-deliveryzoom" defer></script>
 </body>
 </html>

@@ -61,6 +61,13 @@
   let lastUserText = '';
   // D：最近一次交付（文案 + 图片身份），只由渲染函数写入，供「去图文工作室」带入。
   let lastDelivery = {copy: '', imageIds: [], imageUrls: []};
+  // 需求1：本轮是否真的产出了交付物（variants 或 images）。
+  // 为 true 时 #delivery-entry 必须显示在交付图最下方——不再要求"用户先点选一篇"。
+  let deliveryAvailable = false;
+  // 需求2：本轮交付原图（variants 路径的 images / 旧图片路径的 images）。
+  // 「图文工作室」按这里的 image_id 带入参考图（去重后由 applyPendingRefs 限量 9 张）。
+  let deliveryImages = [];
+  let imageZoomEl = null;   // 需求4：知识库原图放大浮层（全局单例，见 ensureImageZoom）
 
   // F：三篇文案的选项卡状态。
   // 单击＝选中，双击＝放大；只有"选中的那一篇"会被「图文工作室」与「一键导出」消费。
@@ -101,6 +108,37 @@
     setTimeout(() => node.remove(), 2600);
   }
 
+  // 复制文本的统一入口：#studio-copy 与 #variant-zoom-copy 共用同一套兜底。
+  // 剪贴板 API 在非安全上下文/无权限时不可用，所以失败后必须回到临时 textarea +
+  // document.execCommand('copy')（原来是 #studio-copy 就地写的兜底）。
+  // 返回是否成功，调用方据此给出真实反馈，绝不假装复制成功。
+  async function copyText(text) {
+    const value = String(text == null ? '' : text);
+    if (!value.trim()) return false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (error) { /* 走下面的兜底，不在这里失败 */ }
+    }
+    try {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', 'readonly');
+      area.style.position = 'fixed';
+      area.style.top = '0';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      area.setSelectionRange(0, value.length);
+      const ok = document.execCommand('copy');
+      area.remove();
+      return ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
   // ===== A/B：候选卡与交付卡进入对话流 =====
   // #candidate-board / #draft-card 始终是同一个 DOM 节点：appendChild 只是把节点搬到
   // assistant 消息内部（不是克隆），所以 id、内容与已绑定的事件监听（$('candidate-board')
@@ -132,6 +170,8 @@
     if (park && card) { card.hidden = true; park.appendChild(card); }
     if (park && entry) { entry.hidden = true; park.appendChild(entry); }
     lastDelivery = {copy: '', imageIds: [], imageUrls: []};
+    deliveryAvailable = false;
+    deliveryImages = [];
     syncDeliveryEntry();
   }
 
@@ -177,6 +217,7 @@
     selectedVariant = null;
     cancelVariantSelect();
     closeVariantZoom();   // 放大浮层不属于任何消息，换任务时必须关掉
+    closeImageZoom();     // 原图放大浮层同理
     parkDelivery();   // 清 lastDelivery + 把入口收回停机位
   }
 
@@ -188,11 +229,17 @@
     syncDeliveryEntry();
   }
 
-  // C：入口只在"确实有可交付的文案"时出现；并且被搬到那一轮交付图的最下方。
+  // C：入口在"本轮确实产出了交付物"时就出现；并且被搬到那一轮交付图的最下方。
+  // 需求1（用户实测）：原来是 `selectedVariant || lastDelivery.copy`，于是**没点选任何一篇之前
+  // 整块入口是隐藏的**，用户根本看不到「图文工作室」。新契约的交付物是 variants，
+  // renderVariants 不写 lastDelivery.copy，所以那个条件也不成立。
+  // 现在以 deliveryAvailable（本轮有 variants 或 images）为第一判据；未选中时点按钮
+  // 会明确提示"请先选一篇文案"（不静默失败），但入口本身必须在，位置在图片最下方。
   function syncDeliveryEntry() {
     const entry = $('delivery-entry');
     if (!entry) return;
-    const has = Boolean(selectedVariant && selectedVariant.variant) ||
+    const has = deliveryAvailable ||
+      Boolean(selectedVariant && selectedVariant.variant) ||
       Boolean((lastDelivery.copy || '').trim());
     entry.hidden = !has;
   }
@@ -751,7 +798,13 @@
       escapeHtml(image.caption || '知识库原图') + '</figcaption></figure>').join('');
     lastDelivery.imageIds = images.map(image => image.image_id).filter(Boolean);
     lastDelivery.imageUrls = images.map(image => image.access_url).filter(Boolean);
-    syncDeliveryEntry();
+    // 需求1/2：这一轮真的有交付原图，入口必须出现（未选中也出现），并且记下本轮全部原图，
+    // 供「图文工作室」按 image_id 带入参考图。
+    deliveryImages = images;
+    deliveryAvailable = true;
+    // 图片路径也要把入口放到"图片最下方"：放到这条消息末尾（卡片本身就在这条消息里），
+    // 否则入口可能还留在隐藏的停机位里，虽然 hidden=false 却看不见。
+    placeDeliveryEntry();
   }
 
   // ===================== 三篇文案（新流程核心交互）=====================
@@ -834,6 +887,10 @@
     const host = messageEl || lastAssistantMessage() || addMessage('assistant', '');
     // 新一批选项卡 = 需要重新选：上一轮选中的那篇在这里作废。
     clearDeliverySelection();
+    // 需求1/2：本轮产出了交付物（3 篇文案 + 原图）→ 入口必须显示（不再等用户点选），
+    // 并记下本轮全部原图，供「图文工作室」带入参考图。
+    deliveryImages = images;
+    deliveryAvailable = true;
     const board = document.createElement('section');
     board.className = 'variant-board';
     board.__variants = variants;
@@ -933,10 +990,12 @@
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', '文案全文');
+    // 需求3：head 里多一个「复制全文」（标题 + 正文 + 话题标签），粘贴即可发小红书。
     overlay.innerHTML =
       '<div class="variant-zoom-card">' +
       '<div class="variant-zoom-head"><span class="variant-zoom-label"></span>' +
       '<h3 class="variant-zoom-title"></h3>' +
+      '<button type="button" class="variant-zoom-copy" id="variant-zoom-copy">复制全文</button>' +
       '<button type="button" class="variant-zoom-close" id="variant-zoom-close" ' +
       'aria-label="关闭">×</button></div>' +
       '<div class="variant-zoom-body"></div>' +
@@ -945,6 +1004,7 @@
       '</div>';
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (event) => {
+      if (event.target.closest('#variant-zoom-copy')) { copyVariantZoomText(); return; }
       if (event.target === overlay || event.target.closest('#variant-zoom-close')) closeVariantZoom();
     });
     variantZoomEl = overlay;
@@ -965,13 +1025,151 @@
     overlay.querySelector('.variant-zoom-models').innerHTML =
       variantModelNames(variant, material).map(name =>
         '<span class="variant-model">' + escapeHtml(name) + '</span>').join('');
+    // 需求3：复制按钮要拿"当前放大的这一篇"，存到浮层上，避免复制到上一篇。
+    overlay.__variant = variant;
+    const copyBtn = overlay.querySelector('#variant-zoom-copy');
+    if (copyBtn) { copyBtn.textContent = '复制全文'; copyBtn.classList.remove('done'); }
     overlay.hidden = false;
     const close = overlay.querySelector('#variant-zoom-close');
     if (close) close.focus();
   }
 
+  // 需求3：一键复制整篇（标题 + 空行 + 正文 + 空行 + #标签 #标签），
+  // 格式与 variantCopyText 一致——直接粘贴到小红书就是标题、正文、话题标签。
+  // 复制成功给可见反馈（toast + 按钮短暂变"已复制"）；失败也如实说，并有兜底实现。
+  async function copyVariantZoomText() {
+    const overlay = variantZoomEl;
+    if (!overlay) return;
+    const text = variantCopyText(overlay.__variant || {});
+    const button = overlay.querySelector('#variant-zoom-copy');
+    if (!text.trim()) {
+      toast('这篇没有可复制的文案');
+      return;
+    }
+    const ok = await copyText(text);
+    toast(ok ? '整篇文案已复制，可直接粘贴到小红书' : '复制失败：请手动选中文字复制');
+    if (button) {
+      button.textContent = ok ? '已复制' : '复制失败';
+      button.classList.toggle('done', ok);
+      setTimeout(() => {
+        if (document.body.contains(button)) {
+          button.textContent = '复制全文';
+          button.classList.remove('done');
+        }
+      }, 1800);
+    }
+  }
+
   function closeVariantZoom() {
     if (variantZoomEl) variantZoomEl.hidden = true;
+  }
+
+  // ===================== 需求4：知识库原图应用内放大（关闭 + 下载）=====================
+  // 原来是 window.open(src) 开新标签。现在改成应用内浮层：关闭按钮 / Esc / 点遮罩，
+  // 并带一个真的能把当前这张图存下来的「下载」。不引任何库。
+  function ensureImageZoom() {
+    if (imageZoomEl && document.body.contains(imageZoomEl)) return imageZoomEl;
+    const overlay = document.createElement('div');
+    overlay.className = 'image-zoom';
+    overlay.id = 'image-zoom';
+    overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '知识库原图');
+    overlay.innerHTML =
+      '<div class="image-zoom-card">' +
+      '<div class="image-zoom-head"><span class="image-zoom-caption"></span>' +
+      '<button type="button" class="image-zoom-btn" id="image-zoom-download">下载</button>' +
+      '<button type="button" class="image-zoom-close" id="image-zoom-close" ' +
+      'aria-label="关闭">×</button></div>' +
+      '<div class="image-zoom-body"><img class="image-zoom-img" alt=""></div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => {
+      if (event.target.closest('#image-zoom-download')) { downloadZoomImage(); return; }
+      if (event.target === overlay || event.target.closest('#image-zoom-close')) closeImageZoom();
+    });
+    // 浮层里的预览图自己报错（令牌过期）也要显式化，不能让用户对着一张破图点下载。
+    // 注意：这条监听挂在浮层上，**不碰** chatLog 上那条给 figure 加 .image-broken 的处理器。
+    const preview = overlay.querySelector('.image-zoom-img');
+    if (preview) preview.addEventListener('error', () => {
+      const caption = overlay.querySelector('.image-zoom-caption');
+      if (caption) caption.textContent = '图片地址已过期，无法预览；可刷新材料后重试。';
+    });
+    imageZoomEl = overlay;
+    return overlay;
+  }
+
+  function openImageZoom(img) {
+    if (!img) return;
+    const src = img.getAttribute('src') || '';
+    if (!src) { toast('这张图没有可用的地址'); return; }
+    const overlay = ensureImageZoom();
+    // alt 就是图片说明（renderVariants/renderV2Images 都写了）；为空时显示兜底文案，
+    // 但下载文件名用中性的 product-image，不用中文兜底文案去当文件名。
+    const caption = img.getAttribute('alt') || '';
+    overlay.__src = src;
+    overlay.__caption = caption;
+    const preview = overlay.querySelector('.image-zoom-img');
+    preview.src = src;
+    preview.alt = caption;
+    const captionNode = overlay.querySelector('.image-zoom-caption');
+    if (captionNode) captionNode.textContent = caption || '知识库产品原图';
+    const button = overlay.querySelector('#image-zoom-download');
+    if (button) { button.disabled = false; button.textContent = '下载'; }
+    overlay.hidden = false;
+    const close = overlay.querySelector('#image-zoom-close');
+    if (close) close.focus();
+  }
+
+  function closeImageZoom() {
+    if (imageZoomEl) imageZoomEl.hidden = true;
+  }
+
+  // 扩展名只按真实响应类型取；拿不到就交给地址后缀，再拿不到就不硬编造后缀。
+  function imageExtension(blob, src) {
+    const type = String((blob && blob.type) || '').toLowerCase();
+    const known = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg',
+                    'image/webp': 'webp', 'image/gif': 'gif', 'image/bmp': 'bmp' };
+    if (known[type]) return known[type];
+    const guess = String(src || '').split('?')[0].split('#')[0].split('.').pop().toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].indexOf(guess) >= 0) {
+      return guess === 'jpeg' ? 'jpg' : guess;
+    }
+    return '';
+  }
+
+  // 下载当前放大图：fetch(access_url) → blob → URL.createObjectURL + <a download>。
+  // 取不到（令牌过期 / 非 200 / 空 blob）就如实提示，不假装成功。
+  async function downloadZoomImage() {
+    const overlay = imageZoomEl;
+    if (!overlay) return;
+    const src = overlay.__src || '';
+    const button = overlay.querySelector('#image-zoom-download');
+    if (!src) { toast('这张图没有可下载的地址'); return; }
+    if (button) { button.disabled = true; button.textContent = '下载中…'; }
+    try {
+      // same-origin 资源，显式带上凭据没坏处（access_url 是临时令牌）。
+      const response = await fetch(src, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const blob = await response.blob();
+      if (!blob || !blob.size) throw new Error('取到的是空文件');
+      const base = safeFileName(overlay.__caption || '') || 'product-image';
+      const ext = imageExtension(blob, src);
+      downloadBlob(blob, base + (ext ? '.' + ext : ''));
+      toast('图片已下载');
+      if (button) button.textContent = '已下载';
+    } catch (error) {
+      toast('下载失败：' + ((error && error.message) || '无法取到图片'));
+      if (button) button.textContent = '下载失败';
+    } finally {
+      setTimeout(() => {
+        if (button && document.body.contains(button)) {
+          button.disabled = false;
+          button.textContent = '下载';
+        }
+      }, 2000);
+    }
   }
 
   // ===================== 一键导出（不引任何库）=====================
@@ -2105,12 +2303,9 @@
     on('studio-copy', 'click', async () => {
       const box = $('studio-copy-text');
       if (!box || !box.value) { toast('没有可复制的文案'); return; }
-      try {
-        await navigator.clipboard.writeText(box.value);
-        toast('文案已复制');
-      } catch (error) {
-        box.select(); document.execCommand('copy'); toast('文案已复制');
-      }
+      // 与 #variant-zoom-copy 共用同一套复制实现（clipboard 优先，失败走 execCommand 兜底）。
+      const ok = await copyText(box.value);
+      toast(ok ? '文案已复制' : '复制失败：请手动选中文本框内容复制');
     });
     on('studio-regen', 'click', () => {
       // 重新生成：把需求带回对话，走 agent 的原流程（不在工作室里另造一套生成逻辑）
@@ -2399,30 +2594,46 @@
     send(text);
   });
 
-  // C/D：「图文工作室」= 用现有的 switchView('studio')，切换前把**选中的那一篇**与对应原图
-  // 写进 studioState（不是"最新一篇"）。
+  // 需求2：带入工作室的参考图 = **本轮交付的全部知识库原图**（不是"选中那篇的图"）。
+  // 只带 image_id：工作室参考图来自 /studio 的 materials.images，两边同源才对得上；
+  // 对不上的（例如旧流程 render_visuals 产出的渲染图，image_id 为空字符串）在
+  // applyPendingRefs 里被跳过，不伪造参考图。去重后交给 applyPendingRefs 限量 9 张。
+  function deliveryRefImageIds() {
+    const rows = (deliveryImages && deliveryImages.length)
+      ? deliveryImages
+      : ((selectedVariant && selectedVariant.images) || []);
+    const ids = [];
+    const push = (value) => {
+      const id = String(value || '');
+      if (id && ids.indexOf(id) < 0) ids.push(id);
+    };
+    rows.forEach(row => push(row && row.image_id));
+    if (!ids.length) (lastDelivery.imageIds || []).forEach(push);
+    return ids;
+  }
+
+  // C/D：「图文工作室」= 用现有的 switchView('studio')，切换前把**选中的那一篇**与
+  // **本轮全部原图**写进 studioState（不是"最新一篇"，也不是"只有选中那篇的图"）。
   on('go-studio', 'click', () => {
     const picked = selectedVariant;
     const copy = picked ? variantCopyText(picked.variant)
       : (lastDelivery.copy || '').trim();
     if (!copy) { toast('请先选一篇文案'); return; }
     studioState.pendingCopy = copy;
-    // 只带 image_id：工作室参考图来自 /studio 的 materials.images，两边同源才对得上。
     // 对话里「一键生图」产生的图片没有 image_id、也不在 materials.images 里，
     // 无法自动进参考图或「最近生成」（后者只由工作室自己的生成动作写入）——这里不伪造。
-    studioState.pendingRefIds = picked
-      ? (picked.images || []).map(image => image.image_id).filter(Boolean)
-      : (lastDelivery.imageIds || []).slice();
+    studioState.pendingRefIds = deliveryRefImageIds();
     switchView('studio');
   });
 
   // 「一键导出」：下载【选中的那篇文案 + 对应的原图】；未选中时明确提示，不静默失败。
   on('export-delivery', 'click', () => { exportDelivery(); });
 
-  // B：交付图片点击在新标签打开原图（不引库）。
+  // B：交付图片点击在**应用内浮层**放大（关闭按钮 / Esc / 点遮罩 + 下载），不再开新标签。
   // 知识库原图的 access_url 是临时令牌、会过期。加载失败时若只留一个圆角空框 + 型号名，
   // 看起来就和候选 pill 一样，用户会以为 agent 又让他重选一次型号。
   // 所以失败必须显式化：隐藏破图、给出可读原因。error 事件不冒泡，必须用捕获阶段。
+  // （需求4 只改"点击后做什么"，这段失败处理原样保留。）
   chatLog.addEventListener('error', (event) => {
     const img = event.target;
     if (!img || img.tagName !== 'IMG') return;
@@ -2441,8 +2652,9 @@
   chatLog.addEventListener('click', (event) => {
     const img = event.target && event.target.closest ? event.target.closest('img') : null;
     if (!img || !img.closest('.draft-images, .image-results, .variant-images')) return;
-    const src = img.getAttribute('src');
-    if (src) window.open(src, '_blank', 'noopener');
+    // 隐藏的破图不该再触发放大（失败处理已经把 img.hidden 置为 true）。
+    if (img.hidden) return;
+    openImageZoom(img);
   });
 
   // 示例按钮从空状态挪到了输入框上方；开始对话后收起，不再占位置。
@@ -2696,8 +2908,8 @@
   document.addEventListener('keydown', (event) => {
     const meta = event.metaKey || event.ctrlKey;
     if (!meta) {
-      // 放大态用 Esc 关闭（关闭后回到紧凑的选项卡）。
-      if (event.key === 'Escape') closeVariantZoom();
+      // 放大态用 Esc 关闭（关闭后回到紧凑的选项卡）；原图放大浮层同样支持 Esc。
+      if (event.key === 'Escape') { closeVariantZoom(); closeImageZoom(); }
       return;
     }
     if (event.key.toLowerCase() === 'n') {
