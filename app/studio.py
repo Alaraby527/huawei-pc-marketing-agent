@@ -36,6 +36,10 @@ from .retrieval import get_asset, store_asset
 _CATALOG: dict[str, tuple[float, object]] = {}
 _CATALOG_TTL = 120.0
 
+# 与前端参考图上限一致（app/static/app.js 的 applyPendingRefs 最多勾 9 张）：多款型号一起
+# 导入时在后端就截到这个上限，避免返回前端明知道会被丢掉的那些图。
+_STUDIO_IMAGE_LIMIT = 9
+
 
 async def _catalog():
     """Load the knowledge base with a short cache: the studio page asks repeatedly."""
@@ -73,23 +77,14 @@ class _StudioContext:
 def _fixed_product(task: dict) -> dict:
     """The product settled earlier in the conversation, if there is one.
 
-    Reads the new archive first (``material.models`` / ``selected_models``, 1–2 models) and
-    falls back to the legacy ``candidates[0]`` structure, so tasks created before the new
-    flow still open with their product instead of an empty studio.
+    Reads the new archive first (``material.models`` / ``selected_models``, 1–2 models).
+    A single legacy candidate is also readable (``task_material.normalize`` admits only that
+    unambiguous case). Everything else has no recorded choice, and returns nothing: picking
+    ``candidates[0]`` out of several search results attributed the task to a model the user
+    never selected.
     """
     rows = _fixed_products(task)
-    if rows:
-        return rows[0]
-    if task.get("flow"):
-        # 新流程的 candidates 只是搜索候选；没有明确选定就没有绑定产品，
-        # 不能把候选第一位当成用户选过的型号。
-        return {}
-    for candidate in (task.get("candidates") or []):
-        if isinstance(candidate, dict) and candidate.get("product_id"):
-            return {"product_id": candidate["product_id"],
-                    "model": candidate.get("model") or "",
-                    "facts_count": candidate.get("facts_count")}
-    return {}
+    return rows[0] if rows else {}
 
 
 def _fixed_products(task: dict) -> list[dict]:
@@ -144,23 +139,46 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
     product = None
     if product_ref:
         product = agent_runtime._product(catalog, product_id=product_ref["product_id"])
+    # Every settled model contributes its verified originals, not just the first: with 1–2
+    # selected models the studio used to import only `_fixed_product(task)` (the first one),
+    # so choosing MateBook 14（4 张）+ 酷睿 Ultra（6 张）imported 4 photos and silently
+    # dropped the second model's 6. Deduped by image id and capped like the frontend's
+    # reference picker (9), so nothing is lost or duplicated.
     images: list[dict] = []
-    if product is not None:
+    seen_images: set[str] = set()
+    fixed_models = _fixed_products(task)
+    for row_ref in fixed_models:
+        row_product = agent_runtime._product(catalog, product_id=row_ref["product_id"])
+        if row_product is None:
+            continue
         try:
-            rows, _ = await verified_images(catalog, product, Platform.XIAOHONGSHU,
+            rows, _ = await verified_images(catalog, row_product, Platform.XIAOHONGSHU,
                                             ["屏幕", "接口", "尺寸与重量", "电池"])
+        except Exception:  # noqa: BLE001 - no image is a normal state, reported as empty
+            continue
+        for row in (rows or []):
             # `source` is carried through deliberately: it holds the provenance that the
             # asset resolver reads. Dropping it degraded every rights status to "unknown",
             # losing the more truthful "provenance recorded, terms unreviewed".
-            images = [{"image_id": agent_runtime._image_field(row, "image_id"),
-                       "caption": agent_runtime._image_field(row, "caption"),
-                       "access_url": agent_runtime._image_field(row, "access_url"),
-                       "model_verified": agent_runtime._image_field(row, "model_verified"),
-                       "verification": _raw_field(row, "verification"),
-                       "source": _raw_field(row, "source")}
-                      for row in (rows or [])]
-        except Exception:  # noqa: BLE001 - no image is a normal state, reported as empty
-            images = []
+            image = {"image_id": agent_runtime._image_field(row, "image_id"),
+                     # Owning model, so a 2-model task does not label the second model's
+                     # photos with the first model's id in `assets`.
+                     "product_id": row_ref["product_id"],
+                     "caption": agent_runtime._image_field(row, "caption"),
+                     "access_url": agent_runtime._image_field(row, "access_url"),
+                     "model_verified": agent_runtime._image_field(row, "model_verified"),
+                     "verification": _raw_field(row, "verification"),
+                     "source": _raw_field(row, "source")}
+            key = str(image.get("image_id") or image.get("access_url") or "")
+            if key and key in seen_images:
+                continue
+            if key:
+                seen_images.add(key)
+            images.append(image)
+            if len(images) >= _STUDIO_IMAGE_LIMIT:
+                break
+        if len(images) >= _STUDIO_IMAGE_LIMIT:
+            break
     artifact, revision = _latest_artifact(db, conversation.id)
     copy = None
     if artifact is not None and revision is not None:
@@ -173,7 +191,6 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
     summary = agent_runtime.conversation_summary(db, conversation)
     from . import task_material
     archive = task_material.normalize(task)
-    fixed_models = _fixed_products(task)
     return {
         "conversation_id": conversation.id,
         "title": summary.get("title", ""),
@@ -194,7 +211,10 @@ async def materials(db: Session, conversation: models.AgentConversation) -> dict
         "images": images,
         # Roles and rights are derived from the KB's own provenance and reported as such;
         # the studio shows them so nobody assumes an official export is an authorisation.
-        "assets": assets.resolve(images, product_id=product_ref.get("product_id", "")),
+        # With several models each image already carries its own `product_id`, so no blanket
+        # id is imposed (that would relabel the second model's photos as the first's).
+        "assets": assets.resolve(images, product_id=(product_ref.get("product_id", "")
+                                                     if len(fixed_models) <= 1 else "")),
         "copy": copy,
         "task": {key: task.get(key) for key in ("runner_version", "artifact_count")
                  if task.get(key) is not None},

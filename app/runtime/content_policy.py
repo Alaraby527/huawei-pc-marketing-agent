@@ -28,7 +28,7 @@ _EXPERIENCE = re.compile(
 
 EXPERIENCE_NOTICE = ("（提示：以上草稿包含第一人称使用叙述，属于未核实的创作表达，"
                      "不能作为真实体验或实测结论发布。）")
-UNVERIFIED_NUMBER_NOTICE = ("（提示：知识库当前不可用，以上数字未经核实，"
+UNVERIFIED_NUMBER_NOTICE = ("（提示：本轮没有读取产品事实，以上数字未经核实，"
                             "不能作为产品参数发布。）")
 
 

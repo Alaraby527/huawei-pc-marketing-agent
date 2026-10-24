@@ -859,12 +859,16 @@
 
   // variant.models 是 product_id，material.models 才带可读型号名；能对上就用名字，
   // 对不上就显示 id —— 不编造型号名。
+  // 多款型号但这一篇没写归属时**不显示两个型号名**（那是"同时属于两款"的编造声明），
+  // 如实显示"未标注型号"。
   function variantModelNames(variant, material) {
     const rows = asList(material && material.models);
-    return ((variant && variant.models) || []).map((id) => {
+    const names = ((variant && variant.models) || []).map((id) => {
       const hit = rows.find(row => row && (row.product_id === id || row.model === id));
       return (hit && hit.model) || id;
     });
+    if (names.length) return names;
+    return rows.length > 1 ? ['未标注型号'] : [];
   }
 
   function materialSummaryHtml(material) {
@@ -887,10 +891,13 @@
   // 三篇文案渲染成三个"不大"的选项卡；下方是该型号的知识库产品原图；
   // 图片最下方是 #go-studio / #export-delivery 两个按钮。
   // 图片按契约取 images[].access_url；缺 images 时就不画图，不编造。
-  function renderVariants(source, messageEl) {
+  function renderVariants(source, messageEl, roundImages) {
     const variants = variantsFrom(source);
     if (!variants.length) return false;
-    const images = imagesFrom(source);
+    // roundImages 由调用方按本轮工具门控算好：`undefined` 表示调用方没有门控信息（例如
+    // 任务回放路径），此时沿用 source 上的 images；给了数组就只画这一轮的图，
+    // 避免「本轮没取图」时把上一轮的原图贴到本轮交付下面。
+    const images = roundImages === undefined ? imagesFrom(source) : asList(roundImages);
     const material = materialFrom(source);
     const host = messageEl || lastAssistantMessage() || addMessage('assistant', '');
     // 新一批选项卡 = 需要重新选：上一轮选中的那篇在这里作废。
@@ -1286,6 +1293,20 @@
     chatLog.scrollTop = chatLog.scrollHeight;
   }
 
+  // 独立审校的结论是**结构化字段**（payload.review_notice），不再拼进给用户看的正文：
+  // 正文只留用户能读的内容，审校结论作为单独一段提示渲染在消息下方。
+  function renderReviewNotice(messageEl, payload) {
+    const notice = payload && payload.review_notice;
+    if (!notice || !notice.message) return;
+    const host = messageEl || lastAssistantMessage();
+    if (!host) return;
+    const box = document.createElement('p');
+    box.className = 'review-notice' + (Number(notice.blocking) > 0 ? ' blocking' : '');
+    box.setAttribute('data-review-verdict', String(notice.verdict || ''));
+    box.textContent = notice.message;
+    host.appendChild(box);
+  }
+
   function renderV2Actions(messageEl, actions) {
     if (!messageEl || !actions || !actions.length) return;
     const row = document.createElement('div');
@@ -1340,6 +1361,7 @@
         escapeHtml(data.reply || '已完成').replace(/\n/g, '<br>') + '</p>' + eventTrace(data.events));
       renderV2Actions(messageEl, data.actions);
       renderSurfaceSuggestion(messageEl, data.surface_suggestion);
+      renderReviewNotice(messageEl, data);
       // Bug#1/#2 的另一半根因：run 的 payload 里 images / candidates / artifact 会从 checkpoint
       // 的 state 带过来，所以"这一轮没取图"时 data.images 仍可能是上一轮的图。
       // 用本轮 run 自己的 tool_finished 事件判断这一轮到底产出了什么，避免旧图/旧 pill 重复出现。
@@ -1347,20 +1369,27 @@
       const roundUsed = (names) => gate === null ||
         gate.some(name => names.indexOf(name) >= 0);
       // 新流程：三篇文案（variants）+ 该型号知识库原图（images）。
-      // 字段缺失／后端还没就绪时，variantsFrom 返回空数组，直接走原来的渲染路径。
-      // 选项卡下方的原图属于"这次交付的那个型号"，按契约直接取 data.images；
-      // 而下面的旧版交付卡只在"本轮真的取过图 / 真的存过交付物"时才渲染，
-      // 避免上一轮的卡片被重新贴到新消息里（规格第 7 节 bug#1/#2）。
+      // 「本轮真的产出交付物」唯一判据＝本轮真的调过 save_artifact：variants 只可能随它产出，
+      // 而 payload 里的 variants / images 可能来自 checkpoint 里上一轮的状态（实测：本轮只调
+      // save_artifact、甚至什么都没调时，它们仍带着上一轮的 3 篇与 4 张原图）。
+      // 因此 variants 与 candidates 共用同一套 roundToolGate，非交付轮不再重新渲染上一轮的内容；
+      // 选项卡下方的原图也只能取本轮的 images（本轮没取图就一张都不画）。
+      const savedThisRound = roundUsed(['save_artifact']);
       const imagesThisRound = roundUsed(['find_product_images', 'render_visuals']);
-      const roundImages = imagesThisRound ? asList(data.images) : [];
-      let usedVariants = renderVariants(data, messageEl);
+      // gate === null（非 LangGraph runner）表示"判断不了本轮产出"，沿用旧行为：
+      // 传 undefined，让 renderVariants 自己按 source 取图（含 material/task 兜底）。
+      const roundImages = gate === null ? undefined
+        : (imagesThisRound ? asList(data.images) : []);
+      let usedVariants = savedThisRound
+        ? renderVariants(data, messageEl, roundImages)
+        : false;
       if (!usedVariants && roundUsed(['search_products']) && data.candidates && data.candidates.length) {
         renderV2Candidates(data.candidates, messageEl);
       } else if (!usedVariants) {
         // 只有这一轮真的 save_artifact 时，才把会话里的最新交付拉过来渲染。
-        if (roundUsed(['save_artifact'])) {
+        if (savedThisRound) {
           const conversation = await fetch('/api/v2/conversations/' + sessionId).then(r => r.json());
-          usedVariants = renderVariants(conversation, messageEl);
+          usedVariants = renderVariants(conversation, messageEl, roundImages);
           if (!usedVariants && conversation.artifacts && conversation.artifacts.length) {
             renderV2Artifact(conversation, messageEl);
           }
@@ -1369,7 +1398,7 @@
         }
       }
       // variants 路径的图片已经画在选项卡下方，不能再往旧的 #draft-card 里塞一遍。
-      if (!usedVariants && roundImages.length) renderV2Images(roundImages);
+      if (!usedVariants && roundImages && roundImages.length) renderV2Images(roundImages);
       chatLog.scrollTop = chatLog.scrollHeight;
     } catch (error) {
       addMessage('assistant', '<p>网络错误，请稍后重试。</p>');
@@ -2268,7 +2297,10 @@
           '<button type="button" class="studio-kb" data-kb="' + index + '" title="' +
           escapeHtml(row.caption || row.image_id || '') + '">' +
           '<img src="' + escapeHtml(row.access_url || row.url || '') + '" alt=""></button>').join('')
-      : '<p class="hint">本次创作还没有绑定知识库原图。</p>';
+      // 前置说明（不是等坏图才解释）：这些地址是内存临时令牌，重启即失效。
+      : '<p class="hint">本次创作还没有绑定知识库原图。' +
+        '知识库原图的地址是本次运行的临时地址（默认 12 小时内有效，进程重启即清空），' +
+        '过期或重启后点「刷新材料」重新取图。</p>';
   }
 
   function renderStudioRefs() {
@@ -2321,7 +2353,10 @@
     });
     grid.innerHTML = (rows.length || loading)
       ? placeholders.join('') + cards.join('')
-      : '<p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。</p>';
+      // 诚实边界：这批图是内存态（会话级、重启清空），空态也要说出来，而不是等重启后
+      // 用户看到图不见了才发现。
+      : '<p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。' +
+        '生成记录只保存在本次运行内，重启后清空。</p>';
   }
 
   // 单击＝设为参考图；双击＝放大。浏览器双击前必先触发一次单击，

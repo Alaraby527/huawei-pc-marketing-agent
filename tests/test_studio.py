@@ -800,3 +800,101 @@ def test_concurrent_generations_do_not_collide_on_the_ledger(monkeypatch):
     assert elapsed < 0.7, "4 个 0.2 秒的调用必须重叠，不能串成 0.8 秒以上"
     assert len(studio.generated_history("c-concurrent")) == 4
     studio.reset_generated()
+
+
+# ---------------------------------------------------------------- audit fixes
+
+class _TwoProductCatalog:
+    class A:
+        product_id = "P-a"
+        model = "HUAWEI MateBook 14（鸿蒙版）"
+        issues = []
+        docs = []
+        facts = []
+
+    class B:
+        product_id = "P-b"
+        model = "HUAWEI MateBook 14 酷睿 Ultra"
+        issues = []
+        docs = []
+        facts = []
+
+    products = [A, B]
+
+
+def _image(image_id, caption):
+    return {"image_id": image_id, "caption": caption, "model_verified": True,
+            "access_url": "/api/v1/assets/" + image_id, "verification": "verified"}
+
+
+def test_materials_import_the_originals_of_every_selected_model(monkeypatch):
+    """修复 5：选 2 款型号时，两款的知识库原图都要进工作室，不是只绑第一款。
+
+    本地 KB 实证：MateBook 14 鸿蒙版 4 张 + 酷睿 Ultra 6 张；旧实现只取
+    `_fixed_product(task)`（第一款），第二款的 6 个 image_id 一个都没有。
+    """
+    async def catalog():
+        return _TwoProductCatalog()
+
+    async def fake_images(catalog_arg, product, platform, priorities):
+        if product.product_id == "P-a":
+            return [_image(f"A-{index}", "A 原图") for index in range(1, 5)], None
+        # B 故意重复一张 A 的 image_id：去重必须生效。
+        return ([_image("A-1", "A 原图")] +
+                [_image(f"B-{index}", "B 原图") for index in range(1, 7)]), None
+
+    monkeypatch.setattr(studio, "_catalog", catalog)
+    monkeypatch.setattr(studio, "verified_images", fake_images)
+
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    session.add(models.AgentTaskState(conversation_id=conversation.id, stage="completed",
+                                      data={"material": {"models": [
+                                          {"product_id": "P-a",
+                                           "model": _TwoProductCatalog.A.model},
+                                          {"product_id": "P-b",
+                                           "model": _TwoProductCatalog.B.model}]}}))
+    session.commit()
+
+    data = _run(studio.materials(session, conversation))
+    ids = [row["image_id"] for row in data["images"]]
+    # 4 张 A + 6 张 B（其中一张与 A 重复）→ 去重后 10 张，再按上限 9 收敛。
+    assert ids == ["A-1", "A-2", "A-3", "A-4", "B-1", "B-2", "B-3", "B-4", "B-5"], ids
+    assert len(ids) == len(set(ids)), "image_id 必须去重：" + str(ids)
+    assert len(ids) == studio._STUDIO_IMAGE_LIMIT, "按前端参考图上限收敛：" + str(ids)
+    owners = {row["image_id"]: row["product_id"] for row in data["images"]}
+    assert owners["B-1"] == "P-b" and owners["A-1"] == "P-a"
+    assert [row["product_id"] for row in data["selected_models"]] == ["P-a", "P-b"]
+
+    # 放宽上限后第二款的全部原图都在（证明 B-6 只是被上限截掉，不是被丢掉）。
+    monkeypatch.setattr(studio, "_STUDIO_IMAGE_LIMIT", 12)
+    wider = _run(studio.materials(session, conversation))
+    wider_ids = [row["image_id"] for row in wider["images"]]
+    assert "B-6" in wider_ids, wider_ids
+    assert len(wider_ids) == len(set(wider_ids)) == 10, wider_ids
+    session.close()
+
+
+def test_a_multi_candidate_legacy_task_binds_no_model(monkeypatch):
+    """修复 8：旧会话（无 flow）有多条候选、又没有明确选定记录时，不得把 candidates[0]
+    当成用户的已选型号；宁可留空，也不伪造一个绑定。"""
+    _pin_materials(monkeypatch)
+    session = db_layer.session_factory()()
+    conversation = _conversation(session)
+    session.add(models.AgentTaskState(conversation_id=conversation.id, stage="completed",
+                                      data={"candidates": [
+                                          {"product_id": "P-14",
+                                           "model": "HUAWEI MateBook 14（鸿蒙版）"},
+                                          {"product_id": "P-fold",
+                                           "model": "HUAWEI MateBook Fold 非凡大师"},
+                                          {"product_id": "P-pro",
+                                           "model": "HUAWEI MateBook Pro"}]}))
+    session.commit()
+
+    data = _run(studio.materials(session, conversation))
+    assert data["product"]["product_id"] == ""
+    assert data["selected_models"] == []
+    assert data["images"] == []
+    # 候选仍然如实列出，只是不冒充"已选"。
+    assert [row["product_id"] for row in data["candidates"]] == ["P-14", "P-fold", "P-pro"]
+    session.close()

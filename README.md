@@ -5,9 +5,12 @@
 
 面向华为 PC 门店导购与内容运营的营销 Agent：**澄清客户需求 → 在 ima 知识库核验产品事实与图片 → 确认型号 → 生成平台图文 → 合规规则扫描 → 人工确认后导出**。
 
-> **当前版本：v0.13.1（已在魔搭公开部署，个人库联调）**
+> **当前版本：v0.17.0**（`app.__version__` / `pyproject.toml`）。已在魔搭公开部署并复验；
+> 线上运行的是含「四件事 → 候选型号 → 3 篇文案 + 原图 → 图文工作室」新流程的版本。
+> > 版本号口径：代码里是 `0.17.0`；前端静态资源另有 `?v=` 缓存串（当前 `0.36.0-auditfix`），
+> > 两者用途不同，不要混用。
 >
-> 已实现：左侧任务栏（新建任务 / 热点搜索 / 任务列表）、热点搜索独立视图（小红书榜单、热点详情、使用热点带入对话）、可折叠右侧工作栏、自由输入优先（先理解需求，缺什么问什么）、WorkBuddy 式逐题选项卡片、工具/技能调用轨迹、多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、输入区内模型选择与服务端白名单、**六页小红书图文方案**、**六页 1080×1440 PNG 导出**、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感与内容目标步骤可选热点、HarmonyOS 风格 PC 工作台。
+> 已实现：左侧任务栏（新建任务 / 热点搜索 / 任务列表）、热点搜索独立视图（小红书榜单、热点详情、使用热点带入对话）、可折叠右侧工作栏、自由输入优先（先理解需求，缺什么问什么）、WorkBuddy 式逐题选项卡片、工具/技能调用轨迹、多轮需求澄清、中文槽位提取、选品与硬约束核验、ima 只读检索与目录回退、规格章节与脚注提取、同型号图片核验、规则/LLM 双引擎、输入区内模型选择与服务端白名单、合规规则扫描、两道人工确认、四段式报告导出、**DashScope 原生异步生图**、热点灵感与内容目标步骤可选热点、HarmonyOS 风格 PC 工作台。
 >
 > 未完成：赛事指定共享知识库接入、逐条语义核验、多 worker 会话存储、公网鉴权与限流。个人库联调始终标记 `competition_ready=false`。
 
@@ -47,9 +50,9 @@ flowchart LR
   R --> E[事实与图片核验]
   E --> P[型号确认]
   P --> C[图文生成<br/>rule / llm]
-  C --> P6[六页小红书方案]
+  C --> V[3 篇文案 + 知识库原图]
   C --> IMG[DashScope 氛围封面]
-  P6 --> A[合规规则扫描]
+  V --> A[合规规则扫描]
   A --> H{人工确认}
   H -->|通过| X[导出四段式报告]
   H -->|修改| C
@@ -128,12 +131,12 @@ docker run --rm -p 7860:7860 \
 | `LLM_IMAGE_NATIVE_BASE` | 否 | DashScope 原生 API 基址；Base URL 含 dashscope 时自动推导 |
 | `IMAGE_API_BASE_URL` | 否 | 独立图像通道（OpenAI 兼容）；默认 `https://maas.qianwenaiapi.com/compatible-mode/v1` |
 | `IMAGE_API_KEY` | 否 | 独立图像通道密钥；只在服务端配置，不下发前端 |
-| `IMAGE_MODEL` | 否 | 图像模型；当前主通道 `gpt-image-2-w` |
-| `IMAGE_FALLBACK_BASE_URL` / `IMAGE_FALLBACK_API_KEY` / `IMAGE_FALLBACK_MODEL` | 否 | 主通道 429/5xx/超时时的兜底图像通道（当前 `qwen-image-3.0-pro`） |
+| `IMAGE_MODEL` | 否 | 图像模型；主通道默认 `qwen-image-3.0-pro`。带参考图的能力以 `app/image_capabilities.py` 的探针记录为准（`gpt-image-2-w` 带图实测 503，未作为主通道） |
+| `IMAGE_FALLBACK_BASE_URL` / `IMAGE_FALLBACK_API_KEY` / `IMAGE_FALLBACK_MODEL` | 否 | 主通道 429/5xx/超时时的兜底图像通道 |
 | `DATABASE_URL` | 否 | 工作区持久化；Postgres 例：`postgresql+psycopg://rednote:rednote@127.0.0.1:5432/rednote`。未设置时工作区接口返回 `CAPABILITY_DISABLED`，对话链路不受影响 |
-| `REDIS_URL` | 否 | 队列/缓存预留；M1 未强制依赖 |
+| `REDIS_URL` | 否 | **预留**：`compose.yaml` 会注入，但当前代码（`app/`、`scripts/`、`tests/`）没有任何地方读取；队列/缓存尚未接入 |
 | `REDNOTE_DATA_DIR` | 否 | 工作区资产目录，默认 `data` |
-| `HOT_SOURCE` | 否 | `public` 或 `curated`；托管环境建议 `curated`，避免网关内容审查拒绝社交流内容 |
+| `HOT_SOURCE` | 否 | **预留**：`compose.yaml` 会注入，但当前代码没有任何地方读取；热点来源由 `HOT_API_BASE` / `HOTSPOTS_*` 控制 |
 
 应用不会自动读取 `.env`；请由启动环境或平台 Secrets 注入。`.env.example` 只有占位符。
 
@@ -162,14 +165,15 @@ docker run --rm -p 7860:7860 \
 | `POST` | `/api/v1/conversations/turn` | 主入口：多轮澄清、选品、生成、修改、确认 |
 | `GET` | `/api/v1/conversations/{session_id}/state` | 恢复历史任务（会话状态与最近消息） |
 | `GET` | `/api/v1/conversations/{session_id}/export` | 导出已审批的四段式报告（text/markdown） |
-| `GET` | `/api/v1/conversations/{session_id}/posters.zip` | 下载六页 1080×1440 PNG（ZIP） |
-| `GET` | `/api/v1/conversations/{session_id}/posters/{n}.png` | 单页海报预览（n=1–6） |
 | `POST` | `/api/v1/guide` | 单轮前段检索，返回材料包；图片核验强度低于对话链路 |
 | `POST` | `/api/v1/materials/validate` | 材料包结构与完整度预检查，不代表事实真实 |
 | `GET` | `/api/v1/platforms` | 四个平台的规则 |
 | `GET` | `/api/v1/knowledge/connection` | ima 连接状态 |
-| `GET` | `/api/v1/hotspots` | 可选的公开热榜轻关联参考 |
-| `POST` | `/api/v1/covers/generate` | 可选 AI 氛围封面（仅背景，需显式开启） |
+| `GET` | `/api/hotspots` | 热点中心榜单（只读；分页读取固定发布版本，不触发抓取） |
+| `GET` | `/api/v1/hot-topics` | 可选的热点榜单参考 |
+| `GET` | `/api/v1/hot-charts` | 热点图表数据 |
+| `POST` | `/api/v1/hot-topics/refresh` | 刷新热点数据 |
+| `POST` | `/api/v1/images/generate` | 生图入口（知识库核验原图作参考） |
 
 主流程示例：
 
@@ -284,7 +288,7 @@ AI 封面氛围图示例（只做背景，不是产品实拍）：
 - 文本：DashScope `qwen-plus` 生成六页方案，引用事实 ID，规则扫描通过。
 - 人工确认：产品选择 + 成稿确认两道门；确认后导出四段式 Markdown（含六页方案）返回 200。
 - 生图：DashScope `wanx2.1-t2i-turbo` 原生异步接口返回 768×1024 PNG，用于封面氛围背景。
-- 测试：112 个用例通过；CI 在 GitHub Actions 上通过；容器镜像启动后 `/healthz` 冒烟测试通过。
+- 测试：**624 个用例通过 / 0 failed**（2026-10-24 本机实测，耗时约 287 秒）；CI 在 GitHub Actions 上通过；容器镜像启动后 `/healthz` 冒烟测试通过。
 
 ## 团队分工
 
@@ -301,7 +305,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-当前 119 个用例通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、两道确认门、审批失效、LLM 输出回退、六页事实引用、本地官方库 ZIP 适配、小红书 MCP 映射、CLI 重复导出、SSRF/分页/密钥不回显等。测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
+当前 **624 个用例**通过，覆盖需求澄清、预算/系统要求解析、选品硬约束、价格时效、图片身份与字节一致性、确认门与审批失效、LLM 输出回退、本地官方库 ZIP 适配、LangGraph 运行时与工具网关、任务资料累加（人群/平台/场景/活动/型号/热点）、3 篇文案校验（恰好 3 篇，否则拒绝保存）、生图并发与计费写锁、配方批准记录、CLI 重复导出、SSRF/分页/密钥不回显等。（六页事实引用与小红书 MCP 映射的用例已随功能删除一并移除。）测试中的产品、来源与图片均为合成对象，不代表真实知识库资料。
 
 ## 部署说明
 
@@ -311,8 +315,7 @@ python -m pytest -q
 - `container.yml`：在 `main`/版本 tag 上构建并推送 GHCR 镜像，并启动容器请求 `/healthz` 做冒烟测试。
 - `Dockerfile` / `compose.yaml`：本地或任意容器平台运行。
 
-当前镜像标签包括 `latest`、`0.12.0`、`v0.12.0` 和 `sha-<commit>`：
-当前镜像标签包括 `latest`、`0.12.4`、`v0.12.4` 和 `sha-<commit>`：
+当前镜像标签包括 `latest`、`0.17.0`、`v0.17.0` 和 `sha-<commit>`：
 
 ```bash
 docker run --rm -p 7860:7860 \

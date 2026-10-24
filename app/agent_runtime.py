@@ -952,6 +952,16 @@ def _save_artifact(ctx, args):
         product_ids = [row["product_id"] for row in canonical]
         if "variants" in content:
             content["product_ids"] = product_ids
+            invalid_models = _invalid_variant_model_ids(content, product_ids)
+            if invalid_models:
+                # Refuse instead of rewriting: substituting the selected ids would attribute
+                # each post to a model the author did not name. The ids are given back so the
+                # model can correct itself on the next decision.
+                return {"ok": False, "error": "VARIANT_MODEL_INVALID",
+                        "message": ("第 " + "、".join(str(index) for index in invalid_models) +
+                                    " 篇的 models 必须是本次选定型号的 product_id，未保存；"
+                                    "可用：" + "、".join(product_ids)),
+                        "available": product_ids}
             _fill_variant_models(content, product_ids)
         check = check_artifact(content, records)
         if not check["passed"]:
@@ -1008,16 +1018,49 @@ def _validate_variants(content: dict):
     return None
 
 
+def _invalid_variant_model_ids(content: dict, product_ids: list[str]) -> list[int]:
+    """1-based indexes of variants whose ``models`` names something not in the selection.
+
+    ``variants[i].models`` is a list of **product_id strings**. A model name (or any other
+    id) must not be stored: it would look like a verified attribution that no product backs.
+    Only the exact ids the artifact is bound to are accepted, so nothing is guessed by
+    fuzzy-matching a name.
+    """
+    allowed = {str(value) for value in product_ids}
+    rows = content.get("variants")
+    if not isinstance(rows, list):
+        return []
+    bad: list[int] = []
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            continue
+        values = [str(item).strip() for item in (row.get("models") or [])
+                  if str(item or "").strip()]
+        if any(value not in allowed for value in values):
+            bad.append(index)
+    return bad
+
+
 def _fill_variant_models(content: dict, product_ids: list[str]) -> None:
+    """Fill a *missing* per-variant attribution only when it is unambiguous.
+
+    With one selected model every variant necessarily belongs to it, so defaulting is an
+    entailment rather than an invention. With several models it is not: filling
+    ``list(product_ids)`` marked all three posts as belonging to **both** models, which the
+    spec explicitly does not ask for ("选 2 款时 3 篇混着写") and which the user cannot
+    verify. That case stays empty — "未标注归属" — and the UI says so instead of printing
+    two model names.
+    """
     rows = content.get("variants")
     if not isinstance(rows, list):
         return
+    default = list(product_ids) if len(product_ids) == 1 else []
     for row in rows:
         if not isinstance(row, dict):
             continue
         models = [str(item or "").strip() for item in (row.get("models") or [])]
         models = [value for value in models if value]
-        row["models"] = models or list(product_ids)
+        row["models"] = models or list(default)
 
 
 def _remember_variants(ctx, variants: list[dict], product_ids: list[str]) -> None:
@@ -1249,14 +1292,18 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
         elif name == "ask_user":
             result = {"ok": True, "question": str(args.get("question", "")),
                       "options": args.get("options") or []}
-        elif name in ("save_artifact", "check_artifact") and ctx.catalog is None:
-            await _catalog(ctx)
+        elif name in ("save_artifact", "check_artifact"):
+            # The catalog must exist before either of these runs. Loading it used to be its
+            # own `elif` branch that assigned no `result`, so a turn whose **first** tool was
+            # save_artifact fell through and raised UnboundLocalError — reported to the model
+            # as TOOL_ERROR and never saving the delivery (only rounds that had already read
+            # evidence first worked, which hid it).
+            if ctx.catalog is None:
+                await _catalog(ctx)
+            result = _save_artifact(ctx, args) if name == "save_artifact" \
+                else _check_artifact(ctx, args)
         elif name == "load_artifact":
             result = _load_artifact(ctx, args)
-        elif name == "save_artifact":
-            result = _save_artifact(ctx, args)
-        elif name == "check_artifact":
-            result = _check_artifact(ctx, args)
         else:
             result = {"ok": False, "error": "TOOL_NOT_ALLOWED", "message": "工具不在白名单"}
     except Exception as error:
@@ -1280,6 +1327,43 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict):
     return result
 
 
+def _commit_before_model_call(db: Session) -> str:
+    """Commit pending writes before a blocking model call; return "" on success.
+
+    SQLite has a single writer. Flushing without committing kept the write transaction open
+    across the 30–100 s model call, so an unrelated conversation's write waited on the lock
+    and failed with ``database is locked`` (measured: another request HTTP 500 after 5.24 s
+    while a guided run was thinking). The LangGraph runner already commits before its model
+    calls (``runner.submit`` / ``graph._commit_quietly``); the legacy guided/autonomous paths
+    did not. A commit failure is returned as the error class name and the caller must report
+    it instead of continuing into the model call.
+    """
+    try:
+        db.commit()
+        return ""
+    except Exception as error:  # noqa: BLE001 - reported by the caller, never swallowed
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001 - the original failure is what matters
+            pass
+        return type(error).__name__
+
+
+def _commit_failed_payload(conversation, run, error_name: str) -> dict:
+    """An honest terminal payload for "the run never started".
+
+    The row that would carry the failure was rolled back with the failed commit, so this
+    answer cannot be persisted; it is returned directly rather than pretending the round
+    proceeded and silently calling the model anyway.
+    """
+    return {"run_id": str(getattr(run, "id", "") or ""),
+            "conversation_id": str(getattr(conversation, "id", "") or ""),
+            "status": "failed", "stop_reason": "commit_failed",
+            "reply": ("本轮开始前未能提交记录（" + error_name +
+                      "），已中止，没有继续调用模型；可以重新发送这条消息。"),
+            "events": [], "usage": {}, "can_publish": False}
+
+
 async def run_turn(db: Session, conversation: models.AgentConversation, text: str,
                    model: str | None = None, idempotency_key: str | None = None) -> dict:
     if idempotency_key:
@@ -1297,6 +1381,11 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
     db.add(run)
     db.flush()
     _event(run, "message", role="user", content=text)
+    # Release the write lock before anything blocking. Both the guided path (its own model
+    # calls below) and the autonomous loop need this, and neither used to do it.
+    commit_error = _commit_before_model_call(db)
+    if commit_error:
+        return _commit_failed_payload(conversation, run, commit_error)
     if conversation.runner_version == "guided":
         return await _guided_turn(db, conversation, run, text, model, base_seq)
     ctx = ToolContext(db=db, conversation=conversation, run=run)
@@ -1306,6 +1395,9 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
         product_id = str((existing.get("content") or {}).get("product_id") or "")
         if product_id:
             await execute_tool(ctx, "read_product_evidence", {"product_id": product_id})
+        commit_error = _commit_before_model_call(db)
+        if commit_error:
+            return _commit_failed_payload(conversation, run, commit_error)
         edited = await asyncio.to_thread(_edit_artifact, ctx, text, model)
         if edited and edited.get("ok"):
             reply = str(edited.get("reply") or "").strip()
@@ -1342,6 +1434,15 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                 status = "completed"
                 stop_reason = "time_budget"
                 reply = reply or "已达到本轮时间上限，先交付已完成部分。"
+                break
+            # Every iteration ends in a blocking model call; commit what the previous
+            # iteration wrote (its assistant/tool messages) before it starts.
+            commit_error = _commit_before_model_call(db)
+            if commit_error:
+                status = "failed"
+                stop_reason = "commit_failed"
+                reply = ("本轮在调用模型前未能提交记录（" + commit_error +
+                         "），已中止，可以重新发送这条消息。")
                 break
             history = db.scalars(select(models.AgentMessage).where(
                 models.AgentMessage.conversation_id == conversation.id).order_by(
@@ -1452,7 +1553,15 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                     break
                 if ctx.evidence_read and not ctx.compose_attempted:
                     ctx.compose_attempted = True
-                    composed = await asyncio.to_thread(_compose_after_evidence, ctx, text, model)
+                    # The tool calls above just wrote rows; commit them before this second
+                    # blocking model call so the write lock does not span it.
+                    commit_error = _commit_before_model_call(db)
+                    if not commit_error:
+                        composed = await asyncio.to_thread(_compose_after_evidence, ctx, text,
+                                                           model)
+                    else:
+                        composed = [{"ok": False, "error": "COMMIT_FAILED",
+                                     "message": "提交失败（" + commit_error + "）"}]
                     if composed and composed[0].get("ok"):
                         ctx.last_artifact = composed[0]
                         reply = str(composed[0].get("reply") or "").strip()
@@ -1472,6 +1581,12 @@ async def run_turn(db: Session, conversation: models.AgentConversation, text: st
                             continue
                         if error in ("VARIANT_COUNT_MISMATCH", "PAGE_COUNT_MISMATCH"):
                             reply = str(composed[0].get("message") or "篇数不符合要求，未保存。")
+                        elif error == "COMMIT_FAILED":
+                            # Not a content problem: say what actually happened.
+                            status = "failed"
+                            stop_reason = "commit_failed"
+                            reply = str(composed[0].get("message") or
+                                        "提交失败，已中止本轮，没有继续调用模型。")
                         elif error == "FACT_CHECK_FAILED":
                             errors = (composed[0].get("check") or {}).get("errors") or []
                             reply = "内容含知识库未证实的参数，未保存。"
@@ -1540,7 +1655,20 @@ _START_RE = re.compile(r"开始|生成|做吧|可以|行|好|确认|继续|没�
 _APPROVE_RE = re.compile(r"都(可以|行|保留|要)|没问题|定稿|就这样|满意|可以了|通过|挺好", re.I)
 _USER_DECIDES_RE = re.compile(r"你定|随便|都行|你来|看着办|先给一版")
 # 「没有活动」是有效回答：不能因为出现了「活动」二字就把它当成选了某个活动。
-_NO_CAMPAIGN_RE = re.compile(r"(没有|没|无|不搞|不用|免了|暂无)\s*(什么|啥)?\s*(活动|促销|大促|节点)")
+# 界面在追问「要打什么活动」时给的按钮就是「没有」，所以**整句就是一个否定**也必须算数——
+# 旧写法要求否定词后面必须跟「活动/促销/大促/节点」，于是用户按提示回「没有」永远匹配不上，
+# 同一句追问被反复问三次（实测：回「没有活动」立刻出候选，回「没有」卡死）。
+# 同时不能误伤：否定词后面跟的是别的东西（「没有预算」「不需要改」）不是「没有活动」，
+# 所以整句否定那条用 ^...$ 锚定，只承认否定词（加语气词）就是全部内容。
+_CAMPAIGN_WORD = r"(?:活动|促销|大促|节点)"
+_NEGATION = r"(?:没有|没|无|不搞|不用|不需要|免了|暂无)"
+_NO_CAMPAIGN_RE = re.compile(
+    # a) 明说的"没有活动/不搞大促"：否定词 + 可选"什么/啥" + 活动词
+    _NEGATION + r"\s*(?:什么|啥)?\s*" + _CAMPAIGN_WORD +
+    # b) 整句就是一个否定（按钮「没有」/「暂无」/「不用」/「不需要」/「无」）
+    r"|^\s*(?:那|就|嗯|哦|好(?:的|吧)?|行|都|也)?\s*" + _NEGATION +
+    r"\s*(?:什么|啥)?\s*" + _CAMPAIGN_WORD + r"?" +
+    r"\s*(?:了|的|吧|呢|啊|呀|哦|哈|嘛|先|再|都)*\s*[，,。.!！~～]?\s*$")
 
 _GUIDED_NEEDS_SYSTEM = """你是华为 PC 内容助手的前台需求分析器。只提取，不编造。
 按用户确认的规格，先收四件事加可选信息，**不要问型号**（用户不了解型号）。
@@ -1873,6 +2001,11 @@ def _remember_material(data: dict, needs: dict, *, resolver=None) -> dict:
 async def _guided_intake(ctx: ToolContext, state, data: dict, needs: dict, text: str,
                          model, usage: dict, base_seq: int):
     history = _recent_history(ctx.db, ctx.conversation)
+    # The archive write above must land before the (blocking) needs model call: leaving the
+    # transaction open is what locked other conversations out of SQLite's single writer.
+    commit_error = _commit_before_model_call(ctx.db)
+    if commit_error:
+        return _commit_failed_payload(ctx.conversation, ctx.run, commit_error)
     extracted, meta = await _guided_needs(text, history, needs, model)
     _guided_usage_add(usage, meta)
     needs = _merge_needs(needs, extracted)
@@ -2086,6 +2219,10 @@ async def _guided_generate(ctx: ToolContext, state, data: dict, needs: dict,
                     "不能写成产品事实或实测结论。")
     if extra:
         request += " " + extra
+    # Commit the generated request's prerequisite writes before the blocking compose call.
+    commit_error = _commit_before_model_call(ctx.db)
+    if commit_error:
+        return _commit_failed_payload(ctx.conversation, ctx.run, commit_error)
     composed_result = await asyncio.to_thread(_compose_after_evidence, ctx, request, model)
     if isinstance(composed_result, tuple):
         composed, meta = composed_result
@@ -2185,6 +2322,9 @@ async def _guided_review(ctx: ToolContext, state, data: dict, needs: dict, text:
     if _is_edit_request(text) and data.get("artifact_id"):
         loaded = _load_artifact(ctx, {"artifact_id": data["artifact_id"]})
         if loaded.get("ok"):
+            commit_error = _commit_before_model_call(ctx.db)
+            if commit_error:
+                return _commit_failed_payload(ctx.conversation, ctx.run, commit_error)
             edited = await asyncio.to_thread(_edit_artifact, ctx, text, model)
             if edited and edited.get("ok"):
                 data["copy_revision"] = edited.get("revision")

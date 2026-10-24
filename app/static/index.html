@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>华为 PC 营销工作台 · Marketing Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=0.35.0-hotspotgen">
+<link rel="stylesheet" href="/static/style.css?v=0.36.0-auditfix">
 </head>
 <body>
 <div class="app-shell">
@@ -271,7 +271,7 @@
               <h3>知识库原图</h3>
               <span class="studio-chip" id="studio-kb-count">检测中…</span>
             </header>
-            <p class="studio-note">单击设为参考图；已选的可再次点击取消。双击放大后只能下载或设为参考图——知识库原图是产品实物依据，不许重绘。</p>
+            <p class="studio-note">单击设为参考图；已选的可再次点击取消。双击放大后只能下载或设为参考图——知识库原图是产品实物依据，不许重绘。图片地址是本次运行的临时地址（默认 12 小时内有效，最多保留 400 张；进程重启即清空），重启后需要重新取图。</p>
             <div class="studio-kb-grid" id="studio-kb-grid"></div>
 
             <!-- 新生成产品图：本次生成的成品直接落在这里（生成过程中显示转圈占位） -->
@@ -280,9 +280,9 @@
                 <h3>新生成产品图</h3>
                 <span class="studio-chip" id="studio-generated-count">0 张</span>
               </header>
-              <p class="studio-note">生成中会先出现占位卡片；完成后图片直接显示在这里。单击设为参考图，双击放大（下载 / 参考 / 重绘）。</p>
+              <p class="studio-note">生成中会先出现占位卡片；完成后图片直接显示在这里。单击设为参考图，双击放大（下载 / 参考 / 重绘）。这些图只保存在本次运行内，重启后清空。</p>
               <div class="studio-generated-grid" id="studio-generated-grid">
-                <p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。</p>
+                <p class="hint">本次还没有生成图片；点中栏「生成图片」后，成品会直接出现在这里。生成记录只保存在本次运行内，重启后清空。</p>
               </div>
             </div>
           </section>
@@ -394,7 +394,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=0.35.0-hotspotgen" defer></script>
-<script src="/static/workspace.js?v=0.35.0-hotspotgen" defer></script>
+<script src="/static/app.js?v=0.36.0-auditfix" defer></script>
+<script src="/static/workspace.js?v=0.36.0-auditfix" defer></script>
 </body>
 </html>

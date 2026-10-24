@@ -640,3 +640,233 @@ def test_v2_reports_unwritable_database(monkeypatch):
     monkeypatch.setenv("AGENT_DB_PATH", "/dev/null/agent.db")
     response = client.post("/api/v2/conversations", json={})
     assert response.status_code == 503
+
+
+# ---------------------------------------------------------------- audit fixes
+
+@pytest.mark.parametrize("text", [
+    "没有", "没", "暂无", "不用", "不需要", "无",
+    "没有活动", "无活动", "不搞大促", "没有吧", "没有了", "那没有", "好吧没有", "不需要了",
+])
+def test_a_bare_no_is_a_valid_no_campaign_answer(text):
+    """追问「要打什么活动」时，界面给的按钮就是「没有」——整句否定也必须被识别。
+
+    旧写法要求否定词后面必须跟「活动/促销/大促/节点」，用户按提示回「没有」永远匹配不上，
+    同一句追问被反复问（实测：回「没有活动」立刻出候选，回「没有」卡死）。
+    """
+    assert agent_runtime._NO_CAMPAIGN_RE.search(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "没有预算", "不需要改", "无锡", "无所谓", "没有什么special", "不需要预算",
+    "开学季", "双十一", "门店活动", "活动", "预算 5000", "没有了预算",
+])
+def test_a_no_campaign_answer_does_not_swallow_other_subjects(text):
+    """「没有预算」不是「没有活动」：整句否定那条必须锚定整句，不能吞掉别的宾语。"""
+    assert not agent_runtime._NO_CAMPAIGN_RE.search(text), text
+
+
+def test_guided_accepts_the_bare_no_button(monkeypatch):
+    """真实 guided HTTP 路径：问到活动时回「没有」（界面按钮原文）必须继续，不能复读追问。"""
+    async def guided_catalog(*args, **kwargs):
+        return GuidedCatalog()
+
+    async def guided_images(*args, **kwargs):
+        return [FakeImage()], []
+
+    monkeypatch.setattr("app.agent_runtime.load_catalog", guided_catalog)
+    monkeypatch.setattr("app.agent_runtime.verified_images", guided_images)
+
+    def fake_json(system, messages, schema_hint=None, model=None):
+        user = messages[-1]["content"] if messages else ""
+        if "需求分析器" in system:
+            extracted = {"intent": "chat"}
+            if "大学生" in user:
+                extracted["audience"] = "大学生"
+            if "小红书" in user:
+                extracted["platform"] = "小红书"
+            if "上课" in user:
+                extracted["scenario"] = "校园学习"
+            return extracted, {"model": "stub", "usage": {}}
+        return ({"artifact_type": "variants", "reply": "3 篇文案好了。",
+                 "content": {"product_ids": ["P-a"], "variants": _variants(3, "P-a")}},
+                {"model": "stub", "usage": {}})
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake_json)
+    conversation_id = client.post("/api/v2/conversations",
+                                  json={"mode": "guided"}).json()["conversation_id"]
+    first = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                        json={"message": "大学生，发小红书"}).json()
+    assert first["stage"] == "intake"
+    asked = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                        json={"message": "上课和写论文"}).json()
+    assert "活动" in asked["reply"], asked["reply"]
+
+    answered = client.post(f"/api/v2/conversations/{conversation_id}/messages",
+                           json={"message": "没有"}).json()
+    assert answered["stage"] == "select_product", answered["reply"]
+    assert answered["candidates"], "「没有」之后应该直接给候选，而不是复读同一个追问"
+
+
+class TwoProductCatalog:
+    class A:
+        model = "HUAWEI MateBook Test A"
+        product_id = "P-a"
+        issues = []
+        docs = []
+        facts = [_fact("A-MEM", "内存：16 GB")]
+        client = None
+        source_kind = "local_official_export"
+
+    class B:
+        model = "HUAWEI MateBook Test B"
+        product_id = "P-b"
+        issues = []
+        docs = []
+        facts = [_fact("B-MEM", "内存：16 GB")]
+        client = None
+        source_kind = "local_official_export"
+
+    products = [A, B]
+    entries = []
+    image_index = []
+
+
+def test_a_variant_model_name_is_refused_not_silently_stored():
+    """契约要求 variants[i].models 是 product_id；模型给型号名时不得原样落库。"""
+    session, ctx = _ctx()
+    ctx.catalog = TwoProductCatalog()
+    content = {"product_ids": ["P-a"], "variants": _variants(3, "HUAWEI MateBook Test A")}
+    result = agent_runtime._save_artifact(ctx, {"artifact_type": "variants", "content": content})
+    assert result["ok"] is False
+    assert result["error"] == "VARIANT_MODEL_INVALID"
+    assert result["available"] == ["P-a"]
+    assert session.query(agent_runtime.models.AgentArtifact).count() == 0
+    session.close()
+
+
+def test_two_model_variants_without_models_are_not_attributed_to_every_model():
+    """两款型号、模型没写逐篇归属时，不能把三篇都标成「同时属于两款」。"""
+    session, ctx = _ctx()
+    ctx.catalog = TwoProductCatalog()
+    rows = [{"variant_id": f"v{index}", "label": f"方向{index}", "title": f"标题{index}",
+             "body": "内存 16 GB", "tags": ["校园"]} for index in range(1, 4)]
+    result = agent_runtime._save_artifact(ctx, {
+        "artifact_type": "variants",
+        "content": {"product_ids": ["P-a", "P-b"], "variants": rows}})
+    assert result["ok"] is True
+    assert all(row["models"] != ["P-a", "P-b"] for row in result["variants"])
+    assert all(row["models"] == [] for row in result["variants"])
+    # The read-back path must agree with the stored shape, not re-expand to both ids.
+    projected = agent_runtime.task_material.variants_from_content(
+        {"product_ids": ["P-a", "P-b"], "variants": rows})
+    assert all(row["models"] == [] for row in projected)
+    session.close()
+
+
+def test_a_single_model_variant_without_models_is_entailed():
+    """只有一款型号时，逐篇归属没有第二种可能，补上它是推断而不是编造。"""
+    session, ctx = _ctx()
+    ctx.catalog = TwoProductCatalog()
+    rows = [{"variant_id": f"v{index}", "label": f"方向{index}", "title": f"标题{index}",
+             "body": "内存 16 GB", "tags": ["校园"]} for index in range(1, 4)]
+    result = agent_runtime._save_artifact(ctx, {
+        "artifact_type": "variants",
+        "content": {"product_ids": ["P-a"], "variants": rows}})
+    assert result["ok"] is True
+    assert all(row["models"] == ["P-a"] for row in result["variants"])
+    session.close()
+
+
+def test_save_artifact_as_the_first_tool_loads_the_catalog():
+    """save_artifact 作为本轮第一个工具时必须能保存。
+
+    旧代码里"加载知识库"是一个不赋值 `result` 的 `elif` 分支，于是第一个工具就是
+    save_artifact 的那一轮走到 `result.get(...)` 抛 UnboundLocalError，被报成 TOOL_ERROR，
+    交付物根本没保存（只有先读过证据的轮次才正常，所以一直没被发现）。
+    """
+    session, ctx = _ctx()
+    ctx.catalog = None
+    result = asyncio.run(agent_runtime.execute_tool(ctx, "save_artifact", {
+        "artifact_type": "post", "content": {"title": "标题", "body": "正文"}}))
+    assert result["ok"] is True, result
+    assert result["artifact_id"]
+    session.close()
+
+
+def test_legacy_multi_candidate_tasks_do_not_invent_a_selected_model():
+    """旧会话（无 flow）候选不止一条时，candidates[0] 不是用户的选择，不得冒充已选型号。
+
+    活库实证：三款候选是 MateBook 14 鸿蒙版 / Fold / Pro，用户实际选的是 D 14 2024（不在候选里），
+    回退取 candidates[0] 会把整个任务绑到用户从没选过的型号上。
+    """
+    from app import studio, task_material
+
+    legacy = {"candidates": [{"product_id": "P-14", "model": "HUAWEI MateBook 14（鸿蒙版）"},
+                             {"product_id": "P-fold", "model": "HUAWEI MateBook Fold"},
+                             {"product_id": "P-pro", "model": "HUAWEI MateBook Pro"}]}
+    assert task_material.normalize(legacy)["models"] == []
+    assert studio._fixed_product(legacy) == {}
+    assert studio._fixed_products(legacy) == []
+    # 唯一候选仍然可读：没有第二种可能，属于真正可判定的旧数据。
+    lone = {"candidates": [{"product_id": "P-only", "model": "HUAWEI MateBook Only"}]}
+    assert [row["product_id"] for row in task_material.normalize(lone)["models"]] == ["P-only"]
+    assert studio._fixed_product(lone)["product_id"] == "P-only"
+
+
+def test_a_guided_model_call_does_not_hold_sqlite_write_lock(monkeypatch):
+    """修复 9：guided 的阻塞模型调用不得横跨写事务。
+
+    A/B 实测：跑 guided 时另一个无关会话的写请求 HTTP 500（`database is locked`，5.24s）。
+    修法是在进阻塞模型调用前先 commit（与 LangGraph runner 的 submit / _commit_quietly 同思路）。
+    """
+    import threading
+    import time
+
+    release = threading.Event()
+    started = threading.Event()
+
+    async def guided_catalog(*args, **kwargs):
+        return GuidedCatalog()
+
+    monkeypatch.setattr("app.agent_runtime.load_catalog", guided_catalog)
+
+    def fake_json(system, messages, schema_hint=None, model=None):
+        if "需求分析器" in system:
+            started.set()
+            release.wait(timeout=30)
+            return ({"intent": "chat", "audience": "大学生", "platform": "小红书",
+                     "scenario": "校园学习"}, {"model": "stub", "usage": {}})
+        return ({"artifact_type": "variants", "reply": "好了。",
+                 "content": {"product_ids": ["P-a"], "variants": _variants(3, "P-a")}},
+                {"model": "stub", "usage": {}})
+
+    monkeypatch.setattr("app.agent_runtime.chat_json_messages", fake_json)
+
+    with TestClient(app) as concurrent_client:
+        guided = concurrent_client.post("/api/v2/conversations",
+                                        json={"mode": "guided"}).json()["conversation_id"]
+        other = concurrent_client.post("/api/v2/conversations",
+                                       json={}).json()["conversation_id"]
+        outcome: dict = {}
+
+        def run_guided():
+            outcome["guided"] = concurrent_client.post(
+                f"/api/v2/conversations/{guided}/messages",
+                json={"message": "大学生，发小红书"}).json()
+
+        thread = threading.Thread(target=run_guided)
+        thread.start()
+        try:
+            assert started.wait(timeout=10), "guided 的模型调用没有开始，测试前提不成立"
+            begin = time.monotonic()
+            write = concurrent_client.post(f"/api/v2/conversations/{other}/surface",
+                                           json={"surface": "xiaohongshu"})
+            elapsed = time.monotonic() - begin
+        finally:
+            release.set()
+            thread.join(timeout=30)
+        assert write.status_code == 200, write.text
+        # busy_timeout 是 5s：事务横跨模型调用时这里会等到约 5s 再失败。
+        assert elapsed < 3.0, f"另一个会话的写请求被锁了 {elapsed:.2f}s"
+        assert outcome["guided"]["stage"] == "intake"

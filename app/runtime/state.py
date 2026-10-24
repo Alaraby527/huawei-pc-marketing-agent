@@ -44,6 +44,10 @@ class MarketingState(TypedDict, total=False):
     artifact_ref: dict[str, Any] | None
     candidates: list[dict[str, Any]]
     images: list[dict[str, Any]]
+    # True when the image tool ran this round and the knowledge base returned no verified
+    # original. It is the explicit difference between "not asked this round" (keep the
+    # checkpoint's images) and "asked, nothing there" (clear them).
+    images_cleared: bool
 
     # --- control ------------------------------------------------------------
     pending_calls: list[dict[str, Any]]
@@ -74,6 +78,7 @@ def initial_state(*, conversation_id: str, run_id: str, thread_id: str,
         artifact_ref=None,
         candidates=[],
         images=[],
+        images_cleared=False,
         pending_calls=[],
         pending_question_ref=None,
         last_observation=None,

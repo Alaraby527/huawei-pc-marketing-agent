@@ -94,9 +94,12 @@ def normalize(data: dict | None) -> dict:
             models.append(row or {"product_id": _text(product_id), "model": ""})
     if not models and isinstance(data.get("selected"), dict):
         models = _normalize_model_rows([data["selected"]])
-    if not models and candidates and not data.get("flow"):
-        # 旧结构兜底：新流程之前的任务只存了 candidates，约定 candidates[0] 就是已定产品。
-        # 新流程会写 data["flow"]，所以搜索出来的候选不会再被当成"已选型号"。
+    if not models and len(candidates) == 1 and not data.get("flow"):
+        # 旧结构兜底：新流程之前只存了 candidates。约定 candidates[0] 就是已定产品**只在候选唯一
+        # 时成立**——唯一候选没有第二种可能，所以是"真正可判定"的旧数据。
+        # 候选有多条时（实测 6 条旧会话：候选是 MateBook 14 鸿蒙版/Fold/Pro 三条，用户实际选的
+        # D 14 根本不在候选里）取 candidates[0] 是凭空捏造一个用户没选过的型号，直接违反"不猜"。
+        # 这种情况宁可留空（selected_models: []），也不把候选第一位冒充成选择。
         models = [candidates[0]]
     models = _dedupe_models(models)
 
@@ -205,14 +208,19 @@ def project_variants(variants, *, fallback_models=None) -> list[dict]:
     """Project saved variants to the exact delivery-contract shape.
 
     ``variants[i].models`` is a list of **product_id strings**; the model name is not repeated
-    here because ``material.models`` already carries it.
+    here because ``material.models`` already carries it. The fallback only applies when the
+    row has **no** ``models`` key at all (older artifacts). An explicit empty list means
+    "the author did not state a per-post model", and must not be expanded to every selected
+    id — that would claim each post belongs to both models at once.
     """
     fallback = [_text(item) for item in _list(fallback_models) if _text(item)]
     out: list[dict] = []
     for index, raw in enumerate(_list(variants), 1):
         if not isinstance(raw, dict):
             continue
-        models = [_text(item) for item in _list(raw.get("models")) if _text(item)] or list(fallback)
+        models = [_text(item) for item in _list(raw.get("models")) if _text(item)]
+        if not models and "models" not in raw:
+            models = list(fallback)
         tags = [_text(item) for item in _list(raw.get("tags")) if _text(item)]
         out.append({
             "variant_id": _text(raw.get("variant_id")) or f"v{index}",

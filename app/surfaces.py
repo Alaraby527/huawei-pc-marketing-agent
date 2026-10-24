@@ -10,20 +10,21 @@ package 3                     ``xiaohongshu`` / ``personal_moments`` / ``wechat_
 this project before          ``xiaohongshu`` / ``wechat_article`` / ``moments`` / ``poster``
 ===========================  ==========================================
 
-Two real problems sit inside that table, and neither is solved by picking a spelling:
+Two real problems sat inside that table, and neither is solved by picking a spelling:
 
 * this project's existing ``moments`` is labelled **门店朋友圈** in ``PLATFORM_RULES``, so it
   corresponds to package 3's ``store_moments``, while package 3's ``personal_moments`` is a
   genuinely new face;
-* package 1's ``work_account`` has **no confirmed meaning**. That package says outright that
-  it must not be assumed to be the official account and must not be silently renamed, so
-  here it maps to ``platform = None`` and carries the question with it instead of guessing.
+* package 1's ``work_account`` had **no confirmed meaning** at first. On 2026-10-22 the project
+  owner confirmed it is 企业微信·朋友圈, so it now maps to ``Platform.MOMENTS`` with
+  ``unconfirmed=False`` (see ``SURFACES["work_account"]``).
 
 Specs are package 3's ``channel_specs.json``, which states its own limits are
-"editorial_recommendations_not_platform_rules". Where those numbers disagree with this
-project's older ``PLATFORM_RULES`` the disagreement is recorded in ``SPEC_CONFLICTS`` rather
-than quietly overwritten: existing output must not change character lengths behind the
-user's back.
+"editorial_recommendations_not_platform_rules". Where those numbers disagreed with this
+project's older ``PLATFORM_RULES``, the disagreement is recorded in ``SPEC_CONFLICTS`` and —
+per the 2026-10-22 ruling — **adopted**: the runtime values now match package 3, and the old
+numbers are kept only as history. (The ruling also says an explicit user-requested length
+overrides the spec: see ``SPEC_DECISION["override_rule"]``.)
 """
 from __future__ import annotations
 
@@ -91,8 +92,9 @@ HARD_GATES = ("verified_relevant_facts", "no_unresolved_placeholders", "valid_as
 
 LIMITS_DISCLAIMER = "editorial_recommendations_not_platform_rules"
 
-# Numbers that disagree with this project's older PLATFORM_RULES. Recorded, not applied:
-# silently shortening or lengthening existing output is a behaviour change nobody asked for.
+# Numbers that used to disagree with this project's older PLATFORM_RULES. All four are now
+# **applied**: PLATFORM_RULES was aligned with package 3 on 2026-10-22 (see SPEC_DECISION),
+# and this table is kept as the record of what changed and why.
 SPEC_CONFLICTS = (
     {"surface": "xiaohongshu", "field": "body", "legacy": "300-600",
      "package3": "350-700", "resolution": "adopted_package3"},
@@ -143,8 +145,10 @@ def surfaces_for(platform) -> list[str]:
 def resolve(value: str) -> dict:
     """Accept either a surface id or a platform value and return both, without guessing.
 
-    ``work_account`` resolves to a surface with ``platform=None`` on purpose: the caller has
-    to decide what to do about the unconfirmed meaning rather than inherit a wrong platform.
+    A surface resolves with the platform it is actually backed by. ``work_account`` is no
+    longer the example of an unconfirmed face: it was confirmed as 企业微信·朋友圈 on
+    2026-10-22 and maps to ``Platform.MOMENTS`` with ``unconfirmed=False``. A face without a
+    confirmed platform would carry ``platform=None`` plus its open question.
     """
     value = str(value or "").strip()
     if value in SURFACES:
@@ -198,7 +202,11 @@ def limits_check(surface_id: str, *, body_chars: int | None = None,
 
 
 def describe() -> dict:
-    """Everything a client needs to render a surface picker, with the open question attached."""
+    """Everything a client needs to render a surface picker, with the open question attached.
+
+    The note must not contradict ``spec()``: every face here is confirmed (``work_account``
+    included, since 2026-10-22), so it says so rather than repeating an old "platform 为空".
+    """
     return {"surfaces": [{"surface": key, "label": row["label"],
                           "platform": row["platform"].value if row.get("platform") else None,
                           "unconfirmed": bool(row.get("unconfirmed")),
@@ -207,4 +215,5 @@ def describe() -> dict:
             "hard_gates": list(HARD_GATES),
             "limits_are": LIMITS_DISCLAIMER,
             "conflicts": list(SPEC_CONFLICTS),
-            "note": "交付面与平台分离：work_account 的平台含义未经业务确认，故 platform 为空。"}
+            "note": "交付面与平台分离；每个交付面的平台含义均已确认（work_account 于 "
+                    "2026-10-22 确认为企业微信·朋友圈，platform=朋友圈）。"}

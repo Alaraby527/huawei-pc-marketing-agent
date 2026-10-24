@@ -247,3 +247,56 @@ def test_work_account_was_pending_and_is_now_decided():
     assert info["unconfirmed"] is False
     assert info["open_question"] == ""
     assert info["confirmed_at"] if "confirmed_at" in info else True
+
+
+# ---------------------------------------------------------------- audit fixes
+
+def test_platform_rules_use_the_adopted_new_lengths():
+    """修复 6：2026-10-22 裁定采纳新方案（package3）值，运行时必须真的按新值工作。
+
+    旧值（300-600 / 600-1200 / 60-150 / 主标题 12 字内）与文档声明相反，评委会抓。
+    """
+    from app.platforms import PLATFORM_RULES
+
+    assert "350-700" in PLATFORM_RULES["xiaohongshu"]["length_guidance"]
+    assert "1000-1800" in PLATFORM_RULES["wechat_article"]["length_guidance"]
+    assert "100-200" in PLATFORM_RULES["moments"]["length_guidance"]
+    assert "14字内" in PLATFORM_RULES["poster"]["length_guidance"]
+    # 措辞保留，只改数字。
+    assert "短段落" in PLATFORM_RULES["xiaohongshu"]["length_guidance"]
+    assert "正文80字内" in PLATFORM_RULES["poster"]["length_guidance"]
+    # 旧值一个都不许留。
+    joined = " ".join(row["length_guidance"] for row in PLATFORM_RULES.values())
+    for legacy in ("300-600", "600-1200", "60-150", "主标题12字内"):
+        assert legacy not in joined, legacy
+
+    # 与 surfaces 的规格值一致（新方案）。
+    assert surfaces.spec("xiaohongshu")["body_soft_range"] == (350, 700)
+    assert surfaces.spec("wechat_article")["body_soft_range"] == (1000, 1800)
+    assert surfaces.spec("store_moments")["chars_soft_range"] == (100, 200)
+    assert surfaces.spec("store_poster")["headline_soft_max"] == 14
+
+
+def test_the_platforms_endpoint_returns_the_new_values():
+    """GET /api/v1/platforms 原样对外返回 PLATFORM_RULES，所以外部也必须是新值。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    body = TestClient(app).get("/api/v1/platforms").json()
+    assert "350-700" in body["xiaohongshu"]["length_guidance"]
+    assert "1000-1800" in body["wechat_article"]["length_guidance"]
+    assert "100-200" in body["moments"]["length_guidance"]
+    assert "14字内" in body["poster"]["length_guidance"]
+
+
+def test_describe_note_does_not_contradict_the_work_account_spec():
+    """修复 6：describe()['note'] 曾写"work_account 平台含义未经业务确认，故 platform 为空"，
+    而同一模块里它已是 label=企业微信·朋友圈、platform=MOMENTS、unconfirmed=False。"""
+    note = surfaces.describe()["note"]
+    work = surfaces.spec("work_account")
+    assert work["label"] == "企业微信·朋友圈"
+    assert work["platform"] == Platform.MOMENTS
+    assert work.get("unconfirmed") is not True
+    assert "未经业务确认" not in note and "platform 为空" not in note
+    assert "企业微信" in note and "已确认" in note

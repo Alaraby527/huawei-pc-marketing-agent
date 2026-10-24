@@ -46,6 +46,8 @@ services:
       LLM_IMAGE_SIZE: ${LLM_IMAGE_SIZE:-768*1024}
       ENABLE_AI_COVER: ${ENABLE_AI_COVER:-1}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://rednote:rednote@postgres:5432/rednote}
+      # 预留：REDIS_URL / HOT_SOURCE 只在此注入，当前代码没有任何地方读取（`grep -rn` 零命中）。
+      # 队列/缓存与热点来源尚未接入，保留它们是为了不改动既有部署，不代表已生效。
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDNOTE_DATA_DIR: ${REDNOTE_DATA_DIR:-/app/data/rednote}
       HOT_SOURCE: ${HOT_SOURCE:-public}

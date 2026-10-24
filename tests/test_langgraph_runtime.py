@@ -632,9 +632,13 @@ def test_delivery_contract_carries_variants_material_and_images(monkeypatch):
     assert data["material"]["hotspot"] == {"title": "开学季选本热",
                                           "source": "热梗（联网搜索）"}
     assert data["images"] and data["images"][0]["image_id"] == "IMG-1"
+    # run 的顶层字段必须与 GET conversation 一致：客户端不该从一条路径拿到真实列表、
+    # 从另一条路径拿到 undefined（前端目前不消费它，但将来接入的客户端会静默拿到空）。
+    assert data["selected_models"] == ["P-test"]
 
     conversation = client.get(f"/api/v2/conversations/{cid}").json()
     assert [row["variant_id"] for row in conversation["variants"]] == ["v1", "v2", "v3"]
+    assert conversation["selected_models"] == data["selected_models"]
     assert conversation["task"]["variants"][0]["title"] == "标题1"
     assert conversation["material"]["hotspot"]["title"] == "开学季选本热"
     assert conversation["task"]["material"]["audience"] == "大学生"
@@ -778,7 +782,14 @@ def test_orphaned_runs_are_not_reported_as_success():
 
 
 def test_concurrent_turns_on_one_conversation_serialize(monkeypatch):
-    """The conversation lease keeps two in-flight turns from interleaving state."""
+    """The conversation lease keeps two in-flight turns from interleaving state.
+
+    The requests go through a client held open with ``with`` on purpose. The module-level
+    ``TestClient(app)`` is never entered, so every request ran on its **own** event loop;
+    two loops then raced ``AsyncSqliteSaver.setup()`` on one checkpoint file and one died
+    with ``sqlite3.OperationalError: database is locked`` from a worker thread (about 1 run
+    in 3 overall). One loop is the production shape.
+    """
     import threading
 
     seen = []
@@ -789,17 +800,20 @@ def test_concurrent_turns_on_one_conversation_serialize(monkeypatch):
                                                                         "usage": {}}
 
     monkeypatch.setattr("app.runtime.model_gateway.chat_tools", fake)
-    cid = _new_conversation()["conversation_id"]
-    results = []
+    with TestClient(app) as concurrent_client:
+        cid = concurrent_client.post("/api/v2/conversations",
+                                     json={}).json()["conversation_id"]
+        results = []
 
-    def send(text):
-        results.append(_send(cid, text).json())
+        def send(text):
+            results.append(concurrent_client.post(
+                f"/api/v2/conversations/{cid}/messages", json={"message": text}).json())
 
-    threads = [threading.Thread(target=send, args=(f"消息{i}",)) for i in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+        threads = [threading.Thread(target=send, args=(f"消息{i}",)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
     assert len(results) == 2
     seqs = [row[0] for row in db_layer.session_factory()().query(
         models.AgentMessage.seq).filter(models.AgentMessage.conversation_id == cid).all()]
@@ -1170,7 +1184,12 @@ def test_flagged_delivery_is_a_research_draft(monkeypatch):
 # ---------------------------------------------------------------- independent review
 
 def test_review_finds_blocking_issue_and_marks_it(monkeypatch):
-    """A blocking review finding must not be delivered as a passed run."""
+    """A blocking review finding must not be delivered as a passed run.
+
+    The finding travels as the structured ``review_notice`` field, not concatenated into the
+    delivered prose: the text a user reads stays the author's text, and the reviewer's own
+    sentence can never become part of the next round's "delivered text".
+    """
     _script(monkeypatch, [{"content": "这台机器有 64 GB 内存，值得买。", "tool_calls": []}],
             review={"verdict": "block",
                     "issues": [{"excerpt": "64 GB 内存", "severity": "high",
@@ -1179,10 +1198,15 @@ def test_review_finds_blocking_issue_and_marks_it(monkeypatch):
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "说说配置").json()
     assert data["status"] == "partial"
-    assert "独立审校" in data["reply"]
     assert data["review"]["verdict"] == "block"
     assert data["review"]["blocking"] == 1
     assert data["content_status"] == "research_draft"
+    # The blocking finding is reported (intent preserved), but outside the user-facing reply.
+    notice = data["review_notice"]
+    assert notice["count"] == 1 and notice["blocking"] == 1
+    assert "独立审校" in notice["message"]
+    assert "知识库无此档位" in notice["detail"]
+    assert "独立审校" not in data["reply"]
 
 
 def test_review_without_blocking_findings_keeps_the_run_delivered(monkeypatch):
@@ -1415,3 +1439,213 @@ def test_a_run_reports_whether_it_can_be_resumed(monkeypatch):
     cid = _new_conversation()["conversation_id"]
     data = _send(cid, "写个标题").json()
     assert data["resumable"] is False, "a finished run is not a resume candidate"
+
+
+# ---------------------------------------------------------------- audit fixes
+
+def _capture_review(monkeypatch):
+    """Capture the reviewer payload while returning a passing verdict."""
+    captured = {}
+
+    def fake_json(system, messages, schema_hint="", model=None):
+        captured["payload"] = messages[0]["content"]
+        captured["system"] = system
+        return {"verdict": "pass", "issues": [], "checked": []}, {"model": "stub",
+                                                                  "usage": {}}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_json_messages", fake_json)
+    return captured
+
+
+def _variants_content(product_ids, models_for_each=None, body="内存 16 GB"):
+    rows = []
+    for index in range(1, 4):
+        row = {"variant_id": f"v{index}", "label": f"方向{index}", "title": f"标题{index}",
+               "body": body, "tags": ["校园"]}
+        row["models"] = (models_for_each[index - 1] if models_for_each
+                         else [product_ids[0]])
+        rows.append(row)
+    return {"product_ids": list(product_ids), "variants": rows}
+
+
+def test_review_sees_the_facts_search_products_brought_back(monkeypatch):
+    """修复 1(a)：本轮只调 search_products（带 facts）+ save_artifact 的正常交付，
+    审校拿到的「本次允许使用的事实」里必须有这些事实，而不是「本轮没有读到任何产品事实」。
+
+    同一份事实两套口径的后果（活库实证 run 9c5b7e39）：审校据此判 block，
+    把一条事实检查 passed=true 的正确交付误报成 partial。
+    """
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("search_products", {"query": "MateBook"})]},
+        {"content": "", "tool_calls": [_call("save_artifact", {
+            "artifact_type": "variants",
+            "content": _variants_content(["P-test"])}, "a3")]},
+        {"content": "已按知识库事实写好 3 篇。", "tool_calls": []},
+    ])
+    captured = _capture_review(monkeypatch)
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "就写 MateBook Test").json()
+
+    assert data["status"] == "completed"
+    payload = captured["payload"]
+    assert "本轮没有读到任何产品事实" not in payload
+    assert "【本次允许使用的事实】" in payload
+    assert "内存：16 GB" in payload and "尺寸与重量：约 1.33 kg" in payload
+    assert "HUAWEI MateBook Test｜" in payload
+
+
+def test_review_still_treats_a_round_without_evidence_as_ungrounded(monkeypatch):
+    """修复 1(b)：真的没有读任何证据的回复仍必须被拦，不能把审校改成橡皮图章。"""
+    _script(monkeypatch, [{"content": "这台机器 14 英寸，重 1.33 kg，很合适。",
+                           "tool_calls": []}])
+    captured = {}
+
+    def fake_json(system, messages, schema_hint="", model=None):
+        captured.setdefault("payload", messages[0]["content"])
+        return {"verdict": "block",
+                "issues": [{"excerpt": "14 英寸", "severity": "high",
+                            "reason": "本轮没有任何可用事实", "action": "block"}],
+                "checked": []}, {"model": "stub", "usage": {}}
+
+    monkeypatch.setattr("app.runtime.model_gateway.chat_json_messages", fake_json)
+    cid = _new_conversation()["conversation_id"]
+    data = _send(cid, "说说这台机器").json()
+
+    assert "（本轮没有读到任何产品事实）" in captured["payload"]
+    assert data["status"] == "partial"
+    assert data["review_notice"]["blocking"] == 1
+    # 措辞必须准确：知识库是可用的，只是本轮没读事实。
+    assert "本轮没有读取产品事实" in data["reply"]
+    assert "知识库当前不可用" not in data["reply"]
+
+
+def test_artifact_only_round_is_reviewed_against_its_bound_facts(monkeypatch):
+    """修复 1：本轮只调 save_artifact（证据在更早一轮读过）时，审校必须看到交付物绑定的事实。
+
+    这正是活库 run 9c5b7e39 / 4a22118a 的形态：artifact 事实检查 passed=true，
+    审校却因为 read_product_ids 为空而判「没有任何产品事实」。
+    """
+    content = _variants_content(["P-test"])
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("read_product_evidence", {"product_id": "P-test"},
+                                             "r1")]},
+        {"content": "", "tool_calls": [_call("save_artifact", {
+            "artifact_type": "variants", "content": content}, "a3")]},
+        {"content": "交付完成。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    first = _send(cid, "读证据并写").json()
+    assert first["artifact"], first
+
+    calls = _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("save_artifact", {
+            "artifact_type": "variants", "content": content}, "b3")]},
+        {"content": "再次交付。", "tool_calls": []},
+    ])
+    captured = _capture_review(monkeypatch)
+    data = _send(cid, "再交付一次").json()
+
+    assert data["status"] == "completed", data
+    assert data["artifact"], "第二轮只有 save_artifact，交付物必须保存成功"
+    payload = captured["payload"]
+    assert "本轮没有读到任何产品事实" not in payload
+    assert "内存：16 GB" in payload
+
+
+def test_zero_images_this_round_clear_the_previous_round(monkeypatch):
+    """修复 2：本轮取图返回 0 张时，images 必须清空，也不得把旧图持久化进 task.images。
+
+    本地 KB 实证：MateBook 14 鸿蒙版有 4 张、酷睿 Ultra 有 6 张，而 MateBook Pro 与
+    D 14 2024 是 0 张；旧语义下空列表不覆盖，于是用户选无图型号时拿到上一款的原图。
+    """
+    class FakeImage:
+        image_id = "IMG-1"
+        caption = "HUAWEI MateBook Test 官方产品图"
+        access_url = "/api/v1/assets/IMG-1"
+
+    async def many(*args, **kwargs):
+        return [FakeImage()], []
+
+    async def none(*args, **kwargs):
+        return [], []
+
+    monkeypatch.setattr("app.agent_runtime.verified_images", many)
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("find_product_images", {"product_id": "P-test"},
+                                             "i1")]},
+        {"content": "给了原图。", "tool_calls": []},
+    ])
+    cid = _new_conversation()["conversation_id"]
+    first = _send(cid, "找图").json()
+    assert first["images"] and first["images"][0]["image_id"] == "IMG-1"
+
+    monkeypatch.setattr("app.agent_runtime.verified_images", none)
+    _script(monkeypatch, [
+        {"content": "", "tool_calls": [_call("find_product_images", {"product_id": "P-test"},
+                                             "i2")]},
+        {"content": "这一轮没有可用原图。", "tool_calls": []},
+    ])
+    second = _send(cid, "再找一次图").json()
+    assert second["images"] == [], second["images"]
+    conversation = client.get(f"/api/v2/conversations/{cid}").json()
+    assert (conversation["task"] or {}).get("images") in (None, []), \
+        "取图返回 0 张后，上一轮的旧图不得留在 task.images 里"
+
+
+def test_checkpoint_setup_is_safe_across_event_loops(tmp_path, monkeypatch):
+    """修复 10：同一 checkpoint 文件被多个事件循环同时 setup 时不得撞锁。
+
+    get_saver() 按 id(loop) 注册 saver；模块级 TestClient 没进 with 时每个请求一个新 loop，
+    两个 loop 会在同一个 SQLite 文件上并发 setup，其中一个在线程里抛
+    `sqlite3.OperationalError: database is locked`。
+    """
+    import threading
+
+    path = str(tmp_path / "loops.sqlite")
+    monkeypatch.setenv("LG_CHECKPOINT_PATH", path)
+    monkeypatch.setattr(lg_runner, "_savers", {})
+    monkeypatch.setattr(lg_runner, "_setup_locks", {})
+    errors = []
+
+    def worker():
+        try:
+            asyncio.run(lg_runner.get_saver())
+        except Exception as error:  # noqa: BLE001 - the point is that this must not happen
+            errors.append(repr(error))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [], errors
+    assert len(lg_runner._savers) == 4, "one saver per loop, all set up without a lock error"
+
+
+def test_frontend_only_renders_this_rounds_delivery(monkeypatch):
+    """修复 2/3/12/14 的前端门控与诚实说明（纯前端行为，做源码断言）。"""
+    from pathlib import Path
+
+    from app import main as main_module
+
+    static = Path(main_module.__file__).parent / "static"
+    js = (static / "app.js").read_text()
+    html = (static / "index.html").read_text()
+
+    # 修复 3：variants 只在"本轮真的产出交付物"（save_artifact）时渲染，与 candidates 同一套门控。
+    assert "const savedThisRound = roundUsed(['save_artifact']);" in js
+    assert "let usedVariants = savedThisRound" in js
+    assert "renderVariants(data, messageEl, roundImages)" in js
+    assert "renderVariants(conversation, messageEl, roundImages)" in js
+    # 修复 2：选项卡下方的原图只能取本轮 images（本轮没取图就一张都不画）。
+    assert "roundImages === undefined ? imagesFrom(source) : asList(roundImages)" in js
+    # 修复 1：审校结论是结构化字段，单独渲染，不拼进正文。
+    assert "function renderReviewNotice" in js and "payload.review_notice" in js
+    assert "review-notice" in (static / "style.css").read_text()
+    # 修复 12：未标注归属时显示"未标注型号"，不显示两个型号名。
+    assert "未标注型号" in js
+    # 修复 14：内存态与临时地址的前置说明（不是坏了才解释）。
+    assert "生成记录只保存在本次运行内，重启后清空" in js
+    assert "生成记录只保存在本次运行内，重启后清空" in html
+    assert "这些图只保存在本次运行内，重启后清空" in html
+    assert "本次运行的临时地址" in html

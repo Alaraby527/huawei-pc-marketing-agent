@@ -15,6 +15,7 @@ import json
 
 import asyncio
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -39,8 +40,24 @@ from .state import (FINAL_STATUSES, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_F
 
 _savers: dict[tuple[int, str], tuple[AsyncSqliteSaver, aiosqlite.Connection]] = {}
 _init_locks: dict[int, asyncio.Lock] = {}
+# Serialises checkpoint setup for one file **across event loops**. The asyncio init lock is
+# per loop, so two loops (a test harness, an embedded runner) could both call `setup()` on
+# the same SQLite file; one then died in a worker thread with
+# `sqlite3.OperationalError: database is locked`. Production is single-loop, but this is a
+# real failure whenever loops are not shared, so setup is serialised with a plain lock.
+_setup_locks: dict[str, threading.Lock] = {}
+_setup_locks_guard = threading.Lock()
 _conversation_locks: dict[tuple[int, str], asyncio.Lock] = {}
 _background: dict[str, asyncio.Task] = {}
+
+
+def _setup_lock(path: str) -> threading.Lock:
+    with _setup_locks_guard:
+        lock = _setup_locks.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _setup_locks[path] = lock
+        return lock
 
 
 def _conversation_lock(conversation_id: str) -> asyncio.Lock:
@@ -114,11 +131,20 @@ async def get_saver() -> AsyncSqliteSaver:
         if entry is not None:
             return entry[0]
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        conn = await aiosqlite.connect(path)
-        saver = AsyncSqliteSaver(conn)
-        await saver.setup()
-        _savers[key] = (saver, conn)
-        return saver
+        # The threading lock is deliberately held across the awaits: setup is short, and a
+        # second loop's setup must wait rather than collide on the same file. A connection
+        # that fails to set up is closed here so a retry does not leak it.
+        with _setup_lock(path):
+            conn = await aiosqlite.connect(path)
+            try:
+                await conn.execute("PRAGMA busy_timeout=5000")
+                saver = AsyncSqliteSaver(conn)
+                await saver.setup()
+            except Exception:
+                await conn.close()
+                raise
+            _savers[key] = (saver, conn)
+            return saver
 
 
 async def init_saver() -> AsyncSqliteSaver:
@@ -617,6 +643,13 @@ def _finish_run(db: Session, conversation: models.AgentConversation, run: models
                          images=payload.get("images") or [],
                          variants=variants,
                          material=material,
+                         # The same top-level fields GET /conversations returns: a client
+                         # must not get `selected_models: undefined` from one path and a
+                         # real list from the other.
+                         selected_models=task_material.selected_ids(material),
+                         # The independent review's verdict travels as its own field. It is
+                         # never concatenated into `reply` (the user-facing prose).
+                         review_notice=candidate.get("review_notice"),
                          unverified_experience=candidate.get("unverified_experience") or [],
                          unverified_numbers=candidate.get("unverified_numbers") or [],
                          unsupported_numbers=candidate.get("unsupported_numbers") or [],
@@ -658,6 +691,11 @@ def _sync_task_state(db: Session, conversation: models.AgentConversation, status
                               for item in ctx.tool_ctx.last_search["products"][:3]]
     if payload.get("images"):
         data["images"] = payload["images"]
+    elif payload.get("images_cleared"):
+        # The image tool did run this round and the knowledge base had no verified original:
+        # drop the stale list instead of persisting a previous model's photos as this
+        # task's originals (the graph already cleared them in-state).
+        data.pop("images", None)
 
     # Variants come from the saved artifact first (the deliverable itself), then from any
     # variants the caller already projected into the payload.

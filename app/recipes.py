@@ -14,7 +14,7 @@ a silent fallback to an unverified recipe is how an unreviewed style reaches a c
 
 Channel naming differs across the packages, so the mapping is explicit below rather than
 assumed: package 1's ``moments`` is 朋友圈 without distinguishing personal from store, and its
-``work_account`` still has no confirmed platform.
+``work_account`` was confirmed on 2026-10-22 as 企业微信·朋友圈 (see ``app/surfaces.py``).
 """
 from __future__ import annotations
 

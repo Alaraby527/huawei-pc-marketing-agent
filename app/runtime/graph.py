@@ -136,6 +136,10 @@ def build_graph(saver, ctx: RuntimeContext):
         artifact_ref = state.get("artifact_ref")
         candidates = list(state.get("candidates") or [])
         images = list(state.get("images") or [])
+        # Distinguishes "the image tool was not called this round" (keep whatever the
+        # checkpoint carried) from "it was called and returned nothing" (clear it, so a
+        # previous model's photos are never re-delivered as this round's originals).
+        images_cleared = bool(state.get("images_cleared"))
         repair_count = int(state.get("repair_count") or 0)
         observations: list[dict] = []
         status = STATUS_RUNNING
@@ -234,16 +238,25 @@ def build_graph(saver, ctx: RuntimeContext):
                                            "access_url": row, "rendered": True})
                 if normalized:
                     images = normalized
+                    images_cleared = False
+                else:
+                    # The tool ran for this product and the knowledge base has no verified
+                    # original. Keeping the previous model's photos would hand the user
+                    # another model's pictures under this product's name.
+                    images = []
+                    images_cleared = True
 
         if status == STATUS_NEEDS_RECONCILIATION:
             return {"messages": messages, "evidence_refs": evidence_refs,
                     "artifact_ref": artifact_ref, "candidates": candidates,
-                    "images": images, "pending_calls": [], "status": status,
+                    "images": images, "images_cleared": images_cleared,
+                    "pending_calls": [], "status": status,
                     "stop_reason": stop_reason, "repair_count": repair_count,
                     "last_observation": observations[-1] if observations else None}
 
         return {"messages": messages, "evidence_refs": evidence_refs,
                 "artifact_ref": artifact_ref, "candidates": candidates, "images": images,
+                "images_cleared": images_cleared,
                 "pending_calls": [], "status": STATUS_RUNNING, "repair_count": repair_count,
                 "last_observation": observations[-1] if observations else None}
 
@@ -282,7 +295,7 @@ def build_graph(saver, ctx: RuntimeContext):
                     candidate["check"] = check
 
             if reply:
-                violation = _reply_fact_violation(ctx, reply)
+                violation = _reply_fact_violation(ctx, reply, state)
                 if violation:
                     status = STATUS_PARTIAL
                     # Flag only. Rewriting prose silently replaced another model's real
@@ -307,7 +320,7 @@ def build_graph(saver, ctx: RuntimeContext):
                     status = STATUS_PARTIAL
                     candidate["unverified_experience"] = markers
                     reply = reply + "\n\n" + EXPERIENCE_NOTICE
-                elif not ctx.tool_ctx.evidence_read and not placeholders:
+                elif not _allowed_product_ids(ctx, state) and not placeholders:
                     numbers = unverified_product_numbers(reply)
                     if numbers:
                         status = STATUS_PARTIAL
@@ -375,8 +388,18 @@ def build_graph(saver, ctx: RuntimeContext):
             status = STATUS_PARTIAL
             detail = "；".join(str(item.get("reason") or item.get("excerpt") or "")[:60]
                               for item in (blocking or report["issues"])[:3])
-            candidate["reply"] = reply + "\n\n" + review_notice(
-                len(blocking) or report["issue_count"], detail)
+            count = len(blocking) or report["issue_count"]
+            # Structured, never concatenated into the delivered prose: the text the user
+            # reads must stay the author's text, and a client can render the review result
+            # as its own element. Concatenating it also made the reviewer's own sentence
+            # part of the next round's "delivered text" it had to review.
+            candidate["review_notice"] = {
+                "count": count,
+                "blocking": len(blocking),
+                "verdict": report["verdict"],
+                "detail": detail,
+                "message": review_notice(count, detail),
+            }
         return {"status": status, "output_candidate": candidate}
 
     def route_after_decide(state: MarketingState) -> str:
@@ -425,13 +448,65 @@ def _commit_quietly(db) -> None:
         db.rollback()
 
 
-def _allowed_fact_lines(ctx: RuntimeContext, limit: int = 40) -> list[str]:
+def _artifact_product_ids(ctx: RuntimeContext, state: MarketingState | None) -> list[str]:
+    """The product ids bound to this run's delivered artifact.
+
+    The artifact's own fact check (``_recheck_artifact``) grounds every number on exactly
+    these ids, so the reviewer has to see the same facts. Without this, a delivery that
+    passed its fact check was reviewed against "本轮没有读到任何产品事实" merely because
+    the turn only called ``save_artifact`` (the evidence had been read in an earlier turn).
+    """
+    ref = (state or {}).get("artifact_ref") or {}
+    if not ref.get("artifact_id"):
+        return []
+    loaded = agent_runtime._load_artifact(ctx.tool_ctx, dict(ref))
+    content = loaded.get("content") if loaded.get("ok") else {}
+    if not isinstance(content, dict):
+        return []
+    values = list(content.get("product_ids") or []) + [content.get("product_id")]
+    return [str(value).strip() for value in values if str(value or "").strip()]
+
+
+def _allowed_product_ids(ctx: RuntimeContext,
+                         state: MarketingState | None = None) -> list[str]:
+    """Every product whose facts this run's delivery may rely on — one source of truth.
+
+    Three contributors, all of them real:
+
+    * ``read_product_ids`` — evidence actually read with ``read_product_evidence``;
+    * ``last_search.products`` — ``search_products`` returns the first hit's facts and marks
+      the evidence as read, so those facts are as usable as an explicit read. Allowing them
+      here matches the fallback ``_reply_fact_violation`` has always used;
+    * the delivered artifact's bound ``product_ids`` — precisely what its fact check used.
+
+    A run with none of the three has no facts at all, and that stays true: the reviewer is
+    still told so, and the prose fence still refuses to call its numbers verified.
+    """
+    ids: list[str] = []
+    for product_id in list(getattr(ctx.tool_ctx, "read_product_ids", []) or []):
+        value = str(product_id or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    for item in (ctx.tool_ctx.last_search or {}).get("products") or []:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("product_id") or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    for product_id in _artifact_product_ids(ctx, state):
+        if product_id and product_id not in ids:
+            ids.append(product_id)
+    return ids
+
+
+def _allowed_fact_lines(ctx: RuntimeContext, state: MarketingState | None = None,
+                        limit: int = 40) -> list[str]:
     """The facts the delivery is allowed to rely on, for the reviewer to judge against."""
     lines: list[str] = []
     catalog = ctx.tool_ctx.catalog
     if catalog is None:
         return lines
-    for product_id in list(getattr(ctx.tool_ctx, "read_product_ids", []) or []):
+    for product_id in _allowed_product_ids(ctx, state):
         product = agent_runtime._resolve_product(catalog, product_id, ctx.tool_ctx)
         if not product:
             continue
@@ -454,7 +529,7 @@ def _review_payload(ctx: RuntimeContext, state: MarketingState, reply: str) -> s
         if loaded.get("ok"):
             parts += ["", "【交付物正文】",
                       json.dumps(loaded.get("content"), ensure_ascii=False)[:6000]]
-    facts = _allowed_fact_lines(ctx)
+    facts = _allowed_fact_lines(ctx, state)
     if facts:
         parts += ["", "【本次允许使用的事实】"] + facts
     else:
@@ -502,18 +577,33 @@ def _recheck_artifact(ctx: RuntimeContext, artifact_ref: dict) -> dict | None:
         "revision": artifact_ref.get("revision")})
     if not loaded.get("ok"):
         return None
-    product_id = str((loaded.get("content") or {}).get("product_id") or "")
-    if not product_id:
+    content = loaded.get("content") or {}
+    # The same product set the reviewer is given (``_artifact_product_ids``): single- and
+    # multi-model artifacts are both grounded on every id they were saved with.
+    product_ids = [str(value).strip() for value in
+                   (list(content.get("product_ids") or []) + [content.get("product_id")])
+                   if str(value or "").strip()]
+    if not product_ids:
         return {"passed": True, "errors": [], "warnings": [], "checked": 0,
                 "note": "未绑定产品事实，仅做创意内容交付"}
-    _, records = _records_for(ctx, product_id)
-    if records is None:
+    records: list = []
+    seen: set[str] = set()
+    for product_id in product_ids:
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        _, part = _records_for(ctx, product_id)
+        if part is None:
+            return None
+        records.extend(part)
+    if not records:
         return None
     from ..grounding import check_artifact
-    return check_artifact(loaded["content"], records)
+    return check_artifact(content, records)
 
 
-def _reply_fact_violation(ctx: RuntimeContext, reply: str) -> dict | None:
+def _reply_fact_violation(ctx: RuntimeContext, reply: str,
+                          state: MarketingState | None = None) -> dict | None:
     """Flag numbers in the *reply text* that no read product supports.
 
     Two deliberate choices, both learned the hard way:
@@ -522,19 +612,18 @@ def _reply_fact_violation(ctx: RuntimeContext, reply: str) -> dict | None:
       corrupted a legitimate cross-model comparison — it replaced another model's real
       figures with the first model's values ("D 16 约 1.68–1.33 kg / 1.32 kg"). Structured
       artifact content is still repaired by the artifact path; prose is only flagged.
-    * **Union of every product read**, not just the first: a reply may compare several
-      models, and their figures are equally supported.
+    * **Union of every allowed product**, not just the first: a reply may compare several
+      models, and their figures are equally supported. That set now comes from
+      ``_allowed_product_ids`` — the same source the reviewer and the artifact check use —
+      instead of a second, narrower rule.
     """
-    if not ctx.tool_ctx.evidence_read:
+    product_ids = _allowed_product_ids(ctx, state)
+    if not product_ids:
         return None
     from ..grounding import extract_claims, records_from_facts
 
     records: list = []
     seen: set[str] = set()
-    product_ids = list(getattr(ctx.tool_ctx, "read_product_ids", []) or [])
-    if not product_ids:
-        products = (ctx.tool_ctx.last_search or {}).get("products") or []
-        product_ids = [str(item.get("product_id") or "") for item in products]
     for product_id in product_ids:
         if not product_id or product_id in seen or ctx.tool_ctx.catalog is None:
             continue
