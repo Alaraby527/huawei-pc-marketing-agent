@@ -1,0 +1,2535 @@
+app:
+  description: 主控分发闸 + 5 个子Agent：①需求澄清 ②选品发现(无型号筛候选) ③型号规范化(防混淆) ④证据取证(01/05/02三路检索+证据闸)
+    ⑤适配判定(fact_id溯源)。会话变量累积槽位，支持澄清≤3轮、锁定交接包。
+  icon: ''
+  icon_background: ''
+  icon_type: emoji
+  mode: advanced-chat
+  name: 华为PC·选品总控Agent·多Agent版
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.25@32f56796c4f9c3949f2a8cde44a5912f347b5a141dd7daf100048aeefd5e6593
+    version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.2.23@f500332838ed670d0962a4f727618a2eb7e27a453ea56e72a28731f5f383ab72
+    version: null
+kind: app
+version: 0.7.0
+workflow:
+  conversation_variables:
+  - description: 累积槽位（人群/场景/型号/活动）
+    id: cd9c163a-1dae-4b3f-989c-42288189f6f2
+    name: slots
+    selector:
+    - conversation
+    - slots
+    value: '{}'
+    value_type: string
+  - description: 澄清轮次计数
+    id: 47b8f927-8aae-42ee-a615-66cac042904d
+    name: clarify_count
+    selector:
+    - conversation
+    - clarify_count
+    value: 0
+    value_type: integer
+  - description: 锁定后的选品交接包
+    id: 5a012c79-271c-4267-8861-afaea6202425
+    name: last_pick
+    selector:
+    - conversation
+    - last_pick
+    value: ''
+    value_type: string
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 50
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        knowledge_file_size_limit: 15
+        single_chunk_attachment_limit: 10
+        skill_file_size_limit: 50
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: '你好，我是你的专属华为 PC 选品助手。
+
+      我可以帮你判断一款机型适不适合你的顾客；不知道选哪款时，也可以帮你从知识库筛选候选。
+
+      把「产品型号 + 目标人群 + 使用场景」告诉我，我帮你产出选品结论：选哪台、为什么、每条理由都附知识库依据。
+
+      信息不全我会先追问；资料不足的地方会明确标注，不会编造。
+
+      问题示例：MateBook 14 酷睿 Ultra，给出差办公的人用合适吗？'
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+    - HUAWEI MateBook Pro S 适不适合大学新生？
+    - MateBook 14 酷睿 Ultra，给出差办公的人用合适吗？
+    - MateBook D 16 做家庭换新怎么样？
+    - 开学季想给大学新生选一台，有什么候选？
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: edge-start_node-source-need_parser
+      source: start_node
+      sourceHandle: source
+      target: need_parser
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-need_parser-source-need_parse
+      source: need_parser
+      sourceHandle: source
+      target: need_parse
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: assign
+      id: edge-need_parse-source-assign_state
+      source: need_parse
+      sourceHandle: source
+      target: assign_state
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: assign
+        targetType: if-else
+      id: edge-assign_state-source-master_gate
+      source: assign_state
+      sourceHandle: source
+      target: master_gate
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-master_gate-lock-lock_render
+      source: master_gate
+      sourceHandle: lock
+      target: lock_render
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: edge-master_gate-clarify-clarify
+      source: master_gate
+      sourceHandle: clarify
+      target: clarify
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: if-else
+      id: edge-master_gate-false-model_gate
+      source: master_gate
+      sourceHandle: 'false'
+      target: model_gate
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-clarify-source-clarify_render
+      source: clarify
+      sourceHandle: source
+      target: clarify_render
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: edge-clarify_render-source-answer_clarify
+      source: clarify_render
+      sourceHandle: source
+      target: answer_clarify
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: assign
+      id: edge-lock_render-source-assign_lock
+      source: lock_render
+      sourceHandle: source
+      target: assign_lock
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: assign
+        targetType: answer
+      id: edge-assign_lock-source-answer_lock
+      source: assign_lock
+      sourceHandle: source
+      target: answer_lock
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-model_gate-has_model-kb_models
+      source: model_gate
+      sourceHandle: has_model
+      target: kb_models
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-model_gate-false-discovery_query
+      source: model_gate
+      sourceHandle: 'false'
+      target: discovery_query
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: edge-discovery_query-source-retrieval_d
+      source: discovery_query
+      sourceHandle: source
+      target: retrieval_d
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: edge-retrieval_d-source-discovery_filter
+      source: retrieval_d
+      sourceHandle: source
+      target: discovery_filter
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: edge-discovery_filter-source-discovery_llm
+      source: discovery_filter
+      sourceHandle: source
+      target: discovery_llm
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-discovery_llm-source-render_candidates
+      source: discovery_llm
+      sourceHandle: source
+      target: render_candidates
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: edge-render_candidates-source-answer_candidates
+      source: render_candidates
+      sourceHandle: source
+      target: answer_candidates
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: edge-kb_models-source-model_resolver
+      source: kb_models
+      sourceHandle: source
+      target: model_resolver
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-model_resolver-source-identity_parse
+      source: model_resolver
+      sourceHandle: source
+      target: identity_parse
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: edge-identity_parse-source-identity_gate
+      source: identity_parse
+      sourceHandle: source
+      target: identity_gate
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-identity_gate-verified-query_build
+      source: identity_gate
+      sourceHandle: verified
+      target: query_build
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: answer
+      id: edge-identity_gate-ambiguous-answer_ambiguous
+      source: identity_gate
+      sourceHandle: ambiguous
+      target: answer_ambiguous
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: answer
+      id: edge-identity_gate-false-answer_notfound
+      source: identity_gate
+      sourceHandle: 'false'
+      target: answer_notfound
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: edge-query_build-source-retrieval_a
+      source: query_build
+      sourceHandle: source
+      target: retrieval_a
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: edge-query_build-source-retrieval_b
+      source: query_build
+      sourceHandle: source
+      target: retrieval_b
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: edge-query_build-source-retrieval_c
+      source: query_build
+      sourceHandle: source
+      target: retrieval_c
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: edge-retrieval_a-source-evidence_builder
+      source: retrieval_a
+      sourceHandle: source
+      target: evidence_builder
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: edge-evidence_builder-source-evidence_gate
+      source: evidence_builder
+      sourceHandle: source
+      target: evidence_gate
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: edge-retrieval_b-source-extra_refs
+      source: retrieval_b
+      sourceHandle: source
+      target: extra_refs
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: edge-retrieval_c-source-extra_refs
+      source: retrieval_c
+      sourceHandle: source
+      target: extra_refs
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: edge-evidence_gate-primary-fit
+      source: evidence_gate
+      sourceHandle: primary
+      target: fit
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: edge-evidence_gate-alternative-fit
+      source: evidence_gate
+      sourceHandle: alternative
+      target: fit
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-evidence_gate-false-render_insufficient
+      source: evidence_gate
+      sourceHandle: 'false'
+      target: render_insufficient
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: edge-fit-source-render_pick
+      source: fit
+      sourceHandle: source
+      target: render_pick
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: edge-render_pick-source-answer_pick
+      source: render_pick
+      sourceHandle: source
+      target: answer_pick
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: edge-extra_refs-source-answer_pick
+      source: extra_refs
+      sourceHandle: source
+      target: answer_pick
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 开始
+        type: start
+        variables: []
+      height: 73
+      id: start_node
+      position:
+        x: 60
+        y: 560
+      positionAbsolute:
+        x: 60
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        memory:
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            response_format: json_object
+            temperature: 0
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - role: system
+          text: '你是华为 PC 选品任务的需求解析器。把用户消息拆成结构化字段，不做任何推荐。
+
+
+            ## 提取字段
+
+            model_raw：用户点名的型号；用户在候选列表里回复序号或型号名时，填对应的标准型号全名。没提填 null，禁止从"轻薄本"推型号。
+
+            audience：目标人群（大学新生/家长/职场商务/创作者/家庭换新/企业采购/到店顾客…）
+
+            scenario：使用场景（开学学习/办公差旅/内容创作/家庭换新/新品首发/节日送礼…）
+
+            campaign：营销节点（开学季/618/双11/门店活动…），用户说没有则填 none
+
+            tone：语气偏好，可 null
+
+            lock_intent：用户表达"就它了/确认/锁定/选第一个"等确认意图时为 true，否则 false
+
+            user_query：用户这句话原样回填
+
+
+            ## 规则
+
+            1. 只抽取明确说过或无歧义可推出的内容，宁缺勿猜。
+
+            2. 结合对话历史理解指代（"这款""换成创作者用"指之前的型号/人群）。
+
+            3. 用户说"你定/随便/都行"的字段填 auto。
+
+
+            ## 输出
+
+            严格 JSON，无解释无代码块：
+
+            {"model_raw":"string|null","audience":"string|null","scenario":"string|null","campaign":"string|none|null","tone":"string|null","lock_intent":true,"user_query":"string"}'
+        - role: user
+          text: '{{#sys.query#}}'
+        selected: false
+        title: 子Agent① 需求解析
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 88
+      id: need_parser
+      position:
+        x: 340
+        y: 560
+      positionAbsolute:
+        x: 340
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\ndef _load(raw):\n    s = raw or \"\"\n  \
+          \  s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n    if \"<think>\"\
+          \ in s:\n        tail = s.rsplit(\"<think>\", 1)[1]\n        m = re.search(r\"\
+          \\\\{.*\\\\}\\\\s*$\", tail, re.S)\n        s = m.group(0) if m else \"\"\
+          \n    fence = chr(96) * 3\n    s = re.sub(fence + r\"(?:json)?\\\\s*|\\\\\
+          s*\" + fence, \"\", s).strip()\n    try:\n        v = json.loads(s)\n  \
+          \      if isinstance(v, dict):\n            return v\n    except Exception:\n\
+          \        pass\n    for i in range(len(s) - 1, -1, -1):\n        if s[i]\
+          \ != \"{\":\n            continue\n        try:\n            v = json.loads(s[i:])\n\
+          \            if isinstance(v, dict):\n                return v\n       \
+          \ except Exception:\n            continue\n    return {}\n\nLOCK_RE = re.compile(r\"\
+          (就它了|就这台|确认|锁定|就选|选第[一二三]|定了)\")\n\n\ndef main(raw: str, slots_prev: str,\
+          \ clarify_prev: float, user_query: str) -> dict:\n    data = _load(raw)\n\
+          \    prev = {}\n    try:\n        v = json.loads(slots_prev or \"{}\")\n\
+          \        if isinstance(v, dict):\n            prev = v\n    except Exception:\n\
+          \        prev = {}\n\n    def get(k):\n        val = data.get(k)\n     \
+          \   if isinstance(val, str):\n            val = val.strip()\n        if\
+          \ val in (None, \"null\", \"\"):\n            return \"\"\n        return\
+          \ val\n\n    slots = dict(prev)\n    for k in (\"model_raw\", \"audience\"\
+          , \"scenario\", \"campaign\", \"tone\"):\n        v = get(k)\n        if\
+          \ v == \"auto\":\n            slots.setdefault(k, \"auto\")\n        elif\
+          \ v:\n            slots[k] = v\n\n    uq = str(get(\"user_query\") or user_query\
+          \ or \"\")\n    try:\n        cnt = int(clarify_prev or 0)\n    except Exception:\n\
+          \        cnt = 0\n    want_lock = (get(\"lock_intent\") is True) or bool(LOCK_RE.search(uq\
+          \ or \"\"))\n\n    missing = [k for k in (\"audience\", \"scenario\") if\
+          \ not slots.get(k)]\n    forced = bool(missing) and cnt >= 3\n    if forced:\n\
+          \        slots.setdefault(\"audience\", \"auto\")\n        slots.setdefault(\"\
+          scenario\", \"auto\")\n        missing = []\n\n    return {\n        \"\
+          slots_json\": json.dumps(slots, ensure_ascii=False),\n        \"missing_text\"\
+          : \" / \".join(missing) if missing else \"\",\n        \"is_complete\":\
+          \ not missing,\n        \"has_model\": bool(slots.get(\"model_raw\")),\n\
+          \        \"want_lock\": want_lock,\n        \"clarify_count\": cnt + 1 if\
+          \ missing else cnt,\n        \"user_query\": uq,\n        \"forced_note\"\
+          : \"已按默认设定继续（追问达上限）\" if forced else \"\",\n    }\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          clarify_count:
+            children: null
+            type: number
+          forced_note:
+            children: null
+            type: string
+          has_model:
+            children: null
+            type: boolean
+          is_complete:
+            children: null
+            type: boolean
+          missing_text:
+            children: null
+            type: string
+          slots_json:
+            children: null
+            type: string
+          user_query:
+            children: null
+            type: string
+          want_lock:
+            children: null
+            type: boolean
+        selected: false
+        title: ① 槽位解析与合并
+        type: code
+        variables:
+        - value_selector:
+          - need_parser
+          - text
+          variable: raw
+        - value_selector:
+          - conversation
+          - slots
+          variable: slots_prev
+        - value_selector:
+          - conversation
+          - clarify_count
+          variable: clarify_prev
+        - value_selector:
+          - sys
+          - query
+          variable: user_query
+      height: 52
+      id: need_parse
+      position:
+        x: 640
+        y: 560
+      positionAbsolute:
+        x: 640
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        desc: 槽位与澄清计数持久化
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - need_parse
+          - slots_json
+          variable_selector:
+          - conversation
+          - slots
+        - input_type: variable
+          operation: over-write
+          value:
+          - need_parse
+          - clarify_count
+          variable_selector:
+          - conversation
+          - clarify_count
+        selected: false
+        title: 写入会话状态
+        type: assigner
+        version: '2'
+      height: 138
+      id: assign_state
+      position:
+        x: 940
+        y: 560
+      positionAbsolute:
+        x: 940
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: lock
+          conditions:
+          - comparison_operator: is
+            id: 28f9d66d-bcad-4d9a-900f-eceaf7f98441
+            value: 'true'
+            variable_selector:
+            - need_parse
+            - want_lock
+          id: lock
+          logical_operator: and
+        - case_id: clarify
+          conditions:
+          - comparison_operator: is not
+            id: 6b6ac4ae-c27a-4f47-9b3f-f8deb6b2c013
+            value: 'true'
+            variable_selector:
+            - need_parse
+            - is_complete
+          id: clarify
+          logical_operator: and
+        desc: 确认锁定 > 澄清 > 型号/发现路径
+        selected: false
+        title: 主控分发闸
+        type: if-else
+      height: 248
+      id: master_gate
+      position:
+        x: 1240
+        y: 560
+      positionAbsolute:
+        x: 1240
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: has_model
+          conditions:
+          - comparison_operator: is
+            id: d74a799d-914a-44fe-9423-df751df4da54
+            value: 'true'
+            variable_selector:
+            - need_parse
+            - has_model
+          id: has_model
+          logical_operator: and
+        desc: 有型号→身份核验；无型号→选品发现
+        selected: false
+        title: 型号路径闸
+        type: if-else
+      height: 176
+      id: model_gate
+      position:
+        x: 1540
+        y: 560
+      positionAbsolute:
+        x: 1540
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        memory:
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            temperature: 0.3
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - role: system
+          text: '你是华为 PC 选品助手。任务信息不完整，先问再选。
+
+
+            ## 规则
+
+            1. 只问下面列出的缺失字段，本轮最多 2 问；给选项不给开放题；口语化，不像表单。
+
+            2. 不推荐产品、不问型号（不知道型号是正常的，型号由发现环节解决）。
+
+            3. 用户说"你定/随便"时不再追问该字段。
+
+
+            ## 缺失字段
+
+            {{#need_parse.missing_text#}}
+
+
+            ## 选项库
+
+            - audience：大学新生 / 家长给孩子买 / 职场商务 / 设计视频创作者 / 家庭换新 / 企业采购 / 到店顾客
+
+            - scenario：开学学习 / 办公差旅 / 内容创作 / 家庭换新 / 新品首发 / 节日送礼
+
+            - campaign：开学季 / 618 / 双11 / 门店活动 / 没有
+
+
+            ## 输出
+
+            先一句简��说明，再列 1-2 个带选项的问题。不要输出 JSON。'
+        - role: user
+          text: '{{#sys.query#}}'
+        selected: false
+        title: 子Agent① 需求澄清
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 88
+      id: clarify
+      position:
+        x: 1540
+        y: 820
+      positionAbsolute:
+        x: 1540
+        y: 820
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import re\n\n\ndef main(draft: str) -> dict:\n    \"\"\"Strip the reasoning\
+          \ block from a plain-prose answer.\n\n    The clarify prompt asks for prose,\
+          \ not JSON, so this node only has to\n    remove what the model thinks before\
+          \ it speaks. An unclosed <think> means\n    the answer never started; in\
+          \ that case the tag is dropped and whatever\n    follows is kept.\n    \"\
+          \"\"\n    s = draft or \"\"\n    s = re.sub(r\"<think>.*?</think>\", \"\"\
+          , s, flags=re.S)\n    if \"<think>\" in s:\n        s = s.rsplit(\"<think>\"\
+          , 1)[0]\n    s = re.sub(r\"```(?:json)?\\s*|\\s*```\", \"\", s).strip()\n\
+          \    return {\"output\": s or \"请补充：产品型号、目标人群。\"}\n"
+        code_language: python3
+        desc: 剥离思维链，只保留要问用户的话
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: ④a 追问渲染
+        type: code
+        variables:
+        - value_selector:
+          - clarify
+          - text
+          variable: draft
+      height: 80
+      id: clarify_render
+      position:
+        x: 1840
+        y: 820
+      positionAbsolute:
+        x: 1840
+        y: 820
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#clarify_render.output#}}'
+        desc: ''
+        selected: false
+        title: 追问回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer_clarify
+      position:
+        x: 2140
+        y: 820
+      positionAbsolute:
+        x: 2140
+        y: 820
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\ndef _load(raw):\n    s = raw or \"\"\n  \
+          \  s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n    if \"<think>\"\
+          \ in s:\n        tail = s.rsplit(\"<think>\", 1)[1]\n        m = re.search(r\"\
+          \\\\{.*\\\\}\\\\s*$\", tail, re.S)\n        s = m.group(0) if m else \"\"\
+          \n    fence = chr(96) * 3\n    s = re.sub(fence + r\"(?:json)?\\\\s*|\\\\\
+          s*\" + fence, \"\", s).strip()\n    try:\n        v = json.loads(s)\n  \
+          \      if isinstance(v, dict):\n            return v\n    except Exception:\n\
+          \        pass\n    for i in range(len(s) - 1, -1, -1):\n        if s[i]\
+          \ != \"{\":\n            continue\n        try:\n            v = json.loads(s[i:])\n\
+          \            if isinstance(v, dict):\n                return v\n       \
+          \ except Exception:\n            continue\n    return {}\n\n\ndef main(slots_json:\
+          \ str) -> dict:\n    s = _load(slots_json)\n    pack = {\n        \"locked\"\
+          : True,\n        \"model_name\": s.get(\"model_raw\") or s.get(\"model_name\"\
+          ) or \"\",\n        \"slots\": s,\n        \"handoff_note\": \"下游文案环节基于已核验事实生成，不得引入新事实\"\
+          ,\n    }\n    out = [\"已锁定选品。交接包（供文案环节使用）：\"]\n    if not pack[\"model_name\"\
+          ]:\n        out.insert(0, \"提示：当前尚未选定具体型号，交接包只包含需求槽位。可以先从候选中选一个型号并完成选品，再锁定。\"\
+          )\n    out.append(json.dumps(pack, ensure_ascii=False, indent=1))\n    return\
+          \ {\"output\": \"\\n\".join(out), \"pack\": json.dumps(pack, ensure_ascii=False)}\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          output:
+            children: null
+            type: string
+          pack:
+            children: null
+            type: string
+        selected: false
+        title: 锁定与交接包
+        type: code
+        variables:
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: slots_json
+      height: 52
+      id: lock_render
+      position:
+        x: 1540
+        y: 300
+      positionAbsolute:
+        x: 1540
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        desc: ''
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - lock_render
+          - pack
+          variable_selector:
+          - conversation
+          - last_pick
+        selected: false
+        title: 写入锁定包
+        type: assigner
+        version: '2'
+      height: 84
+      id: assign_lock
+      position:
+        x: 1840
+        y: 300
+      positionAbsolute:
+        x: 1840
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#lock_render.output#}}'
+        desc: ''
+        selected: false
+        title: 锁定回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer_lock
+      position:
+        x: 2140
+        y: 300
+      positionAbsolute:
+        x: 2140
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\n\nSCENE_KW = {\n    \"大学新生\": \"轻薄 续航\", \"新生\": \"轻薄\
+          \ 续航\", \"开学\": \"轻薄 续航\",\n    \"办公\": \"轻薄 接口\", \"差旅\": \"轻薄 电池\", \"\
+          商务\": \"轻薄 接口\",\n    \"创作\": \"屏幕 内存\", \"设计\": \"屏幕 内存\", \"视频\": \"屏幕\
+          \ 内存 存储\",\n    \"家庭\": \"屏幕 易用\", \"换新\": \"屏幕\", \"企业\": \"系统 接口 管理\"\
+          , \"采购\": \"系统 接口\",\n}\n\n\ndef main(slots_json: str) -> dict:\n    try:\n\
+          \        s = json.loads(slots_json or \"{}\")\n    except Exception:\n \
+          \       s = {}\n    text = \" \".join(str(s.get(k) or \"\") for k in (\"\
+          audience\", \"scenario\", \"campaign\"))\n    kws = []\n    for k, v in\
+          \ SCENE_KW.items():\n        if k in text:\n            for w in v.split():\n\
+          \                if w not in kws:\n                    kws.append(w)\n \
+          \   q = \" \".join([\"MateBook 屏幕 处理器 内存 存储 重量 电池 尺寸\"] + kws[:4])\n   \
+          \ return {\"q_disc\": q}\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          q_disc:
+            children: null
+            type: string
+        selected: false
+        title: 子Agent② 发现检索式
+        type: code
+        variables:
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: slots_json
+      height: 52
+      id: discovery_query
+      position:
+        x: 1840
+        y: 560
+      positionAbsolute:
+        x: 1840
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids:
+        - CSbzoWqPsSZZ0DuNPYy4Ho28TTwI6g78tKBaTBrh7f57sMqVOt4Jkf3m5ouaK6r/
+        desc: 检索 01_商品基础参数；rerank 提权规格矩阵行
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: qwen3-rerank
+            provider: langgenius/tongyi/tongyi
+          score_threshold: null
+          top_k: 12
+          weights: null
+        query_variable_selector:
+        - discovery_query
+        - q_disc
+        retrieval_mode: multiple
+        selected: false
+        title: 子Agent② 发现检索·跨型号矩阵
+        type: knowledge-retrieval
+      height: 134
+      id: retrieval_d
+      position:
+        x: 2140
+        y: 560
+      positionAbsolute:
+        x: 2140
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\ndef _text(raw):\n    if raw is None:\n  \
+          \      return \"\"\n    if isinstance(raw, str):\n        return raw\n \
+          \   if isinstance(raw, list):\n        parts = []\n        for it in raw:\n\
+          \            if isinstance(it, dict):\n                c = it.get(\"content\"\
+          ) or it.get(\"text\") or \"\"\n                d = it.get(\"metadata\")\
+          \ or {}\n                doc = d.get(\"document_name\") if isinstance(d,\
+          \ dict) else None\n                parts.append(((\"【\" + doc + \"】\") if\
+          \ doc else \"\") + str(c))\n            else:\n                parts.append(str(it))\n\
+          \        return \"\\n\".join(parts)\n    return str(raw)\n\n\nSCENE_BONUS\
+          \ = {\n    \"学生\": [(\"重量\", 1.6, 3), (\"电池\", 60, 2), (\"屏幕\", 13, 1)],\n\
+          \    \"新生\": [(\"重量\", 1.6, 3), (\"电池\", 60, 2), (\"屏幕\", 13, 1)],\n   \
+          \ \"创作\": [(\"内存\", 32, 2), (\"屏幕\", 13, 2)],\n    \"设计\": [(\"内存\", 32,\
+          \ 2), (\"屏幕\", 13, 2)],\n    \"视频\": [(\"内存\", 32, 2), (\"屏幕\", 13, 2)],\n\
+          \    \"办公\": [(\"重量\", 1.6, 2), (\"接口\", 0, 2)],\n    \"差旅\": [(\"重量\",\
+          \ 1.6, 2), (\"电池\", 60, 2)],\n    \"家庭\": [(\"存储\", 512, 1), (\"屏幕\", 13,\
+          \ 1)],\n    \"企业\": [(\"内存\", 16, 1), (\"接口\", 0, 1)],\n}\n\n\ndef main(retrieved,\
+          \ slots_json: str) -> dict:\n    retrieved = _text(retrieved)\n    try:\n\
+          \        s = json.loads(slots_json or \"{}\")\n    except Exception:\n \
+          \       s = {}\n    text = \" \".join(str(s.get(k) or \"\") for k in (\"\
+          audience\", \"scenario\"))\n    key = next((k for k in SCENE_BONUS if k\
+          \ in text), \"办公\")\n    rows = []\n    for m in re.finditer(r\"(HUAWEI\\\
+          s*MateBook[^,，\\n]{0,24}|MateBook[^,，\\n]{0,24})[，,](.{0,400})\", retrieved\
+          \ or \"\"):\n        rows.append({\"model_raw\": m.group(1).strip(), \"\
+          blob\": m.group(2)})\n\n    def score(r):\n        sc = 0\n        for field,\
+          \ threshold, pts in SCENE_BONUS[key]:\n            mm = re.search(field\
+          \ + r\"[：:]?\\s*([\\d.]+)\", r[\"blob\"])\n            if mm and float(mm.group(1))\
+          \ >= threshold:\n                sc += pts\n        return sc\n\n    ranked\
+          \ = sorted(rows, key=lambda r: -score(r))\n    seen, top = set(), []\n \
+          \   for r in ranked:\n        n = re.sub(r\"\\s\", \"\", r[\"model_raw\"\
+          ])\n        if n and n not in seen:\n            seen.add(n)\n         \
+          \   top.append({\"model_name\": r[\"model_raw\"], \"row\": r[\"blob\"][:300]})\n\
+          \        if len(top) == 3:\n            break\n    return {\"candidates\"\
+          : json.dumps(top, ensure_ascii=False), \"scene_key\": key}\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          candidates:
+            children: null
+            type: string
+          scene_key:
+            children: null
+            type: string
+        selected: false
+        title: 子Agent② 候选过滤
+        type: code
+        variables:
+        - value_selector:
+          - retrieval_d
+          - result
+          variable: retrieved
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: slots_json
+      height: 52
+      id: discovery_filter
+      position:
+        x: 2440
+        y: 560
+      positionAbsolute:
+        x: 2440
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - retrieval_d
+          - result
+        desc: ''
+        memory:
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            response_format: json_object
+            temperature: 0.3
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - role: system
+          text: '你是华为 PC 选品的选品发现 Agent。下面是知识库检索片段和代码筛出的候选型号。你的任务：为每款候选写一句话"为什么适合该人群/场景"，只能引用片段中出现的规格词。
+
+
+            ## 硬规则
+
+            1. 候选只能来自给出的列表，禁止引入列表之外的型号。
+
+            2. why 必须引用候选矩阵行里出现的具体规格数值（如 1.39kg、70Wh、14.2 英寸），说清它对这类用户的实际意义；禁止把人群/场景词本身当证据；evidence_quote
+            从矩阵行原文摘 ≤30 字。
+
+            3. 各候选的理由必须不同，禁止三句一模一样。
+
+            3. 不排名、不贬低、不写文案、不报价。
+
+
+            ## 输出（严格 JSON，无解释无代码块）
+
+            {"candidates":[{"model_name":"string","why":"string","evidence_quote":"string"}]}'
+        - role: user
+          text: '候选及矩阵行：{{#discovery_filter.candidates#}}
+
+            人群与场景：{{#need_parse.slots_json#}}'
+        selected: false
+        title: 子Agent② 候选理由
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 88
+      id: discovery_llm
+      position:
+        x: 2740
+        y: 560
+      positionAbsolute:
+        x: 2740
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\ndef _load(raw):\n    s = raw or \"\"\n  \
+          \  s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n    if \"<think>\"\
+          \ in s:\n        tail = s.rsplit(\"<think>\", 1)[1]\n        m = re.search(r\"\
+          \\\\{.*\\\\}\\\\s*$\", tail, re.S)\n        s = m.group(0) if m else \"\"\
+          \n    fence = chr(96) * 3\n    s = re.sub(fence + r\"(?:json)?\\\\s*|\\\\\
+          s*\" + fence, \"\", s).strip()\n    try:\n        v = json.loads(s)\n  \
+          \      if isinstance(v, dict):\n            return v\n    except Exception:\n\
+          \        pass\n    for i in range(len(s) - 1, -1, -1):\n        if s[i]\
+          \ != \"{\":\n            continue\n        try:\n            v = json.loads(s[i:])\n\
+          \            if isinstance(v, dict):\n                return v\n       \
+          \ except Exception:\n            continue\n    return {}\n\n\ndef main(disc:\
+          \ str, candidates: str) -> dict:\n    d = _load(disc)\n    try:\n      \
+          \  cands = json.loads(candidates or \"[]\")\n    except Exception:\n   \
+          \     cands = []\n    items = d.get(\"candidates\") or cands or []\n   \
+          \ lines = [\"【候选型号】回复型号名或序号，我会做型号核验和证据检查后给出选品结论：\"]\n    n = 0\n    for\
+          \ it in items:\n        if isinstance(it, dict):\n            n += 1\n \
+          \           q = str(it.get(\"evidence_quote\") or \"\")\n            lines.append(\"\
+          %d. %s——%s%s\" % (n, it.get(\"model_name\"), it.get(\"why\"), (\"（\" + q\
+          \ + \"）\") if q else \"\"))\n        elif isinstance(it, str):\n       \
+          \     n += 1\n            lines.append(\"%d. %s\" % (n, it))\n    if n ==\
+          \ 0:\n        return {\"output\": \"知识库矩阵没有筛出符合条件的候选。可以放宽要求（如不限定轻薄），或直接告诉我一个型号。\"\
+          }\n    return {\"output\": \"\\n\".join(lines)}\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: 子Agent② 候选渲染
+        type: code
+        variables:
+        - value_selector:
+          - discovery_llm
+          - text
+          variable: disc
+        - value_selector:
+          - discovery_filter
+          - candidates
+          variable: candidates
+      height: 52
+      id: render_candidates
+      position:
+        x: 3040
+        y: 560
+      positionAbsolute:
+        x: 3040
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#render_candidates.output#}}'
+        desc: ''
+        selected: false
+        title: 候选回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer_candidates
+      position:
+        x: 3340
+        y: 560
+      positionAbsolute:
+        x: 3340
+        y: 560
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "# Document names of 01_商品基础参数, read from the live workspace. These\
+          \ are\n# the only model identities the knowledge base can actually answer\
+          \ for; a\n# resolver allowed to invent its own list marks real models as\
+          \ ambiguous and\n# sends every request down the degraded branch.\nKB_DOCS\
+          \ = [\n    \"MateBook GT 系列\",\n    \"MateBook D 14\",\n    \"MateBook D\
+          \ 16\",\n    \"MateBook D 16 SE 版\",\n    \"MateBook X系列\",\n    \"HUAWEI\
+          \ MateBook Pro（鸿蒙版）\",\n    \"HUAWEI MateBook Pro S\",\n    \"HUAWEI MateBook\
+          \ Fold 非凡大师\",\n    \"MateBook 14 酷睿 Ultra\",\n    \"HUAWEI MateBook 14（鸿蒙版）\"\
+          ,\n    \"商用电脑\",\n    \"电脑配件\",\n    \"显示器\",\n    \"打印机及耗材\",\n]\n\n# Categories,\
+          \ not models: a request naming one of these is ambiguous, not a hit.\nCATEGORIES\
+          \ = {\"商用电脑\", \"电脑配件\", \"显示器\", \"打印机及耗材\"}\n\n\ndef main() -> dict:\n\
+          \    models = [m for m in KB_DOCS if m not in CATEGORIES]\n    lines = [\"\
+          可推荐型号：\"] + [\"- \" + m for m in models]\n    lines.append(\"\")\n    lines.append(\"\
+          只能归类、不能当型号： \" + \" / \".join(sorted(CATEGORIES)))\n    return {\"output\"\
+          : \"\\n\".join(lines)}\n"
+        code_language: python3
+        desc: 把 01 库的真实文档名做成型号白名单，供消歧比对
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: 子Agent③ 型号清单
+        type: code
+        variables: []
+      height: 96
+      id: kb_models
+      position:
+        x: 1840
+        y: 401.5866015683734
+      positionAbsolute:
+        x: 1840
+        y: 401.5866015683734
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 对照白名单消歧，输出 identity_status
+        model:
+          completion_params:
+            response_format: json_object
+            temperature: 0
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: 65681cc9-119d-50be-974e-28f437f858ce
+          role: system
+          text: '你是华为 PC 型号规范化器。你的唯一职责是把用户写的型号映射到知识库中的标准型号，并判断是否存在歧义。
+
+
+            ## 知识库中的标准型号（唯一合法取值，只能从中选）
+
+            {{#kb_models.output#}}
+
+
+            ## 任务
+
+            1. 把用户写的型号映射到上面清单里的一个标准型号。
+
+            2. 判断身份状态：verified（唯一确定）/ ambiguous（可能对应多个）/ not_found（清单里没有）。
+
+
+            ## 严格规则
+
+            - 不使用模型自身的产品知识，只依据用户表述与上面清单判断。
+
+            - 只要用户说的型号能唯一对应清单中的一项，就判 verified，model_name 原样回填该项。
+
+            - 用户没提具体配置（内存/存储/处理器档位）不影响 verified：那是配置项，不是型号身份。
+
+            - 系列名（MateBook X 系列、MateBook D 16）不是精确型号；用户只给系列名时判 ambiguous。
+
+            - MateBook 14 与 MateBook 14 酷睿 Ultra、鸿蒙版与 Windows 版，都是不同身份。
+
+            - 清单里没有的型号判 not_found，不要挑一个最像的凑。
+
+
+            ## 输出
+
+            严格输出 JSON，不要 markdown 代码块：
+
+            {"model_id": "string|null", "model_name": "string|null", "series": "string|null",
+            "system_route": "harmonyos|windows|null", "identity_status": "verified|ambiguous|not_found",
+            "candidates": ["string"], "ambiguity_reason": "string|null"}
+
+            - 上游候选名可能带多余空格或后缀，先清洗再匹配。
+
+            '
+        - role: user
+          text: '{{#sys.query#}}'
+        selected: false
+        title: 子Agent③ 型号规范化
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 116
+      id: model_resolver
+      position:
+        x: 2140
+        y: 401.5866015683734
+      positionAbsolute:
+        x: 2140
+        y: 401.5866015683734
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\ndef _load(raw):\n    s = raw or \"\"\n  \
+          \  s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n    if \"<think>\"\
+          \ in s:\n        tail = s.rsplit(\"<think>\", 1)[1]\n        m = re.search(r\"\
+          \\\\{.*\\\\}\\\\s*$\", tail, re.S)\n        s = m.group(0) if m else \"\"\
+          \n    fence = chr(96) * 3\n    s = re.sub(fence + r\"(?:json)?\\\\s*|\\\\\
+          s*\" + fence, \"\", s).strip()\n    try:\n        v = json.loads(s)\n  \
+          \      if isinstance(v, dict):\n            return v\n    except Exception:\n\
+          \        pass\n    for i in range(len(s) - 1, -1, -1):\n        if s[i]\
+          \ != \"{\":\n            continue\n        try:\n            v = json.loads(s[i:])\n\
+          \            if isinstance(v, dict):\n                return v\n       \
+          \ except Exception:\n            continue\n    return {}\n\n\ndef main(raw:\
+          \ str) -> dict:\n    d = _load(raw)\n    status = str(d.get(\"identity_status\"\
+          ) or \"not_found\").strip()\n    name = str(d.get(\"model_name\") or \"\"\
+          ).strip()\n    cands = [str(c) for c in (d.get(\"candidates\") or []) if\
+          \ str(c).strip()]\n    reason = str(d.get(\"ambiguity_reason\") or \"\"\
+          ).strip()\n    lines = [\"- \" + c for c in cands] or [\"- （无候选）\"]\n  \
+          \  if reason:\n        lines.append(\"说明：\" + reason)\n    return {\n  \
+          \      \"identity_status\": status if status in (\"verified\", \"ambiguous\"\
+          , \"not_found\") else \"not_found\",\n        \"model_name_std\": name if\
+          \ status == \"verified\" else \"\",\n        \"candidates_text\": \"\\n\"\
+          .join(lines),\n    }\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          candidates_text:
+            children: null
+            type: string
+          identity_status:
+            children: null
+            type: string
+          model_name_std:
+            children: null
+            type: string
+        selected: false
+        title: ③ 身份解析
+        type: code
+        variables:
+        - value_selector:
+          - model_resolver
+          - text
+          variable: raw
+      height: 52
+      id: identity_parse
+      position:
+        x: 2456.8866488171348
+        y: 401.5866015683734
+      positionAbsolute:
+        x: 2456.8866488171348
+        y: 401.5866015683734
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: verified
+          conditions:
+          - comparison_operator: is
+            id: 27be150e-1c31-4297-9a07-baacbbbff664
+            value: verified
+            variable_selector:
+            - identity_parse
+            - identity_status
+          id: verified
+          logical_operator: and
+        - case_id: ambiguous
+          conditions:
+          - comparison_operator: is
+            id: 3134db58-4483-4885-98b5-beaf04080fea
+            value: ambiguous
+            variable_selector:
+            - identity_parse
+            - identity_status
+          id: ambiguous
+          logical_operator: and
+        desc: verified 才进入证据取证
+        selected: false
+        title: 身份闸
+        type: if-else
+      height: 248
+      id: identity_gate
+      position:
+        x: 2740
+        y: 340
+      positionAbsolute:
+        x: 2740
+        y: 340
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '这个说法对应多个型号，请确认具体是哪一款：
+
+          {{#identity_parse.candidates_text#}}
+
+
+          回复型号全名即可继续。'
+        desc: ''
+        selected: false
+        title: 歧义回复
+        type: answer
+        variables: []
+      height: 151
+      id: answer_ambiguous
+      position:
+        x: 3040
+        y: 240
+      positionAbsolute:
+        x: 3040
+        y: 240
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: 知识库暂未收录这个型号。可以换个说法（系列名+版本，如「MateBook 14 酷睿 Ultra」），或直接告诉我人群和场景，我从知识库筛候选。
+        desc: ''
+        selected: false
+        title: 未收录回复
+        type: answer
+        variables: []
+      height: 148
+      id: answer_notfound
+      position:
+        x: 3040
+        y: 420
+      positionAbsolute:
+        x: 3040
+        y: 420
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "SPEC_TERMS = \"屏幕 处理器 内存 存储 尺寸 重量 电池 接口\"\n\n\ndef main(model_name:\
+          \ str, focus: str) -> dict:\n    name = (model_name or \"\").strip()\n \
+          \   f = (focus or \"\").strip()\n    return {\n        \"q_params\": (name\
+          \ + \" \" + SPEC_TERMS).strip(),\n        \"q_scene\": (name + \" \" + f).strip()\
+          \ or name,\n        \"q_price\": name,\n    }\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          q_params:
+            children: null
+            type: string
+          q_price:
+            children: null
+            type: string
+          q_scene:
+            children: null
+            type: string
+        selected: false
+        title: ④ 检索式构造
+        type: code
+        variables:
+        - value_selector:
+          - identity_parse
+          - model_name_std
+          variable: model_name
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: focus
+      height: 52
+      id: query_build
+      position:
+        x: 3040
+        y: 340
+      positionAbsolute:
+        x: 3040
+        y: 340
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids:
+        - CSbzoWqPsSZZ0DuNPYy4Ho28TTwI6g78tKBaTBrh7f57sMqVOt4Jkf3m5ouaK6r/
+        desc: 检索 01_商品基础参数；rerank 提权规格矩阵行
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: qwen3-rerank
+            provider: langgenius/tongyi/tongyi
+          score_threshold: null
+          top_k: 60
+          weights: null
+        query_variable_selector:
+        - query_build
+        - q_params
+        retrieval_mode: multiple
+        selected: false
+        title: 子Agent④ 参数检索·01库
+        type: knowledge-retrieval
+      height: 134
+      id: retrieval_a
+      position:
+        x: 3340
+        y: 160
+      positionAbsolute:
+        x: 3340
+        y: 160
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids:
+        - O6PtS/m/NArZPEsjZrIlwdHx7a6VwYab+KCEC2xQajQeseFvMda9vI02bY1cEdhf
+        desc: 检索 01_商品基础参数；rerank 提权规格矩阵行
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: qwen3-rerank
+            provider: langgenius/tongyi/tongyi
+          score_threshold: null
+          top_k: 6
+          weights: null
+        query_variable_selector:
+        - query_build
+        - q_scene
+        retrieval_mode: multiple
+        selected: false
+        title: 子Agent④ ���景话术·05库
+        type: knowledge-retrieval
+      height: 134
+      id: retrieval_b
+      position:
+        x: 3340
+        y: 340
+      positionAbsolute:
+        x: 3340
+        y: 340
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids:
+        - +1I5Zk56q1YjuGX+I6OeccRqRUz9iZOchWzHWQy7a7YCjjmN/Nf8NZUhbkkVboIY
+        desc: 检索 01_商品基础参数；rerank 提权规格矩阵行
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: qwen3-rerank
+            provider: langgenius/tongyi/tongyi
+          score_threshold: null
+          top_k: 3
+          weights: null
+        query_variable_selector:
+        - query_build
+        - q_price
+        retrieval_mode: multiple
+        selected: false
+        title: 子Agent④ 价格快照·02库
+        type: knowledge-retrieval
+      height: 134
+      id: retrieval_c
+      position:
+        x: 3340
+        y: 520
+      positionAbsolute:
+        x: 3340
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\n# The knowledge base stores specs three ways,\
+          \ and only two of them carry a\n# usable field/value pair:\n#   matrix \
+          \ \"MateBook 14 酷睿 Ultra,尺寸；14.2 英寸；类型；OLED,…,源路径\"\n#   colon   \"重量：1.31\
+          \ kg\"\n#   tree    one line per node (\"屏幕\" / \"尺寸\" / \"14.2 英寸\") -\
+          \ dropped, because\n#           retrieval returns segments by score, so\
+          \ the pairs are not adjacent.\nCORE_FIELDS = (\"屏幕\", \"处理器\", \"内存\", \"\
+          存储\", \"尺寸重量\", \"电池\", \"接口\")\n# Envelope lines copied from the source\
+          \ file; they describe the file, not the product.\nMETA_FIELDS = {\n    \"\
+          原始知识库路径\", \"原文 SHA256\", \"资料类别\", \"发布状态\", \"原始发布状态\",\n    \"产品类别\"\
+          , \"所属目录\", \"官方页面\", \"抓取日期\", \"品类\", \"资料角色\",\n    \"完整型号或主题\", \"型号或主题\"\
+          , \"来源路径\", \"来源\", \"目标知识库\",\n    \"原始资料数\", \"知识层\",\n}\n\n\ndef norm(s):\n\
+          \    s = (s or \"\").upper()\n    s = s.replace(\"ＨＵＡＷＥＩ\", \"HUAWEI\").replace(\"\
+          华为\", \"\")\n    for ch in (\" \", \"\\u3000\", \"\\t\", \"-\", \"_\", \"\
+          ·\"):\n        s = s.replace(ch, \"\")\n    s = s.replace(\"（\", \"(\").replace(\"\
+          ）\", \")\")\n    return s.strip()\n\n\n# Column order of 全型号参数联合矩阵.csv:\
+          \ 型号 + 12 concerns + 本地事实源.\n# This row shape carries the field name in\
+          \ the header, not in the cell, and\n# content-based guessing gets it wrong\
+          \ in a way that matters: the 屏幕规格 cell\n# opens with \"尺寸；展开态：18 英寸\", which\
+          \ every keyword test reads as a body\n# measurement and files away from\
+          \ the screen. Reading the column is exact.\nJOINT_COLUMNS = {\n    1: None,\
+          \              # 操作系统\n    2: \"屏幕\",            # 屏幕规格\n    3: \"处理器\"\
+          ,\n    4: \"内存\",\n    5: \"存储\",\n    6: \"尺寸重量\",\n    7: \"电池\",\n  \
+          \  8: \"接口\",\n    9: None,              # 键盘触控板\n    10: None,        \
+          \     # 摄像头\n    11: None,             # 音频\n    12: None,             #\
+          \ 特色应用\n}\nJOINT_WIDTH = 1 + len(JOINT_COLUMNS) + 1\n\n# A matrix cell usually\
+          \ names its own field, and that label is the most\n# reliable signal in\
+          \ the whole row. It is also the only one that works for\n# \"屏幕；18 英寸 3.3K\
+          \ 折叠屏\": there is no OLED/IPS/resolution word to match,\n# so without the\
+          \ label the row is dropped even though 屏幕 is right there.\nFIELD_ALIAS =\
+          \ {\n    \"屏幕\": \"屏幕\", \"显示屏\": \"屏幕\", \"显示\": \"屏幕\",\n    \"处理器\":\
+          \ \"处理器\", \"CPU\": \"处理器\", \"芯片\": \"处理器\",\n    \"内存\": \"内存\", \"运行内存\"\
+          : \"内存\", \"RAM\": \"内存\",\n    \"存储\": \"存储\", \"硬盘\": \"存储\", \"机身存储\"\
+          : \"存储\",\n    \"电池\": \"电池\", \"电池容量\": \"电池\",\n    \"接口\": \"接口\", \"\
+          端口\": \"接口\",\n    \"重量\": \"尺寸重量\", \"尺寸\": \"尺寸重量\", \"厚度\": \"尺寸重量\"\
+          ,\n    \"尺寸重量\": \"尺寸重量\", \"机身尺寸\": \"尺寸重量\",\n}\n\n\ndef classify(text):\n\
+          \    \"\"\"Map a spec blob to one canonical field, or None.\n\n    Order\
+          \ matters: a screen cell mentions 尺寸, and a body cell mentions 重量,\n   \
+          \ so the unit and the surrounding vocabulary decide, not the first keyword.\n\
+          \    \"\"\"\n    t = text\n    # 英寸 first. A screen cell opens with \"尺寸；展开态：18\
+          \ 英寸\", and the label\n    # 尺寸 on its own would file the diagonal as a\
+          \ body measurement - which then\n    # clashes with the real width and blocks\
+          \ the model. No laptop body dimension\n    # is ever quoted in inches.\n\
+          \    if \"英寸\" in t and not re.search(r\"\\d\\s*kg|\\d\\s*g\b|\\d\\s*mm\"\
+          , t):\n        return \"屏幕\"\n    # Then the cell's own label.\n    head\
+          \ = t.split()[0].rstrip(\"；;:：\") if t.strip() else \"\"\n    if head in\
+          \ FIELD_ALIAS:\n        return FIELD_ALIAS[head]\n    if re.search(r\"OLED|IPS|LCD|分辨率|屏占比|刷新率|亮度|色域\"\
+          , t):\n        return \"屏幕\"\n    if re.search(r\"酷睿|麒麟|锐龙|处理器|CPU\", t):\n\
+          \        return \"处理器\"\n    # Body before battery. A weight line often\
+          \ says where the battery is\n    # counted (\"约 1.16 kg（含电池,不含键盘）\"), so\
+          \ testing 电池 first files the\n    # weight as a battery spec. A real battery\
+          \ row carries Wh, never kg/mm.\n    if re.search(r\"重量|宽度|深度|高度|厚度\", t)\
+          \ and re.search(r\"kg|\bmm\b|g\b\", t):\n        return \"尺寸重量\"\n    if\
+          \ re.search(r\"Wh|锂聚合物|电池\", t):\n        return \"电池\"\n    if re.search(r\"\
+          USB|HDMI|Type-C|接口|雷电\", t):\n        return \"接口\"\n    # Storage before\
+          \ memory: both read \"16 GB / 1 TB\", and only the storage\n    # column\
+          \ carries TB. Checking memory first relabelled every SSD row.\n    if re.search(r\"\
+          NVMe|SSD|存储|硬盘|\bTB\b\", t):\n        return \"存储\"\n    if re.search(r\"\
+          LPDDR|内存|RAM\", t) or (re.search(r\"\bGB\b\", t) and \"/\" in t):\n    \
+          \    return \"内存\"\n    return None\n\n\n\ndef is_url(v):\n    \"\"\"A URL\
+          \ in a spec cell is a source pointer, not a product fact.\"\"\"\n    return\
+          \ bool(re.match(r\"^https?://\", (v or \"\").strip()))\n\n\ndef split_csv(text):\n\
+          \    \"\"\"Split a CSV line, honouring double quotes.\n\n    The matrix\
+          \ rows quote a cell when the value itself contains a comma:\n    重量；约 1.16\
+          \ kg（含电池,不含键盘）. A plain split(\",\") cuts that value in\n    half, and the\
+          \ tail \"不含键盘）\" then reads as a separate cell of its own -\n    while the\
+          \ head still contains the word 电池, so the weight gets filed as a\n    battery\
+          \ fact.\n\n    Quote characters are consumed rather than kept, so the cell\
+          \ that comes out\n    is the value itself and not \"\"宽度\".\n    \"\"\"\n\
+          \    out, cur, quoted = [], [], False\n    for ch in text:\n        if ch\
+          \ == '\"':\n            quoted = not quoted\n        elif ch == \",\" and\
+          \ not quoted:\n            out.append(\"\".join(cur))\n            cur =\
+          \ []\n        else:\n            cur.append(ch)\n    out.append(\"\".join(cur))\n\
+          \    return out\n\n\ndef pairs(blob):\n    \"\"\"Split a matrix cell such\
+          \ as \"宽度；310.8 mm；深度；220.8 mm\" into pairs.\n\n    A fixed even/odd split\
+          \ does not survive the real data: one label can own\n    several variant\
+          \ values (\"高度；标准屏版：11.9 mm；防窥屏版：11.9 mm\"), which\n    makes the segment\
+          \ count odd and shifts every later pair by one - so the\n    label \"宽度\"\
+          \ itself ends up stored as a value. Instead walk the segments and\n    treat\
+          \ a short segment with no digits or units as the current label, so any\n\
+          \    number of values can follow one label.\n    \"\"\"\n    # A stray U+FFFD\
+          \ in the source chunk (seen live: \"锂聚合物�容量\")\n    # sits exactly where\
+          \ a separator should be. Dropping it fuses two fields\n    # into one value,\
+          \ so it is treated as a separator.\n    blob = (blob or \"\").replace(\"\
+          �\", \"；\")\n    parts = [p.strip() for p in blob.split(\"；\") if p.strip()]\n\
+          \n    def is_label(p):\n        # \"左侧：\" and \"右侧：\" prefix an interface\
+          \ value rather than labelling\n        # it, and they are longer than a\
+          \ field name, so a bare length test\n        # would drop the whole segment.\
+          \ A label never carries a quantity.\n        return (len(p) <= 8\n     \
+          \           and not re.search(r\"\\d\", p)\n                and not re.search(r\"\
+          OLED|IPS|USB|HDMI|kg|Wh|mm|酷睿|麒麟|锂聚合物\", p)\n                and not p.startswith(\"\
+          HUAWEI\")\n                and not re.search(r\"：|:\", p))\n\n    out, key\
+          \ = [], \"\"\n    for p in parts:\n        if is_label(p):\n           \
+          \ key = p\n            continue\n        out.append((key, p))\n    # A leading\
+          \ segment with neither a label nor a quantity (\"折叠态（摄像头在上）\")\n    # qualifies\
+          \ the whole cell rather than being one of its values.\n    while len(out)\
+          \ > 1 and not out[0][0] and not re.search(r\"\\d\", out[0][1]):\n      \
+          \  out.pop(0)\n    # A cell that is nothing but labels carries no fact.\n\
+          \    return out\n\n\ndef split_condition(value):\n    \"\"\"Separate a leading\
+          \ variant name from the value it qualifies.\n\n    \"展开态：7.6 mm（左）/ 7.3\
+          \ mm（右）\" and \"闭合态：14.9 mm\" are the same\n    machine measured in two\
+          \ states, not two conflicting heights, so the state\n    belongs to the\
+          \ fact's identity. Without this the Fold reported 尺寸重量 as\n    contradictory\
+          \ and dropped out of the primary tier.\n\n    Some cells also carry the\
+          \ model name in front of the variant\n    (\"HUAWEI MateBook Pro S 标准屏版：11.9\
+          \ mm\"); only the trailing word is the\n    condition, so a long prefix\
+          \ is reduced to its last token when that token\n    ends in 版 or 态.\n  \
+          \  \"\"\"\n    s = (value or \"\").strip()\n    m = re.match(r\"^(.*?)[\\\
+          uff1a:]\\s*(.+)$\", s)\n    if not m:\n        return \"\", s\n    head,\
+          \ val = m.group(1).strip(), m.group(2).strip()\n    if not re.search(r\"\
+          \\d\", val):\n        return \"\", s\n    # \"3:2\" is an aspect ratio,\
+          \ not a variant: splitting it produced a fact\n    # with condition \"3\"\
+          \ and value \"2\". A real condition is a word, not a digit.\n    if not\
+          \ re.search(r\"[^\\d\\s.]\", head):\n        return \"\", s\n    if len(head)\
+          \ > 12:\n        tail = re.split(r\"\\s+\", head)\n        if tail and re.search(r\"\
+          (版|态)$\", tail[-1]):\n            head = tail[-1]\n        else:\n     \
+          \       return \"\", s\n    return head, val\n\n\n# Weight and size cells\
+          \ often carry the variant inside parentheses instead of\n# in front of the\
+          \ colon: \"约 1.33 kg（圆键盘含电池）\" and \"约 1.32 kg（方键盘含\n# 电池）\" are two keyboard\
+          \ options of one machine. Without reading that they\n# look like two contradictory\
+          \ weights, and the model drops a tier over a\n# difference that is really\
+          \ just which keyboard is in the box.\nPAREN_VARIANT = re.compile(r\"[（(]([^（()）]*(?:键盘|版|态)[^（()）]*)[）)]\"\
+          )\n\n\ndef variant_of(value):\n    \"\"\"Return the variant named inside\
+          \ the value, or \"\".\n\n    Only the leading word that ends in 键盘/版/态 is\
+          \ the variant; the rest of\n    the parenthesis (\"含电池\") is a qualifier\
+          \ and must stay in the value.\n    \"\"\"\n    m = PAREN_VARIANT.search(value\
+          \ or \"\")\n    if not m:\n        return \"\"\n    m2 = re.match(r\"^([^,，;；]*?(?:键盘|版|态))\"\
+          , m.group(1))\n    return m2.group(1).strip() if m2 else \"\"\n\n\ndef main(model_resolution:\
+          \ str, need: str, chunks: list) -> dict:\n    \"\"\"Assemble a fact-level\
+          \ evidence pack from retrieved knowledge chunks.\n\n    Two rules do the\
+          \ real work here:\n      1. A fact must name the resolved model. Rows about\
+          \ a sibling model are\n         discarded, not merged - that is the cross-product\
+          \ contamination that\n         makes new-SKU copy wrong.\n      2. Retrieval\
+          \ score is never promoted to confidence. The same field with\n         two\
+          \ different values is marked conflict instead of silently resolved.\n  \
+          \  \"\"\"\n    def load(raw):\n        # deepseek-v4 wraps its answer in\
+          \ <think>...</think> inside the same\n        # text field, and often leaves\
+          \ the closing tag off. json.loads on the\n        # raw string then fails\
+          \ and every field silently reads as empty.\n        s = raw or \"\"\n  \
+          \      s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n      \
+          \  s = re.sub(r\"^```(?:json)?|```$\", \"\", s.strip(), flags=re.M).strip()\n\
+          \        try:\n            v = json.loads(s or \"{}\")\n            if isinstance(v,\
+          \ dict):\n                return v\n        except Exception:\n        \
+          \    pass\n        # Trailing object after an unclosed tag. Scan from the\
+          \ last brace\n        # backwards so a nested structure is not mistaken\
+          \ for its first child.\n        for i in range(len(s) - 1, -1, -1):\n  \
+          \          if s[i] != \"{\":\n                continue\n            try:\n\
+          \                v = json.loads(s[i:])\n                if isinstance(v,\
+          \ dict):\n                    return v\n            except Exception:\n\
+          \                continue\n        return {}\n\n    res = load(model_resolution)\n\
+          \    nd = load(need)\n\n    model_id = (res.get(\"model_id\") or \"\").strip()\n\
+          \    model_name = (res.get(\"model_name\") or \"\").strip()\n    status\
+          \ = res.get(\"identity_status\") or \"not_found\"\n    target = norm(model_name)\n\
+          \    # The same machine has two names in the corpus. 全型号参数联合矩阵.csv keys\
+          \ the\n    # HarmonyOS models without the suffix (\"HUAWEI MateBook 14\"\
+          ), while the\n    # per-model documents and the resolver use the suffixed\
+          \ form\n    # (\"HUAWEI MateBook 14（鸿蒙版）\"). An exact match then rejected\
+          \ every row\n    # and a real, well-documented model returned an empty pack.\
+          \ Accept either\n    # spelling, but only for the names where the pairing\
+          \ is verified.\n    # norm() folds full-width brackets to ASCII, so the\
+          \ key keeps its parens.\n    ALIASES = {\n        \"HUAWEIMATEBOOK14(鸿蒙版)\"\
+          : \"HUAWEIMATEBOOK14\",\n        \"HUAWEIMATEBOOKPRO(鸿蒙版)\": \"HUAWEIMATEBOOKPRO\"\
+          ,\n    }\n    target_alts = {target, ALIASES.get(target, target)}\n    target_alts.discard(\"\
+          \")\n\n    facts, seen = [], set()\n    rejected = 0\n\n    def add(field,\
+          \ value, key, doc, seg, src, quote):\n        # The same spec often appears\
+          \ in several segments (full row, then one\n        # column per matrix file).\
+          \ Identity is field+value, not segment.\n        value = (value or \"\"\
+          ).strip()\n        if not value or is_url(value):\n            return\n\
+          \        # The variant (\"展开态\", \"标准屏版\") is part of what distinguishes\
+          \ one\n        # fact from another, so it is split out before deduplication.\n\
+          \        condition, value = split_condition(value)\n        if not condition:\n\
+          \            condition = variant_of(value)\n        if not value:\n    \
+          \        return\n        sig = field + \"|\" + condition + \"|\" + re.sub(r\"\
+          \\s+\", \"\", value)\n        if sig in seen:\n            return\n    \
+          \    seen.add(sig)\n        # A stable, per-fact id. It must be unique or\
+          \ the copywriter cannot\n        # cite one claim, the checker cannot map\
+          \ a sentence back, and a\n        # per-field id collapses every screen\
+          \ fact into a single \"chunk:屏幕\".\n        fid = \"F%02d\" % (len(facts)\
+          \ + 1)\n        facts.append({\n            \"fact_id\": fid,\n        \
+          \    \"field\": field,\n            \"key\": key,\n            \"condition\"\
+          : condition,\n            \"value\": value,\n            \"claim_type\"\
+          : \"spec\",\n            \"source\": {\"doc\": doc, \"segment\": seg, \"\
+          path\": src, \"quote\": quote[:200]},\n            \"status\": \"confirmed\"\
+          ,\n        })\n\n    # Without a resolved model there is nothing to attribute\
+          \ a row to. The\n    # guards below are written as `if target and norm(row_model)\
+          \ != target`, so\n    # an empty target skips them entirely - and an unknown\
+          \ request collected 23\n    # facts belonging to MateBook Pro, X Pro and\
+          \ others, then printed them as\n    # \"已确认\". A missing identity must mean\
+          \ an empty pack, not everyone's pack.\n    for row in (chunks or []) if\
+          \ target_alts else []:\n        if not isinstance(row, dict):\n        \
+          \    continue\n        text = (row.get(\"content\") or \"\").strip()\n \
+          \       if not text:\n            continue\n        meta = row.get(\"metadata\"\
+          ) or {}\n        doc = row.get(\"document_name\") or meta.get(\"document_name\"\
+          ) or meta.get(\"source\") or \"\"\n        seg = str(row.get(\"segment_id\"\
+          ) or row.get(\"id\") or row.get(\"document_id\") or \"\")\n\n        # ---\
+          \ form 1: matrix row \"型号,列1,列2,…,源路径\" ---\n        # Quoted cells are\
+          \ kept whole: a comma inside a value is part of the\n        # value, not\
+          \ a column boundary.\n        cells = [c.strip() for c in split_csv(text)]\n\
+          \        is_matrix = len(cells) >= 3 and re.search(r\"/[^,]*\\.(md|csv)$\"\
+          , cells[-1])\n        if is_matrix:\n            row_model, src = cells[0],\
+          \ cells[-1]\n            # The row must be about the resolved model. Substring\
+          \ matching\n            # either way would let \"MateBook 14\" swallow \"\
+          MateBook 14 酷睿 Ultra\".\n            if target_alts and norm(row_model)\
+          \ not in target_alts:\n                rejected += 1\n                continue\n\
+          \            # Each comma cell is one column, i.e. one concern. Joining\
+          \ them\n            # first would merge the OS column into the screen spec.\
+          \ Classify\n            # per pair rather than per cell: a single cell can\
+          \ still carry two\n            # concerns (\"内存；16 GB；存储；1 TB\").\n    \
+          \        #\n            # On the 14-column joint matrix the column index\
+          \ is authoritative:\n            # the header names the field, and content\
+          \ guessing misfiles the\n            # screen cell (it opens with \"尺寸；…18\
+          \ 英寸\") as a body dimension.\n            joint = len(cells) == JOINT_WIDTH\n\
+          \            for idx, cell in enumerate(cells[1:-1], start=1):\n       \
+          \         col_field = JOINT_COLUMNS.get(idx) if joint else None\n      \
+          \          cell_field = col_field or classify(cell)\n                for\
+          \ k, v in pairs(cell):\n                    field = col_field or classify(k\
+          \ + \" \" + v) or cell_field\n                    if not field:\n      \
+          \                  continue\n                    add(field, v, k, doc or\
+          \ row_model, seg, src, cell)\n            continue\n\n        # --- form\
+          \ 2: \"字段：值\" lines ---\n        # Only accept them from the resolved model's\
+          \ own document; a doc named\n        # after a different model is someone\
+          \ else's spec sheet.\n        doc_stem = re.sub(r\"\\.md$\", \"\", doc)\n\
+          \        if target_alts and doc_stem and not any(a in norm(doc_stem) for\
+          \ a in target_alts):\n            rejected += 1\n            continue\n\
+          \        for line in text.splitlines():\n            line = line.strip().lstrip(\"\
+          -*\\u2022 \").strip()\n            if not line or len(line) > 400:\n   \
+          \             continue\n            m = re.match(r\"^([^\\uff1a:]{1,24})[\\\
+          uff1a:]\\s*(.+)$\", line)\n            if not m:\n                continue\n\
+          \            k, v = m.group(1).strip(), m.group(2).strip()\n           \
+          \ if not v or k in META_FIELDS:\n                continue\n            #\
+          \ A summary line such as \"本卡的检索结论是：…\" has the shape of a\n           \
+          \ # field but is prose: the key is a sentence and the value is a\n     \
+          \       # paragraph. Filing one produced a 处理器 fact whose value was an\n\
+          \            # entire review, of a different model.\n            if re.search(r\"\
+          的|是\", k) or len(k) > 12 or len(v) > 160:\n                continue\n  \
+          \          field = classify(k + \" \" + v) or k\n            add(field,\
+          \ v, k, doc, seg, \"\", line)\n\n    # Same field + same key, two values:\
+          \ keep both and block the field.\n    # Enumeration is not conflict: a model\
+          \ really does ship with two CPU\n    # options and four ports, and flagging\
+          \ that would block every valid SKU.\n    # Only single-valued keys can contradict\
+          \ each other.\n    ENUMERABLE = {\"处理器\", \"接口\", \"存储\", \"内存\"}\n    by_field\
+          \ = {}\n    for f in facts:\n        by_field.setdefault(f[\"field\"], []).append(f)\n\
+          \    conflicts = []\n    gaps = []\n    for field, items in by_field.items():\n\
+          \        if field in ENUMERABLE:\n            continue\n        # A value\
+          \ that names its own variant (\"标准屏版：11.9 mm\", \"典藏版：12.2 mm\")\n     \
+          \   # is the source documenting several SKUs in one row, not a contradiction.\n\
+          \        # Read the number out of it: if the variants agree (both 11.9 mm\
+          \ here)\n        # there is nothing to confirm, and treating it as a conflict\
+          \ dropped the\n        # whole model to alternative.\n        by_key = {}\n\
+          \        for f in items:\n            if not f[\"key\"]:\n             \
+          \   continue\n            num = re.search(r\"[-+]?\\d+(?:\\.\\d+)?\\s*(?:mm|kg|g|Wh|英寸|%)\"\
+          , f[\"value\"])\n            v = num.group(0).replace(\" \", \"\") if num\
+          \ else re.sub(r\"\\s+\", \"\", f[\"value\"])\n            # Two states of\
+          \ one machine (\"展开态 288.5 mm\" / \"闭合态 193.7 mm\")\n            # are both\
+          \ true, so compare within a condition, never across it.\n            by_key.setdefault((f[\"\
+          key\"], f[\"condition\"]), set()).add(v)\n        clashing = [k for k, vals\
+          \ in by_key.items() if len(vals) > 1]\n        if clashing:\n          \
+          \  conflicts.append(field)\n            gaps.append(field + \" 存在多个不同取值，需确认版本或配置\"\
+          )\n            hit = set(clashing)\n            for f in items:\n      \
+          \          if (f[\"key\"], f[\"condition\"]) in hit:\n                 \
+          \   f[\"status\"] = \"conflict\"\n\n\n    present = set(by_field)\n    for\
+          \ field in CORE_FIELDS:\n        if field not in present:\n            gaps.append(\"\
+          未检索到 \" + field)\n\n    # A missing scene does not block the recommendation,\
+          \ but the fitness\n    # judgement then rests on the audience alone, and\
+          \ downstream must not\n    # invent a scene to fill the hole. Recorded as\
+          \ an explicit gap.\n    if not (nd.get(\"scenario\") or \"\").strip():\n\
+          \        gaps.insert(0, \"未提供使用场景，选品仅按人群判断\")\n\n    confirmed = [f for\
+          \ f in facts if f[\"status\"] == \"confirmed\"]\n    coverage = round(min(1.0,\
+          \ len(present) / float(len(CORE_FIELDS))), 2)\n    if status != \"verified\"\
+          :\n        gaps.insert(0, \"型号身份未唯一确定，需先澄清型���\")\n        coverage = 0.0\n\
+          \    elif not facts:\n        gaps.insert(0, \"检索到的分块没有可解析的规格字段，需检查知识库分块格式\"\
+          )\n\n    # Tier is computed here, never by the LLM, so it cannot be talked\
+          \ upward.\n    if coverage >= 0.6 and not conflicts and status == \"verified\"\
+          :\n        tier = \"primary\"\n    elif coverage >= 0.3 and status == \"\
+          verified\":\n        tier = \"alternative\"\n    else:\n        tier = \"\
+          watch\"\n\n    pack = {\n        \"model_id\": model_id,\n        \"model_name\"\
+          : model_name,\n        \"identity_status\": status,\n        \"audience\"\
+          : nd.get(\"audience\"),\n        \"scenario\": nd.get(\"scenario\"),\n \
+          \       \"facts\": facts,\n        \"confirmed_count\": len(confirmed),\n\
+          \        \"fields_present\": sorted(present),\n        \"fields_missing\"\
+          : [f for f in CORE_FIELDS if f not in present],\n        \"rejected_cross_model\"\
+          : rejected,\n        \"gaps\": gaps,\n        \"conflicts\": conflicts,\n\
+          \        \"coverage\": coverage,\n        \"tier\": tier,\n    }\n    return\
+          \ {\n        \"output\": json.dumps(pack, ensure_ascii=False),\n       \
+          \ \"tier\": tier,\n        \"coverage\": coverage,\n        \"fact_count\"\
+          : len(facts),\n        \"gap_count\": len(gaps),\n    }\n"
+        code_language: python3
+        desc: 逐条抽事实、标冲突、算覆盖度、定三档
+        outputs:
+          coverage:
+            children: null
+            type: number
+          fact_count:
+            children: null
+            type: number
+          gap_count:
+            children: null
+            type: number
+          output:
+            children: null
+            type: string
+          tier:
+            children: null
+            type: string
+        selected: false
+        title: 子Agent④ 证据包组装
+        type: code
+        variables:
+        - value_selector:
+          - model_resolver
+          - text
+          variable: model_resolution
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: need
+        - value_selector:
+          - retrieval_a
+          - result
+          variable: chunks
+      height: 96
+      id: evidence_builder
+      position:
+        x: 3640
+        y: 160
+      positionAbsolute:
+        x: 3640
+        y: 160
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: primary
+          conditions:
+          - comparison_operator: is
+            id: b120c686-825e-44e8-a5d8-b43a93d03f54
+            value: primary
+            variable_selector:
+            - evidence_builder
+            - tier
+          id: primary
+          logical_operator: and
+        - case_id: alternative
+          conditions:
+          - comparison_operator: is
+            id: 10a49378-3ed7-4fbe-9d3b-70afde561c5d
+            value: alternative
+            variable_selector:
+            - evidence_builder
+            - tier
+          id: alternative
+          logical_operator: and
+        desc: primary/alternative 才出推荐，watch 转核实
+        selected: false
+        title: ④ 证据闸
+        type: if-else
+      height: 240
+      id: evidence_gate
+      position:
+        x: 3940
+        y: 300
+      positionAbsolute:
+        x: 3940
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "def _text(raw):\n    if raw is None:\n        return \"\"\n    if isinstance(raw,\
+          \ str):\n        return raw\n    if isinstance(raw, list):\n        parts\
+          \ = []\n        for it in raw:\n            if isinstance(it, dict):\n \
+          \               c = it.get(\"content\") or it.get(\"text\") or \"\"\n  \
+          \              d = it.get(\"metadata\") or {}\n                doc = d.get(\"\
+          document_name\") if isinstance(d, dict) else None\n                parts.append(((\"\
+          【\" + doc + \"】\") if doc else \"\") + str(c))\n            else:\n    \
+          \            parts.append(str(it))\n        return \"\\n\".join(parts)\n\
+          \    return str(raw)\n\n\ndef main(scene_hits, price_hits) -> dict:\n  \
+          \  scene_hits = _text(scene_hits)\n    price_hits = _text(price_hits)\n\
+          \    def first_lines(raw, n):\n        lines = [ln.strip() for ln in (raw\
+          \ or \"\").splitlines() if ln.strip()]\n        return \"；\".join(lines[:n])\n\
+          \    parts = []\n    scene = first_lines(scene_hits, 3)\n    if scene:\n\
+          \        parts.append(\"场景话术参考（仅作切入点，不得当产品参数）：\" + scene[:300])\n    price\
+          \ = first_lines(price_hits, 2)\n    if price:\n        parts.append(\"历史价格快照（仅历史参考，禁止当期报价，以门店为准）：\"\
+          \ + price[:200])\n    return {\"output\": (\"参考信息：\\n\" + \"\\n\".join(\"\
+          - \" + p for p in parts)) if parts else \"\"}\n"
+        code_language: python3
+        desc: ''
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: ④ 辅助参考合并
+        type: code
+        variables:
+        - value_selector:
+          - retrieval_b
+          - result
+          variable: scene_hits
+        - value_selector:
+          - retrieval_c
+          - result
+          variable: price_hits
+      height: 52
+      id: extra_refs
+      position:
+        x: 3940
+        y: 520
+      positionAbsolute:
+        x: 3940
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\n\ndef load(raw):\n    s = raw or \"\"\n \
+          \   s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n    s = re.sub(r\"\
+          ```(?:json)?\\s*|\\s*```\", \"\", s).strip()\n    try:\n        v = json.loads(s)\n\
+          \        if isinstance(v, dict):\n            return v\n    except Exception:\n\
+          \        pass\n    for i in range(len(s) - 1, -1, -1):\n        if s[i]\
+          \ != \"{\":\n            continue\n        try:\n            v = json.loads(s[i:])\n\
+          \            if isinstance(v, dict):\n                return v\n       \
+          \ except Exception:\n            continue\n    return {}\n\n\ndef fmt_fact(f,\
+          \ prefix=\"- \"):\n    \"\"\"One fact as a line: id, field, label, condition,\
+          \ value, source doc.\"\"\"\n    line = prefix + str(f.get(\"fact_id\") or\
+          \ \"\") + \" \" + str(f.get(\"field\") or \"\")\n    label = str(f.get(\"\
+          key\") or \"\").strip()\n    cond = str(f.get(\"condition\") or \"\").strip()\n\
+          \    if label and label != str(f.get(\"field\") or \"\"):\n        line\
+          \ += \"·\" + label\n    if cond:\n        line += \"（\" + cond + \"）\"\n\
+          \    val = str(f.get(\"value\") or \"\").strip()\n    if val:\n        line\
+          \ += \"：\" + val\n    src = f.get(\"source\") or {}\n    doc = (src.get(\"\
+          doc\") or \"\").strip()\n    if doc:\n        line += \"（资料：\" + doc + \"\
+          ）\"\n    return line\n\n\ndef main(need: str, evidence: str, coverage: float,\
+          \ fact_count: float) -> dict:\n    \"\"\"Explain why no recommendation is\
+          \ made.\n\n    This branch exists because the rules forbid recommending\
+          \ on unconfirmed\n    information. A thin evidence pack is not a reason\
+          \ to say something\n    vaguer - it is a reason to stop and say so.\n  \
+          \  \"\"\"\n    nd = load(need)\n    pack = load(evidence)\n    model_name\
+          \ = (pack.get(\"model_name\") or \"\").strip()\n    facts = [f for f in\
+          \ (pack.get(\"facts\") or []) if isinstance(f, dict)]\n    gaps = [str(g)\
+          \ for g in (pack.get(\"gaps\") or []) if str(g).strip()]\n    identity =\
+          \ (pack.get(\"identity_status\") or \"\").strip()\n\n    out = [\"一、选品对象\"\
+          ]\n    out.append(\"- 目标人群：\" + ((nd.get(\"audience\") or \"\").strip()\
+          \ or \"未提供\"))\n    out.append(\"- 使用场景：\" + ((nd.get(\"scenario\") or \"\
+          \").strip() or \"未提供（按人群判断）\"))\n    if model_name:\n        out.append(\"\
+          - 请求型号：\" + model_name)\n    out.append(\"\")\n\n    out.append(\"二、选品结论\"\
+          )\n    out.append(\"- 推荐型号：不推荐\")\n    out.append(\"- 原因：该型号已核实的规格不足以支撑推荐\"\
+          \n               \"（覆盖度 \" + str(coverage) + \"，事实 \" + str(int(fact_count\
+          \ or 0)) + \" 条）\")\n    out.append(\"\")\n\n    out.append(\"三、事实依据\")\n\
+          \    if facts:\n        out.append(\"- 已确认（不足以推荐，可作参考）：\")\n        for\
+          \ f in facts:\n            out.append(fmt_fact(f, \"  - \"))\n    else:\n\
+          \        out.append(\"- 未检索到可解析的规格字段\")\n    out.append(\"\")\n\n    out.append(\"\
+          四、下一步\")\n    if gaps:\n        out.append(\"- 待确认信息：\")\n        for g\
+          \ in gaps:\n            out.append(\"  - \" + g)\n    else:\n        out.append(\"\
+          - 待确认信息：无\")\n    # \"Not enough evidence\" and \"I do not know which product\
+          \ you mean\" are\n    # different problems with different fixes. Telling\
+          \ someone to upload spec\n    # sheets when the real issue is that \"MateBook\
+          \ 14\" names two different\n    # machines sends them to do the wrong work.\n\
+          \    if identity == \"ambiguous\":\n        out.append(\"- 下一步：该型号对应多个身份，请指明具体是哪一款后再生成。\"\
+          )\n    elif identity == \"not_found\":\n        out.append(\"- 下一步：知识库中没有该型号，请确认型号名称是否正确，或换一个已收录的型号。\"\
+          )\n    else:\n        out.append(\"- 下一步：补齐该型号的官方规格资料后重新生成，或换一个资料完整的型号。\"\
+          )\n\n    return {\"output\": \"\\n\".join(out).strip()}\n"
+        code_language: python3
+        desc: 资料未达交付标准时，说明已确认/未确认/下一步
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: ⑩a 资料不足
+        type: code
+        variables:
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: need
+        - value_selector:
+          - evidence_builder
+          - output
+          variable: evidence
+        - value_selector:
+          - evidence_builder
+          - coverage
+          variable: coverage
+        - value_selector:
+          - evidence_builder
+          - fact_count
+          variable: fact_count
+      height: 96
+      id: render_insufficient
+      position:
+        x: 4240
+        y: 440
+      positionAbsolute:
+        x: 4240
+        y: 440
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#render_insufficient.output#}}'
+        desc: ''
+        selected: false
+        title: 资料不足回复
+        type: answer
+        variables: []
+      height: 104
+      id: answer_insufficient
+      position:
+        x: 4540
+        y: 440
+      positionAbsolute:
+        x: 4540
+        y: 440
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        memory:
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            response_format: json_object
+            temperature: 0.2
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - role: system
+          text: '你是华为 PC 选品的适配判定 Agent。你只依据 <evidence> 里的 facts 判断这台机器对该人群/场景的适配度，不引入任何外部知识，不写营销话术。
+
+
+            ## 任务
+
+            1. fit 三档：suitable（适合）/ marginal（有条件适合）/ unsuitable（不适合）。
+
+            2. reasons 3-5 条，每条必须引用 evidence 中真实存在的 fact_id，并说明这条规格对该用户为什么重要。
+
+            3. concerns：证据没覆盖但会影响决策的点（如"未提及续航数据"），只陈述缺失，不得猜测。
+
+
+            ## 硬规则
+
+            - fact_id 必须真实存在，不得虚构编号。
+
+            - 不得输出 evidence 之外的型号、参数、价格、时间、赠品。
+
+            - 人群优先级参考：学生→重量/电池/屏幕；创作者→屏幕/内存/存储；职场→重量/接口/电池；家庭→屏幕/易用；企业→系统/接口/管理。
+
+            - tier 为 alternative（有条件）时，核心字段缺失 → fit 最高 marginal；证据整体不足 → unsuitable
+            并说明证据不足。
+
+            - 不做主观排名，不贬低其他型号，不报价格。
+
+
+            ## 输出（严格 JSON，无解释无代码块）
+
+            {"model_name":"string","fit":"suitable|marginal|unsuitable","reasons":[{"fact_id":"string","why":"string"}],"concerns":["string"]}'
+        - role: user
+          text: '<evidence>
+
+            {{#evidence_builder.output#}}
+
+            </evidence>
+
+            人群与场景：{{#need_parse.slots_json#}}'
+        selected: false
+        title: 子Agent⑤ 适配判定
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 88
+      id: fit
+      position:
+        x: 4240
+        y: 160
+      positionAbsolute:
+        x: 4240
+        y: 160
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import json\nimport re\n\nTIER_LABEL = {\n    \"primary\": \"可推荐\"\
+          ,\n    \"alternative\": \"有条件可推荐\",\n    \"watch\": \"证据不足，不推荐\",\n}\nFIT_LABEL\
+          \ = {\n    \"suitable\": \"适合\",\n    \"marginal\": \"勉强���合\",\n    \"\
+          unsuitable\": \"不适合\",\n}\n\n\ndef load(raw):\n    \"\"\"Parse model JSON\
+          \ that may be wrapped in <think> or a code fence.\"\"\"\n    s = raw or\
+          \ \"\"\n    s = re.sub(r\"<think>.*?</think>\", \"\", s, flags=re.S)\n \
+          \   s = re.sub(r\"```(?:json)?\\s*|\\s*```\", \"\", s).strip()\n    try:\n\
+          \        v = json.loads(s)\n        if isinstance(v, dict):\n          \
+          \  return v\n    except Exception:\n        pass\n    for i in range(len(s)\
+          \ - 1, -1, -1):\n        if s[i] != \"{\":\n            continue\n     \
+          \   try:\n            v = json.loads(s[i:])\n            if isinstance(v,\
+          \ dict):\n                return v\n        except Exception:\n        \
+          \    continue\n    return {}\n\n\ndef fmt_fact(f, prefix=\"- \"):\n    \"\
+          \"\"One fact as a line: id, field, label, condition, value, source doc.\"\
+          \"\"\n    line = prefix + str(f.get(\"fact_id\") or \"\") + \" \" + str(f.get(\"\
+          field\") or \"\")\n    label = str(f.get(\"key\") or \"\").strip()\n   \
+          \ cond = str(f.get(\"condition\") or \"\").strip()\n    if label and label\
+          \ != str(f.get(\"field\") or \"\"):\n        line += \"·\" + label\n   \
+          \ if cond:\n        line += \"（\" + cond + \"）\"\n    val = str(f.get(\"\
+          value\") or \"\").strip()\n    if val:\n        line += \"：\" + val\n  \
+          \  src = f.get(\"source\") or {}\n    doc = (src.get(\"doc\") or \"\").strip()\n\
+          \    if doc:\n        line += \"（资料：\" + doc + \"）\"\n    return line\n\n\
+          \ndef main(selector: str, need: str, evidence: str, tier: str, coverage:\
+          \ float,\n         fact_count: float, gap_count: float) -> dict:\n    \"\
+          \"\"Render the selection decision.\n\n    Every number here comes from the\
+          \ evidence builder, never from the model:\n    the tier and coverage are\
+          \ computed in code precisely so that a fluent\n    recommendation cannot\
+          \ talk itself up a tier.\n\n    This is the output of a selection stage,\
+          \ so it says which product and why.\n    It carries no headline, no selling-point\
+          \ copy, no angle and no image slot;\n    those belong to the stages downstream\
+          \ of this one.\n    \"\"\"\n    sel = load(selector)\n    nd = load(need)\n\
+          \    pack = load(evidence)\n\n    model_name = (sel.get(\"model_name\")\
+          \ or pack.get(\"model_name\") or \"\").strip()\n    facts = [f for f in\
+          \ (pack.get(\"facts\") or []) if isinstance(f, dict)]\n    by_id = {str(f.get(\"\
+          fact_id\")): f for f in facts}\n\n    out = [\"一、选品对象\"]\n    out.append(\"\
+          - 目标人群：\" + ((nd.get(\"audience\") or \"\").strip() or \"未提供\"))\n    out.append(\"\
+          - 使用场景：\" + ((nd.get(\"scenario\") or \"\").strip() or \"未提供（按人群判断）\"))\n\
+          \    out.append(\"\")\n\n    out.append(\"二、选品结论\")\n    out.append(\"-\
+          \ 推荐型号：\" + (model_name or \"未确定\"))\n    fit = (sel.get(\"fit\") or \"\"\
+          ).strip()\n    if fit in FIT_LABEL:\n        out.append(\"- 适配判断：\" + FIT_LABEL[fit])\n\
+          \    out.append(\"- 推荐档位：\" + TIER_LABEL.get(tier, tier or \"未定\")\n   \
+          \            + \"（覆盖度 \" + str(coverage) + \"，事实 \" + str(int(fact_count\
+          \ or 0)) + \" 条）\")\n    reasons = [c for c in (sel.get(\"reasons\") or\
+          \ []) if isinstance(c, dict)]\n    if reasons:\n        out.append(\"- 选品理由：\"\
+          )\n        n = 0\n        for c in reasons:\n            fid = str(c.get(\"\
+          fact_id\") or \"\")\n            f = by_id.get(fid)\n            if not\
+          \ f:\n                # A fact id that is not in the pack is a hallucination,\
+          \ and\n                # printing it would launder an invented fact into\
+          \ the output.\n                continue\n            n += 1\n          \
+          \  line = \"  %d. %s %s\" % (n, fid, str(f.get(\"field\") or \"\"))\n  \
+          \          label = str(f.get(\"key\") or \"\").strip()\n            cond\
+          \ = str(f.get(\"condition\") or \"\").strip()\n            if label and\
+          \ label != str(f.get(\"field\") or \"\"):\n                line += \"·\"\
+          \ + label\n            if cond:\n                line += \"（\" + cond +\
+          \ \"）\"\n            val = str(f.get(\"value\") or \"\").strip()\n     \
+          \       if val:\n                line += \"：\" + val\n            why =\
+          \ (c.get(\"why\") or \"\").strip()\n            if why:\n              \
+          \  line += \"　→ \" + why\n            out.append(line)\n    concerns = [str(x)\
+          \ for x in (sel.get(\"concerns\") or []) if str(x).strip()]\n    if concerns:\n\
+          \        out.append(\"- 顾虑：\")\n        for c in concerns:\n           \
+          \ out.append(\"  - \" + c)\n    out.append(\"\")\n\n    out.append(\"三、事实依据\"\
+          )\n    if facts:\n        for f in facts:\n            out.append(fmt_fact(f))\n\
+          \    else:\n        out.append(\"- 未检索到可解析的规格字段\")\n    gaps = [str(g) for\
+          \ g in (pack.get(\"gaps\") or []) if str(g).strip()]\n    if gaps:\n   \
+          \     out.append(\"\")\n        out.append(\"- 待确认：\")\n        for g in\
+          \ gaps:\n            out.append(\"  - \" + g)\n    out.append(\"- 资料标题：\"\
+          \ + (\"、\".join(sorted({str((f.get(\"source\") or {}).get(\"doc\") or \"\
+          \") for f in facts} - {\"\"})) or \"无\"))\n\n    return {\"output\": \"\\\
+          n\".join(out).strip(), \"model_name\": model_name, \"tier\": tier}\n"
+        code_language: python3
+        desc: 渲染选品结论：对象/型号/档位/理由/事实依据
+        outputs:
+          model_name:
+            children: null
+            type: string
+          output:
+            children: null
+            type: string
+          tier:
+            children: null
+            type: string
+        selected: false
+        title: ⑨a 选品结论
+        type: code
+        variables:
+        - value_selector:
+          - fit
+          - text
+          variable: selector
+        - value_selector:
+          - need_parse
+          - slots_json
+          variable: need
+        - value_selector:
+          - evidence_builder
+          - output
+          variable: evidence
+        - value_selector:
+          - evidence_builder
+          - tier
+          variable: tier
+        - value_selector:
+          - evidence_builder
+          - coverage
+          variable: coverage
+        - value_selector:
+          - evidence_builder
+          - fact_count
+          variable: fact_count
+        - value_selector:
+          - evidence_builder
+          - gap_count
+          variable: gap_count
+      height: 96
+      id: render_pick
+      position:
+        x: 4540
+        y: 160
+      positionAbsolute:
+        x: 4540
+        y: 160
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#render_pick.output#}}
+
+
+          {{#extra_refs.output#}}'
+        desc: ''
+        selected: false
+        title: 选品回复
+        type: answer
+        variables: []
+      height: 121
+      id: answer_pick
+      position:
+        x: 4840
+        y: 240
+      positionAbsolute:
+        x: 4840
+        y: 240
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    viewport:
+      x: -53.26014601607335
+      y: 167.34535623112114
+      zoom: 0.25
+  rag_pipeline_variables: []
